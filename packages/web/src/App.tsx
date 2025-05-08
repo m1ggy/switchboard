@@ -3,7 +3,20 @@ import { createTRPCClient, httpBatchLink } from '@trpc/client';
 import type { AppRouter } from 'api/trpc';
 import { useState } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router';
+import AppRoot from './AppRoot';
+import Layout from './components/main-layout';
+import { ThemeProvider } from './components/theme-provider';
+import { auth } from './lib/firebase';
 import { TRPCProvider } from './lib/trpc';
+import AddContact from './pages/add-contact';
+import AllContacts from './pages/all-contacts';
+import CallHistory from './pages/call-history';
+import Dashboard from './pages/dashboard';
+import Draft from './pages/draft';
+import Inbox from './pages/inbox';
+import NewMessage from './pages/new-message';
+import Sent from './pages/sent';
+import SignIn from './pages/sign-in';
 function makeQueryClient() {
   return new QueryClient({
     defaultOptions: {
@@ -35,24 +48,40 @@ function App() {
     createTRPCClient<AppRouter>({
       links: [
         httpBatchLink({
-          url: 'http://localhost:2022',
+          url: `${import.meta.env.VITE_TRPC_URL || 'http://localhost:3000/trpc'}`,
+          async headers() {
+            const currentUser = auth.currentUser;
+            const token = currentUser ? await currentUser.getIdToken() : null;
+            return token ? { Authorization: `Bearer ${token}` } : {};
+          },
         }),
       ],
     })
   );
+
+  console.log({ env: import.meta.env });
   return (
     <QueryClientProvider client={queryClient}>
       <TRPCProvider trpcClient={trpcClient} queryClient={queryClient}>
-        <BrowserRouter>
-          <Routes>
-            <Route
-              path="/"
-              element={
-                <p className="font-branding text-3xl font-bold">Switchboard</p>
-              }
-            />
-          </Routes>
-        </BrowserRouter>
+        <ThemeProvider defaultTheme="dark" storageKey="switchboard-ui-theme">
+          <BrowserRouter>
+            <Routes>
+              <Route path="/" element={<AppRoot />} />
+              <Route path="/sign-in" element={<SignIn />} />
+
+              <Route path="/dashboard" element={<Layout />}>
+                <Route index element={<Dashboard />} />
+                <Route path="new-message" element={<NewMessage />} />
+                <Route path="inbox" element={<Inbox />} />
+                <Route path="drafts" element={<Draft />} />
+                <Route path="sent" element={<Sent />} />
+                <Route path="call-history" element={<CallHistory />} />
+                <Route path="add-contact" element={<AddContact />} />
+                <Route path="all-contacts" element={<AllContacts />} />
+              </Route>
+            </Routes>
+          </BrowserRouter>
+        </ThemeProvider>
       </TRPCProvider>
     </QueryClientProvider>
   );
