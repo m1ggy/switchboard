@@ -1,7 +1,8 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_TRPC_URL: string; // add other variables as needed
+  readonly VITE_TRPC_URL: string;
+  readonly VITE_WEBSOCKET_URL: string;
 }
 
 interface ImportMeta {

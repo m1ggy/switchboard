@@ -1,23 +1,61 @@
-import fastifyCors from '@fastify/cors';
 import { fastifyTRPCPlugin } from '@trpc/server/adapters/fastify';
 import Fastify from 'fastify';
-import client from './lib/pg';
+import fastifySocketIO from 'fastify-socket.io';
+
+import fastifyCors from '@fastify/cors';
+import { auth } from './lib/firebase';
 import { appRouter } from './trpc';
 import { createContext } from './trpc/context';
+const app = Fastify();
 
-const fastify = Fastify();
-
-fastify.register(fastifyCors, {
-  origin: ['*'],
-});
-fastify.register(fastifyTRPCPlugin, {
+app.register(fastifyCors, { origin: ['http://localhost:5173'] });
+app.register(fastifyTRPCPlugin, {
   prefix: '/trpc',
   trpcOptions: { router: appRouter, createContext },
 });
 
-fastify.listen({ port: 3000 }, () => {
-  console.log('API listening on http://localhost:3000/trpc');
-  client.connect().then(() => {
-    console.log('Database pool active');
+app.register(fastifySocketIO, { path: '/ws', cors: { origin: '*' } });
+
+app.get('/', (_, reply) => {
+  return reply
+    .status(200)
+    .type('text/html')
+    .send(`<html><body><p>Switchboard API v1</p></body></html>`);
+});
+
+app.get('/health', () => {
+  return { message: 'OK' };
+});
+
+app.listen({ port: 3000 }, () => {
+  console.log('API listening on http://localhost:3000');
+
+  app.io.use(async (socket, next) => {
+    try {
+      const token =
+        socket.handshake.auth?.token ||
+        socket.handshake.headers?.authorization?.split('Bearer ')[1];
+
+      if (!token) {
+        return next(new Error('No token provided'));
+      }
+
+      const decoded = await auth.verifyIdToken(token);
+      socket.data.user = decoded;
+
+      next();
+    } catch (err) {
+      console.error('Socket auth error:', err);
+      return next(new Error('Authentication failed'));
+    }
+  });
+
+  app.io.on('connection', (socket) => {
+    console.log('Socket connected:', socket.id);
+
+    socket.on('ping', (msg) => {
+      console.log('Received ping:', msg);
+      socket.emit('pong', `pong: ${msg}`);
+    });
   });
 });

@@ -17,6 +17,7 @@ import {
 import { Input } from '@/components/ui/input';
 import Loader from '@/components/ui/loader';
 import { auth } from '@/lib/firebase';
+import useMainStore from '@/lib/store';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { FirebaseError } from 'firebase/app';
 import { signInWithEmailAndPassword } from 'firebase/auth';
@@ -39,13 +40,19 @@ function SignIn() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const setUser = useMainStore((state) => state.setUser);
 
   const onSubmit = async (data: Schema) => {
     setLoading(true);
     setError(null);
 
     try {
-      await signInWithEmailAndPassword(auth, data.email, data.password);
+      const credential = await signInWithEmailAndPassword(
+        auth,
+        data.email,
+        data.password
+      );
+      setUser(credential.user);
       navigate('/dashboard');
     } catch (error) {
       const firebaseError = error as unknown as FirebaseError;

@@ -35,11 +35,11 @@ function Header({ isLoggedIn }: HeaderProps) {
         {isLoggedIn ? (
           <div className="flex gap-2 items-center">
             <TooltipStandalone content={<p>Toggle Sidebar</p>}>
-              <SidebarTrigger className="border-r-1 px-4" />
+              <SidebarTrigger className="px-4" />
             </TooltipStandalone>
 
             {pagesMap[pathname] ? (
-              <p className="text-muted-foreground font-semibold">
+              <p className="text-muted-foreground font-semibold border-l-1 pl-4 ">
                 {pagesMap[pathname]}
               </p>
             ) : null}

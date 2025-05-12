@@ -147,6 +147,7 @@ function BaseSidebar() {
                       <Button
                         onClick={item.onClick}
                         className=" cursor-pointer"
+                        variant={'outline'}
                       >
                         <item.icon />
                         <span>{item.title}</span>
@@ -177,6 +178,7 @@ function BaseSidebar() {
                       <Button
                         onClick={item.onClick}
                         className=" cursor-pointer"
+                        variant={'outline'}
                       >
                         <item.icon />
                         <span>{item.title}</span>
