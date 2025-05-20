@@ -32,7 +32,17 @@ jobs:
 
           # === SYSTEM PREP ===
           sudo apt update -y
-          sudo apt install -y git nodejs npm pm2 caddy
+          # === Install Node + PM2 ===
+          curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+          sudo apt-get install -y nodejs
+          sudo npm install -g pm2
+
+          # === Install Caddy ===
+          sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
+          curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo tee /etc/apt/keyrings/caddy.asc
+          curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+          sudo apt update
+          sudo apt install -y caddy
 
           # === CLONE REPO ===
           if [ ! -d "$APP_DIR" ]; then
