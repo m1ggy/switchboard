@@ -70,8 +70,12 @@ jobs:
           pnpm build
 
           # === DEPLOY API VIA PM2 ===
+          if [ -f "$APP_DIR/packages/api/dist/index.mjs" ]; then
           pm2 delete api || true
-          pm2 start dist/index.js --name api
+          pm2 start $APP_DIR/packages/api/dist/index.mjs --name api --interpreter node
+          else
+          echo "❌ dist/index.mjs not found. Build may have failed."
+          fi
 
           # === CADDY CONFIG ===
           sudo tee /etc/caddy/Caddyfile > /dev/null <<EOC
