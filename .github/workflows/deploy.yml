@@ -1,0 +1,75 @@
+name: Deploy Web + API
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to VPS
+        run: |
+          ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'EOF'
+
+          # === SETUP ===
+          export APP_DIR=~/apps/turbo-app
+          export DOMAIN=${{ secrets.DOMAIN_NAME }}
+          export API_DOMAIN=api.$DOMAIN
+          export REPO_URL=https://github.com/${{ github.repository }}.git
+
+          # === SYSTEM PREP ===
+          sudo apt update -y
+          sudo apt install -y git nodejs npm pm2 caddy
+
+          # === CLONE REPO ===
+          if [ ! -d "$APP_DIR" ]; then
+            git clone $REPO_URL $APP_DIR
+          else
+            cd $APP_DIR && git pull origin main
+          fi
+
+          # === SET CONFIG ===
+          echo "${{ secrets.API_ENV_FILE }}" > $APP_DIR/packages/api/.env
+          echo '${{ secrets.FIREBASE_JSON }}' > $APP_DIR/packages/api/firebase.json
+
+          # === SETUP WEB CONFIG ===
+          echo "${{ secrets.WEB_ENV_FILE }}" > $APP_DIR/packages/web/.env
+
+          # === FRONTEND BUILD ===
+          cd $APP_DIR/packages/web
+          npm install
+          npm run build
+
+          # === API BUILD + PM2 ===
+          cd $APP_DIR/packages/api
+          npm install
+          npm run build
+          pm2 delete api || true
+          pm2 start dist/index.js --name api
+
+          # === CADDY CONFIG ===
+          sudo tee /etc/caddy/Caddyfile > /dev/null <<EOC
+          $DOMAIN {
+            root * $APP_DIR/packages/web/dist
+            file_server
+          }
+
+          $API_DOMAIN {
+            reverse_proxy localhost:3000
+          }
+          EOC
+            sudo systemctl reload caddy
+          EOF
