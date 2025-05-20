@@ -7,7 +7,7 @@ let socket: Socket | null = null;
 
 export function useSocket() {
   const [ready, setReady] = useState(false);
-  const [error, setError] = useState<null | string>(null);
+  const [error] = useState<null | string>(null);
 
   useEffect(() => {
     const auth = getAuth(app);

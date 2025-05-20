@@ -13,7 +13,7 @@ function Dialer() {
   const [number, setNumber] = useState('');
   const trpc = useTRPC();
   const query = useQuery(trpc.twilio.token.queryOptions());
-  const { makeCall, hangUp } = useTwilioVoice(query.data as string);
+  const { makeCall } = useTwilioVoice(query.data as string);
 
   const handleCall = () => {
     const cleaned = number.replace(/[^\d+]/g, '');

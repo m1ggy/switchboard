@@ -61,7 +61,7 @@ export function NumberSwitcher({
             <DropdownMenuLabel className="text-xs text-muted-foreground">
               Numbers
             </DropdownMenuLabel>
-            {numbers.map((number, index) => (
+            {numbers.map((number) => (
               <DropdownMenuItem
                 key={number.label}
                 onClick={() => setActiveNumber(number)}

@@ -1,6 +1,6 @@
 import { auth } from '@/lib/firebase';
 import * as trpcFastify from '@trpc/server/adapters/fastify';
-import { DecodedIdToken } from 'firebase-admin/auth';
+import type { DecodedIdToken } from 'firebase-admin/auth';
 export async function createContext({
   req,
 }: trpcFastify.CreateFastifyContextOptions) {
