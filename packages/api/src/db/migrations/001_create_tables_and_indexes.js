@@ -50,6 +50,7 @@ exports.up = (pgm) => {
     number: { type: 'text', notNull: true },
     created_at: { type: 'timestamp' },
     company_id: { type: 'uuid', notNull: true, references: 'companies(id)' },
+    label: { type: 'text', notNull: true },
   });
 
   pgm.createIndex('contacts', 'company_id');
@@ -126,8 +127,9 @@ exports.down = (pgm) => {
   pgm.dropTable('contacts');
   pgm.dropTable('numbers');
   pgm.dropTable('companies');
-  pgm.dropTable('company_users');
+  pgm.dropTable('users_companies');
   pgm.dropTable('notifications');
+  pgm.dropTable('users');
   pgm.dropType('message_direction');
   pgm.dropType('message_statuses');
   pgm.dropType('notification_types');

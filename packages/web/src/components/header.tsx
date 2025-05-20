@@ -1,6 +1,9 @@
+import { useAuth } from '@/hooks/auth-provider';
+import { auth } from '@/lib/firebase';
 import clsx from 'clsx';
+import { signOut } from 'firebase/auth';
 import { Bell, LogOut } from 'lucide-react';
-import { useLocation } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import Notifications from './notifications';
 import { Button } from './ui/button';
 import { SidebarTrigger } from './ui/sidebar';
@@ -22,8 +25,9 @@ const pagesMap = {
 } as Record<string, string>;
 function Header({ isLoggedIn }: HeaderProps) {
   const location = useLocation();
-
+  const navigate = useNavigate();
   const pathname = location.pathname;
+  const authContext = useAuth();
   return (
     <div
       className={clsx([
@@ -61,7 +65,16 @@ function Header({ isLoggedIn }: HeaderProps) {
         <ModeToggle />
         {isLoggedIn && (
           <TooltipStandalone content={<p>Logout</p>}>
-            <Button variant="outline" size="icon">
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => {
+                signOut(auth).then(() => {
+                  authContext.setUser(null);
+                  navigate('/sign-in');
+                });
+              }}
+            >
               <LogOut className="h-[1.2rem] w-[1.2rem]" />
             </Button>
           </TooltipStandalone>

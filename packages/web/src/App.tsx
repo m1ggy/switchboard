@@ -4,8 +4,12 @@ import type { AppRouter } from 'api/trpc';
 import { useState } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router';
 import AppRoot from './AppRoot';
+import CreateContactDialog from './components/create-contact-dialog';
+import DialerDialog from './components/dialer-dialog';
 import Layout from './components/main-layout';
+import SendMessageDialog from './components/send-message';
 import { ThemeProvider } from './components/theme-provider';
+import { AuthProvider } from './hooks/auth-provider';
 import { auth } from './lib/firebase';
 import { TRPCProvider } from './lib/trpc';
 import AddContact from './pages/add-contact';
@@ -14,9 +18,10 @@ import CallHistory from './pages/call-history';
 import Dashboard from './pages/dashboard';
 import Draft from './pages/draft';
 import Inbox from './pages/inbox';
-import NewMessage from './pages/new-message';
 import Sent from './pages/sent';
 import SignIn from './pages/sign-in';
+import AuthRoute from './routes/auth-route';
+import PrivateRoute from './routes/private-route';
 function makeQueryClient() {
   return new QueryClient({
     defaultOptions: {
@@ -64,23 +69,47 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TRPCProvider trpcClient={trpcClient} queryClient={queryClient}>
         <ThemeProvider defaultTheme="dark" storageKey="switchboard-ui-theme">
-          <BrowserRouter>
-            <Routes>
-              <Route path="/" element={<AppRoot />} />
-              <Route path="/sign-in" element={<SignIn />} />
-
-              <Route path="/dashboard" element={<Layout />}>
-                <Route index element={<Dashboard />} />
-                <Route path="new-message" element={<NewMessage />} />
-                <Route path="inbox" element={<Inbox />} />
-                <Route path="drafts" element={<Draft />} />
-                <Route path="sent" element={<Sent />} />
-                <Route path="call-history" element={<CallHistory />} />
-                <Route path="add-contact" element={<AddContact />} />
-                <Route path="all-contacts" element={<AllContacts />} />
-              </Route>
-            </Routes>
-          </BrowserRouter>
+          <AuthProvider>
+            <BrowserRouter>
+              <Routes>
+                <Route
+                  path="/"
+                  element={
+                    <PrivateRoute>
+                      <AppRoot />
+                    </PrivateRoute>
+                  }
+                />
+                <Route
+                  path="/sign-in"
+                  element={
+                    <AuthRoute>
+                      <SignIn />
+                    </AuthRoute>
+                  }
+                />
+                <Route
+                  path="/dashboard"
+                  element={
+                    <PrivateRoute>
+                      <Layout />
+                    </PrivateRoute>
+                  }
+                >
+                  <Route index element={<Dashboard />} />
+                  <Route path="inbox" element={<Inbox />} />
+                  <Route path="drafts" element={<Draft />} />
+                  <Route path="sent" element={<Sent />} />
+                  <Route path="call-history" element={<CallHistory />} />
+                  <Route path="add-contact" element={<AddContact />} />
+                  <Route path="all-contacts" element={<AllContacts />} />
+                </Route>
+              </Routes>
+            </BrowserRouter>
+            <SendMessageDialog />
+            <CreateContactDialog />
+            <DialerDialog />
+          </AuthProvider>
         </ThemeProvider>
       </TRPCProvider>
     </QueryClientProvider>

@@ -23,6 +23,7 @@ import {
   SidebarSeparator,
 } from '@/components/ui/sidebar';
 
+import useMainStore from '@/lib/store';
 import { faker } from '@faker-js/faker';
 import { Link, useLocation } from 'react-router';
 import { NumberSwitcher } from './number-switcher';
@@ -32,7 +33,9 @@ const smsItems = [
     title: 'New Message',
     url: null,
     icon: MessageCirclePlus,
-    onClick: () => console.log('New Message'),
+    onClick: () => {
+      useMainStore.getState().setSendMessageModalShown(true);
+    },
   },
   {
     title: 'Inbox',
@@ -56,7 +59,7 @@ const callsItems = [
     title: 'New Call',
     url: null,
     icon: PhoneIcon,
-    onClick: () => console.log('Open Phone'),
+    onClick: () => useMainStore.getState().setDialerModalShown(true),
   },
   {
     title: 'Call History',
@@ -68,8 +71,9 @@ const callsItems = [
 const contactsItems = [
   {
     title: 'Add Contact',
-    url: '/dashboard/add-contact',
+    url: null,
     icon: UserPlus,
+    onClick: () => useMainStore.getState().setCreateContactModalShown(true),
   },
   {
     title: 'All Contacts',
@@ -103,7 +107,6 @@ const companies = [
 
 function BaseSidebar() {
   const location = useLocation();
-  console.log('PATH: ', location.pathname);
   return (
     <Sidebar>
       <SidebarContent className="overflow-x-hidden p-2">
@@ -200,10 +203,21 @@ function BaseSidebar() {
                     asChild
                     isActive={location.pathname === item.url}
                   >
-                    <Link to={item.url}>
-                      <item.icon />
-                      <span>{item.title}</span>
-                    </Link>
+                    {item.url ? (
+                      <Link to={item.url}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    ) : item.onClick ? (
+                      <Button
+                        onClick={item.onClick}
+                        className=" cursor-pointer"
+                        variant={'outline'}
+                      >
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Button>
+                    ) : null}
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}

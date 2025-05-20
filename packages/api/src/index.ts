@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 import fastifySocketIO from 'fastify-socket.io';
 
 import fastifyCors from '@fastify/cors';
+import twilioRoutes from './http/routes/twilio';
 import { auth } from './lib/firebase';
 import { appRouter } from './trpc';
 import { createContext } from './trpc/context';
@@ -26,6 +27,8 @@ app.get('/', (_, reply) => {
 app.get('/health', () => {
   return { message: 'OK' };
 });
+
+app.register(twilioRoutes, { path: '/twilio' });
 
 app.listen({ port: 3000 }, () => {
   console.log('API listening on http://localhost:3000');

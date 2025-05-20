@@ -10,7 +10,6 @@ function Dashboard() {
   const pingQuery = useQuery(trpc.ping.queryOptions());
   const protectedQuery = useQuery(trpc.testProtectedRoute.queryOptions());
   console.log({ pingQuery, protectedQuery, socket });
-
   return (
     <div className="flex justify-center items-center min-h-3/4">
       <p>Dashboard Index</p>
