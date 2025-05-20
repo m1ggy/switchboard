@@ -61,6 +61,7 @@ jobs:
           # === INSTALL + BUILD ===
           cd $APP_DIR
           pnpm install
+          export PATH=$(pnpm bin):$PATH
 
           cd $APP_DIR/packages/web
           pnpm build
