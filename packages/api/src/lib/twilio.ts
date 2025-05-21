@@ -1,5 +1,5 @@
-import twilio, { jwt, Twilio } from 'twilio';
-const { AccessToken } = jwt;
+import twilio, { type Twilio } from 'twilio';
+const { AccessToken } = twilio.jwt;
 const { VoiceGrant } = AccessToken;
 
 type MessageInstance = Awaited<ReturnType<Twilio['messages']['create']>>;
