@@ -14,34 +14,30 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import useMainStore from '@/lib/store';
+import { useTRPC } from '@/lib/trpc';
+import { useQuery } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import { useMemo, useState } from 'react';
 
-// Simulated contact data — replace this with real data from an API or store
-const sampleContacts = [
-  {
-    id: '1',
-    name: 'John Smith',
-    number: '+1234567890',
-    created_at: '2024-12-01T10:00:00Z',
-  },
-  {
-    id: '2',
-    name: 'Alice Tan',
-    number: '+639178888888',
-    created_at: '2025-04-15T12:45:00Z',
-  },
-];
-
 function AllContacts() {
+  const trpc = useTRPC();
+  const { activeCompany } = useMainStore();
+  const { data: contacts } = useQuery(
+    trpc.contacts.getCompanyContacts.queryOptions({
+      companyId: activeCompany?.id as string,
+    })
+  );
   const [search, setSearch] = useState('');
-  const [contacts] = useState(sampleContacts);
 
   const filteredContacts = useMemo(() => {
-    return contacts.filter((c) =>
-      [c.name.toLowerCase(), c.number.toLowerCase()].some((val) =>
-        val.includes(search.toLowerCase())
-      )
+    console.log({ contacts });
+    return (
+      (contacts ?? [])?.filter((c) =>
+        [c.label.toLowerCase(), c.number.toLowerCase()].some((val) =>
+          val.includes(search.toLowerCase())
+        )
+      ) ?? []
     );
   }, [contacts, search]);
 
@@ -67,10 +63,10 @@ function AllContacts() {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {filteredContacts.length > 0 ? (
-            filteredContacts.map((contact) => (
+          {filteredContacts?.length > 0 ? (
+            filteredContacts?.map((contact) => (
               <TableRow key={contact.id}>
-                <TableCell>{contact.name}</TableCell>
+                <TableCell>{contact.label}</TableCell>
                 <TableCell>{contact.number}</TableCell>
                 <TableCell>
                   {formatDistanceToNow(new Date(contact.created_at), {

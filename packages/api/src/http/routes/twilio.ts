@@ -15,8 +15,8 @@ async function routes(app: FastifyInstance) {
       response.say('Connecting your call...');
       response.dial({ callerId: CallerId }, To);
     } else {
-      response.say('You have an incoming call. Connecting to an agent.');
-      const dial = response.dial();
+      response.say('Connecting your call, please wait...');
+      const dial = response.dial({ callerId: From });
       dial.client('client');
     }
 

@@ -40,6 +40,7 @@ exports.up = (pgm) => {
     company_id: { type: 'uuid', notNull: true, references: 'companies(id)' },
     number: { type: 'text', notNull: true },
     created_at: { type: 'timestamp', notNull: true },
+    label: { type: 'text' },
   });
 
   pgm.createIndex('numbers', 'company_id');

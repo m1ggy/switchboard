@@ -38,10 +38,8 @@ export class TwilioVoiceClient {
   private registerEvents() {
     if (!this.device) return;
 
-    this.device.on('incoming', (connection: TwilioConnection) => {
-      connection.then((call) => {
-        this.onIncomingCall?.(call);
-      });
+    this.device.on('incoming', (connection: Call) => {
+      this.onIncomingCall?.(connection);
     });
 
     this.device.on('disconnect', () => {

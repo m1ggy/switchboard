@@ -1,13 +1,11 @@
+import { Toaster } from '@/components/ui/sonner';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createTRPCClient, httpBatchLink } from '@trpc/client';
 import type { AppRouter } from 'api/trpc';
 import { useState } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router';
 import AppRoot from './AppRoot';
-import CreateContactDialog from './components/create-contact-dialog';
-import DialerDialog from './components/dialer-dialog';
 import Layout from './components/main-layout';
-import SendMessageDialog from './components/send-message';
 import { ThemeProvider } from './components/theme-provider';
 import { AuthProvider } from './hooks/auth-provider';
 import { auth } from './lib/firebase';
@@ -34,7 +32,7 @@ function makeQueryClient() {
   });
 }
 let browserQueryClient: QueryClient | undefined = undefined;
-function getQueryClient() {
+export function getQueryClient() {
   if (typeof window === 'undefined') {
     // Server: always make a new query client
     return makeQueryClient();
@@ -64,7 +62,6 @@ function App() {
     })
   );
 
-  console.log({ env: import.meta.env });
   return (
     <QueryClientProvider client={queryClient}>
       <TRPCProvider trpcClient={trpcClient} queryClient={queryClient}>
@@ -106,9 +103,7 @@ function App() {
                 </Route>
               </Routes>
             </BrowserRouter>
-            <SendMessageDialog />
-            <CreateContactDialog />
-            <DialerDialog />
+            <Toaster />
           </AuthProvider>
         </ThemeProvider>
       </TRPCProvider>

@@ -18,20 +18,42 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import NumberWithCopy from './number-copy';
+import { Skeleton } from './ui/skeleton';
+
+type Number = {
+  number: string;
+  label: string;
+};
 
 export function NumberSwitcher({
   numbers,
+  isLoading,
+  defaultValue,
 }: {
-  numbers: {
-    number: string;
-    label: string;
-  }[];
+  numbers: Number[];
+  isLoading?: boolean;
+  defaultValue?: Number | null;
 }) {
   const { isMobile } = useSidebar();
-  const [activeNumber, setActiveNumber] = React.useState(numbers[0]);
+  const [activeNumber, setActiveNumber] = React.useState<Number | null>(null);
 
-  if (!activeNumber) {
-    return null;
+  React.useEffect(() => {
+    if (numbers.length && !activeNumber && !defaultValue) {
+      setActiveNumber(numbers[0]);
+    } else if (defaultValue && numbers.length && !activeNumber) {
+      setActiveNumber(defaultValue);
+    }
+  }, [numbers, activeNumber, defaultValue]);
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col gap-2">
+        <Skeleton className="w-[230px] h-[25px]" />
+        <div className="flex justify-center">
+          <Skeleton className="w-[200px] h-[24px]" />
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -45,7 +67,7 @@ export function NumberSwitcher({
             >
               <div className="grid flex-1 text-left text-sm leading-tight gap-1">
                 <span className="truncate font-semibold text-xs text-gray-400">
-                  {activeNumber.label}
+                  {activeNumber?.label}
                 </span>
               </div>
               <ChevronsUpDown className="ml-auto" />
@@ -76,12 +98,12 @@ export function NumberSwitcher({
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="gap-2 p-2">
+            <DropdownMenuItem className="gap-2 p-2" disabled>
               <div className="flex size-6 items-center justify-center rounded-md border bg-background">
                 <Plus className="size-4" />
               </div>
               <div className="font-medium text-muted-foreground">
-                Add Number
+                Add Number (unavailable)
               </div>
             </DropdownMenuItem>
           </DropdownMenuContent>

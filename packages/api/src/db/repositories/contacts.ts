@@ -10,19 +10,36 @@ export const ContactsRepository = {
     number,
     company_id,
     created_at,
+    label,
   }: {
     id: string;
     number: string;
     company_id: string;
     created_at?: Date;
+    label: string;
   }): Promise<Contact> {
+    // Check if a contact already exists with the same number OR label for the same company
+    const existing = await pool.query<Contact>(
+      `SELECT * FROM contacts
+     WHERE company_id = $1
+       AND (number = $2 OR label = $3)
+     LIMIT 1`,
+      [company_id, number, label]
+    );
+
+    if (existing.rows.length > 0) {
+      throw new Error(
+        'A contact with the same number or label already exists.'
+      );
+    }
+
     const res = await pool.query<Contact>(
       `INSERT INTO contacts (
-         id, number, company_id, created_at
-       ) VALUES (
-         $1, $2, $3, $4
-       ) RETURNING *`,
-      [id, number, company_id, created_at || new Date()]
+       id, number, company_id, created_at, label
+     ) VALUES (
+       $1, $2, $3, $4, $5
+     ) RETURNING *`,
+      [id, number, company_id, created_at || new Date(), label]
     );
 
     return res.rows[0];

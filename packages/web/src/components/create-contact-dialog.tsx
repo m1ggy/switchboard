@@ -1,6 +1,10 @@
+import { getQueryClient } from '@/App';
 import useMainStore from '@/lib/store';
+import { useTRPC } from '@/lib/trpc';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useMutation } from '@tanstack/react-query';
 import { useForm, type SubmitHandler } from 'react-hook-form';
+import { toast } from 'sonner';
 import { z } from 'zod';
 import { Button } from './ui/button';
 import {
@@ -31,14 +35,39 @@ const schema = z.object({
 type Schema = z.infer<typeof schema>;
 
 function CreateContactDialog() {
+  const trpc = useTRPC();
+  const queryClient = getQueryClient();
+
+  const { activeCompany } = useMainStore();
+  const { mutateAsync: createContact, isPending: contactCreationLoading } =
+    useMutation(trpc.contacts.createContact.mutationOptions());
   const form = useForm<Schema>({
     resolver: zodResolver(schema),
   });
   const { setCreateContactModalShown, createContactModalShown } =
     useMainStore();
 
-  const onSubmit: SubmitHandler<Schema> = (data) => {
-    console.log({ data });
+  const onSubmit: SubmitHandler<Schema> = async (data) => {
+    try {
+      console.log({ data, activeCompany });
+
+      if (activeCompany) {
+        await createContact({
+          number: data.number,
+          label: data.label,
+          companyId: activeCompany?.id as string,
+        });
+        await queryClient.invalidateQueries({
+          queryKey: trpc.contacts.getCompanyContacts.queryOptions({
+            companyId: activeCompany.id as string,
+          }).queryKey,
+        });
+        setCreateContactModalShown(false);
+        toast.success('Contact created');
+      }
+    } catch {
+      toast.error('Failed to create contact');
+    }
   };
   return (
     <Dialog
@@ -91,7 +120,11 @@ function CreateContactDialog() {
           </form>
         </Form>
         <DialogFooter>
-          <Button form="create-contact" type="submit">
+          <Button
+            form="create-contact"
+            type="submit"
+            disabled={contactCreationLoading}
+          >
             Create
           </Button>
         </DialogFooter>

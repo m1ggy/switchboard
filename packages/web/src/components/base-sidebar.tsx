@@ -24,10 +24,14 @@ import {
 } from '@/components/ui/sidebar';
 
 import useMainStore from '@/lib/store';
+import { useTRPC } from '@/lib/trpc';
 import { faker } from '@faker-js/faker';
+import { useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { Link, useLocation } from 'react-router';
 import { NumberSwitcher } from './number-switcher';
 import { Button } from './ui/button';
+import { Skeleton } from './ui/skeleton';
 const smsItems = [
   {
     title: 'New Message',
@@ -107,6 +111,33 @@ const companies = [
 
 function BaseSidebar() {
   const location = useLocation();
+  const trpc = useTRPC();
+  const { activeCompany, activeNumber, setActiveCompany, setActiveNumber } =
+    useMainStore();
+
+  const { data: companies, isFetching: companiesLoading } = useQuery(
+    trpc.companies.getUserCompanies.queryOptions()
+  );
+
+  const currentCompany = companies?.[0];
+
+  const { data: numbers, isFetching: numbersLoading } = useQuery(
+    trpc.numbers.getCompanyNumbers.queryOptions({
+      companyId: currentCompany?.id,
+    })
+  );
+
+  useEffect(() => {
+    if (companies?.length) {
+      setActiveCompany(companies?.[0]);
+    }
+  }, [companies, setActiveCompany]);
+
+  useEffect(() => {
+    if (numbers?.length) {
+      setActiveNumber(numbers?.[0]);
+    }
+  }, [setActiveNumber, numbers]);
   return (
     <Sidebar>
       <SidebarContent className="overflow-x-hidden p-2">
@@ -114,7 +145,18 @@ function BaseSidebar() {
           Switchboard
         </SidebarHeader>
         <SidebarSeparator />
-        <NumberSwitcher numbers={companies} />
+        {companiesLoading ? (
+          <Skeleton className="w-[200px] h-[20px] rounded-full" />
+        ) : (
+          <p className="text-muted-foreground font-semibold">
+            {activeCompany?.name}
+          </p>
+        )}
+        <NumberSwitcher
+          numbers={numbers ?? []}
+          isLoading={numbersLoading}
+          defaultValue={activeNumber}
+        />
         <SidebarSeparator />
 
         <SidebarMenu>
