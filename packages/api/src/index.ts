@@ -28,7 +28,7 @@ app.get('/health', () => {
   return { message: 'OK' };
 });
 
-app.register(twilioRoutes, { path: '/twilio' });
+app.register(twilioRoutes, { prefix: '/twilio' });
 
 app.listen({ port: 3000 }, () => {
   console.log('API listening on http://localhost:3000');
