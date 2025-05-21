@@ -12,4 +12,7 @@ export default defineConfig({
       api: path.resolve(__dirname, '../api/src'),
     },
   },
+  preview: {
+    allowedHosts: ['stagingspace.org'],
+  },
 });
