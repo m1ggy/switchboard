@@ -6,14 +6,14 @@ async function routes(app: FastifyInstance) {
   app.post('/voice', async (request, reply) => {
     const response = new twiml.VoiceResponse();
 
-    const { To, From, Direction, Caller } = request.body as Record<
+    const { To, From, Direction, Caller, CallerId } = request.body as Record<
       string,
       string
     >;
 
     if (To?.startsWith('+')) {
       response.say('Connecting your call...');
-      response.dial(To);
+      response.dial({ callerId: CallerId }, To);
     } else {
       response.say('You have an incoming call. Connecting to an agent.');
       const dial = response.dial();
