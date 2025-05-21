@@ -3,12 +3,13 @@ import Fastify from 'fastify';
 import fastifySocketIO from 'fastify-socket.io';
 
 import fastifyCors from '@fastify/cors';
+import formBody from '@fastify/formbody';
 import twilioRoutes from './http/routes/twilio';
 import { auth } from './lib/firebase';
 import { appRouter } from './trpc';
 import { createContext } from './trpc/context';
 const app = Fastify();
-
+app.register(formBody);
 app.register(fastifyCors, { origin: ['http://localhost:5173'] });
 app.register(fastifyTRPCPlugin, {
   prefix: '/trpc',
