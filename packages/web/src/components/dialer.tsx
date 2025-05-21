@@ -1,6 +1,4 @@
-import { useTwilioVoice } from '@/hooks/use-twilio-voice';
-import { useTRPC } from '@/lib/trpc';
-import { useQuery } from '@tanstack/react-query';
+import { useTwilioVoice } from '@/hooks/twilio-provider';
 import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import { Phone } from 'lucide-react';
 import { useState } from 'react';
@@ -11,9 +9,8 @@ const buttons = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
 
 function Dialer() {
   const [number, setNumber] = useState('');
-  const trpc = useTRPC();
-  const query = useQuery(trpc.twilio.token.queryOptions());
-  const { makeCall } = useTwilioVoice(query.data as string);
+
+  const { makeCall } = useTwilioVoice();
 
   const handleCall = () => {
     const cleaned = number.replace(/[^\d+]/g, '');

@@ -52,7 +52,7 @@ jobs:
           fi
 
           # === INJECT SECRETS ===
-          echo "${{ secrets.ENV_FILE }}" > $APP_DIR/packages/api/.env
+          echo "${{ secrets.API_ENV_FILE }}" > $APP_DIR/packages/api/.env
           echo '${{ secrets.FIREBASE_JSON }}' > $APP_DIR/packages/api/firebase.json
           echo "${{ secrets.WEB_ENV_FILE }}" > $APP_DIR/packages/web/.env
 
