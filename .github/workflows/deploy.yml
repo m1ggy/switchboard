@@ -1,4 +1,4 @@
-name: Deploy Web + API to VPS (pnpm + Caddy + PM2)
+name: Deploy Web + API to VPS (pnpm + PM2 + Caddy)
 
 on:
   push:
@@ -20,23 +20,21 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy to VPS
+      - name: Deploy via SSH
         run: |
           ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'EOF'
 
-          # === BASIC SETUP ===
-          export APP_DIR=~/apps/turbo-app
-          export DOMAIN=${{ secrets.DOMAIN_NAME }}
-          export API_DOMAIN=api.$DOMAIN
-          export REPO_URL=https://github.com/${{ github.repository }}.git
+          # === VARIABLES ===
+          APP_DIR=~/apps/turbo-app
+          DOMAIN=${{ secrets.DOMAIN_NAME }}
+          API_DOMAIN=api.$DOMAIN
+          REPO_URL=https://github.com/${{ github.repository }}.git
 
-          # === INSTALL NODE + PNPM ===
+          # === INSTALL NODE, PNPM, PM2 ===
           curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
           sudo apt-get install -y nodejs
           corepack enable
           corepack prepare pnpm@latest --activate
-
-          # === INSTALL PM2 ===
           sudo npm install -g pm2
 
           # === INSTALL CADDY ===
@@ -46,42 +44,45 @@ jobs:
           sudo apt update
           sudo apt install -y caddy
 
-          # === CLONE OR UPDATE PROJECT ===
+          # === CLONE / PULL PROJECT ===
           if [ ! -d "$APP_DIR" ]; then
             git clone $REPO_URL $APP_DIR
           else
             cd $APP_DIR && git pull origin main
           fi
 
-          # === WRITE SECRET FILES ===
+          # === INJECT SECRETS ===
           echo "${{ secrets.ENV_FILE }}" > $APP_DIR/packages/api/.env
           echo '${{ secrets.FIREBASE_JSON }}' > $APP_DIR/packages/api/firebase.json
           echo "${{ secrets.WEB_ENV_FILE }}" > $APP_DIR/packages/web/.env
 
-          # === INSTALL + BUILD ===
+          # === INSTALL MONOREPO ===
           cd $APP_DIR
           pnpm install
-          export PATH=$(pnpm bin):$PATH
 
+          # === BUILD FRONTEND ===
           cd $APP_DIR/packages/web
-          pnpm build
+          NODE_OPTIONS="--max-old-space-size=1024" pnpm run build
 
+          # === START FRONTEND VIA PM2 (vite preview) ===
+          pm2 delete web || true
+          pm2 start "pnpm run preview" --name web --cwd $APP_DIR/packages/web
+
+          # === BUILD + START API ===
           cd $APP_DIR/packages/api
-          pnpm build
+          NODE_OPTIONS="--max-old-space-size=1024" pnpm run build
 
-          # === DEPLOY API VIA PM2 ===
           if [ -f "$APP_DIR/packages/api/dist/index.mjs" ]; then
-          pm2 delete api || true
-          pm2 start $APP_DIR/packages/api/dist/index.mjs --name api --interpreter node
+            pm2 delete api || true
+            pm2 start dist/index.mjs --name api --interpreter node
           else
-          echo "❌ dist/index.mjs not found. Build may have failed."
+            echo "❌ dist/index.mjs not found, skipping API start"
           fi
 
           # === CADDY CONFIG ===
           sudo tee /etc/caddy/Caddyfile > /dev/null <<EOC
           $DOMAIN {
-            root * $APP_DIR/packages/web/dist
-            file_server
+            reverse_proxy localhost:4173
           }
 
           $API_DOMAIN {
@@ -89,5 +90,5 @@ jobs:
           }
           EOC
 
-            sudo systemctl reload caddy
+          sudo systemctl reload caddy
           EOF
