@@ -1,6 +1,7 @@
 import { type FastifyInstance } from 'fastify';
-import { twiml } from 'twilio';
+import twilio from 'twilio';
 
+const { twiml } = twilio;
 async function routes(app: FastifyInstance) {
   app.post('/voice', async (request, reply) => {
     const response = new twiml.VoiceResponse();
