@@ -10,7 +10,9 @@ import { appRouter } from './trpc';
 import { createContext } from './trpc/context';
 const app = Fastify();
 app.register(formBody);
-app.register(fastifyCors, { origin: ['http://localhost:5173'] });
+app.register(fastifyCors, {
+  origin: ['http://localhost:5173', 'https://stagingspace.org'],
+});
 app.register(fastifyTRPCPlugin, {
   prefix: '/trpc',
   trpcOptions: { router: appRouter, createContext },

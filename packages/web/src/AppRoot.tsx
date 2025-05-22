@@ -10,6 +10,8 @@ function AppRoot() {
   useEffect(() => {
     if (!user) {
       navigate('/sign-in');
+    } else {
+      navigate('/dashboard');
     }
   }, [user, navigate]);
   return <PageLoader />;
