@@ -1,4 +1,4 @@
-name: Deploy Web + API to VPS (pnpm + PM2 + Caddy)
+name: Deploy Web + API to VPS (pnpm + PM2 + Caddy + serve)
 
 on:
   push:
@@ -64,9 +64,12 @@ jobs:
           cd $APP_DIR/packages/web
           NODE_OPTIONS="--max-old-space-size=1024" pnpm run build
 
-          # === START FRONTEND VIA PM2 (vite preview) ===
-          pm2 delete web || true
-          pm2 start "pnpm run preview" --name web --cwd $APP_DIR/packages/web
+          if [ -f "dist/index.html" ]; then
+            pm2 delete web || true
+            pm2 start "npx serve dist -l 4173" --name web --cwd $APP_DIR/packages/web
+          else
+            echo "❌ Web build failed — dist/index.html not found."
+          fi
 
           # === BUILD + START API ===
           cd $APP_DIR/packages/api
