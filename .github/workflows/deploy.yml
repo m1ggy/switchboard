@@ -1,4 +1,4 @@
-name: Deploy Web + API to VPS (pnpm + PM2 + Caddy + serve)
+name: Deploy Web + API to VPS (pnpm + PM2 + Caddy + Static Serve)
 
 on:
   push:
@@ -26,6 +26,7 @@ jobs:
 
           # === VARIABLES ===
           APP_DIR=~/apps/turbo-app
+          WEB_ROOT=/var/www/stagingspace
           DOMAIN=${{ secrets.DOMAIN_NAME }}
           API_DOMAIN=api.$DOMAIN
           REPO_URL=https://github.com/${{ github.repository }}.git
@@ -65,7 +66,11 @@ jobs:
           NODE_OPTIONS="--max-old-space-size=1024" pnpm run build
 
           if [ -f "dist/index.html" ]; then
-            pm2 delete web || true
+            echo "✅ Web build succeeded."
+
+            # Move build output to public web root
+            sudo mkdir -p $WEB_ROOT
+            sudo cp -r dist/* $WEB_ROOT/
           else
             echo "❌ Web build failed — dist/index.html not found."
           fi
@@ -84,7 +89,7 @@ jobs:
           # === CADDY CONFIG ===
           sudo tee /etc/caddy/Caddyfile > /dev/null <<EOC
           $DOMAIN {
-            root * $APP_DIR/packages/web/dist
+            root * $WEB_ROOT
             file_server
             try_files {path} /index.html
           }
@@ -93,3 +98,6 @@ jobs:
             reverse_proxy localhost:3000
           }
           EOC
+
+          sudo systemctl reload caddy
+          EOF
