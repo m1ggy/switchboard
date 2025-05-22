@@ -49,6 +49,9 @@ export class TwilioVoiceClient {
     this.device.on('error', (error) => {
       this.onError?.(error);
     });
+    this.device.on('cancel', () => {
+      this.onDisconnect?.();
+    });
   }
 
   async connect(

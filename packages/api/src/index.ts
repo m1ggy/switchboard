@@ -8,7 +8,18 @@ import twilioRoutes from './http/routes/twilio';
 import { auth } from './lib/firebase';
 import { appRouter } from './trpc';
 import { createContext } from './trpc/context';
-const app = Fastify();
+const app = Fastify({
+  logger: {
+    level: 'info',
+    transport: {
+      target: 'pino-pretty',
+      options: {
+        colorize: true,
+        translateTime: 'SYS:standard',
+      },
+    },
+  },
+});
 app.register(formBody);
 app.register(fastifyCors, {
   origin: ['http://localhost:5173', 'https://stagingspace.org'],

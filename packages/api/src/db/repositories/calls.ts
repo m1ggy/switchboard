@@ -1,5 +1,5 @@
 import pool from '@/lib/pg';
-import { Call } from '@/types/db';
+import { Call, Contact } from '@/types/db';
 
 export const CallsRepository = {
   /**
@@ -72,6 +72,37 @@ export const CallsRepository = {
       [numberId]
     );
     return res.rows;
+  },
+
+  /**
+   * Get all calls for a number, including contact details
+   */
+  async findByNumberWithContact(
+    numberId: string
+  ): Promise<(Call & { contact: Contact })[]> {
+    const res = await pool.query(
+      `
+    SELECT 
+      calls.*,
+      jsonb_build_object(
+        'id', contacts.id,
+        'number', contacts.number,
+        'created_at', contacts.created_at,
+        'company_id', contacts.company_id,
+        'label', contacts.label
+      ) AS contact
+    FROM calls
+    JOIN contacts ON calls.contact_id = contacts.id
+    WHERE calls.number_id = $1
+    ORDER BY calls.initiated_at DESC
+    `,
+      [numberId]
+    );
+
+    return res.rows.map((row) => ({
+      ...row,
+      contact: row.contact,
+    }));
   },
 
   /**

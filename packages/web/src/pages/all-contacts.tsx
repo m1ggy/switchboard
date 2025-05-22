@@ -6,6 +6,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import Loader from '@/components/ui/loader';
 import {
   Table,
   TableBody,
@@ -23,7 +24,7 @@ import { useMemo, useState } from 'react';
 function AllContacts() {
   const trpc = useTRPC();
   const { activeCompany } = useMainStore();
-  const { data: contacts } = useQuery(
+  const { data: contacts, isLoading } = useQuery(
     trpc.contacts.getCompanyContacts.queryOptions({
       companyId: activeCompany?.id as string,
     })
@@ -62,6 +63,7 @@ function AllContacts() {
             <TableHead className="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
+
         <TableBody>
           {filteredContacts?.length > 0 ? (
             filteredContacts?.map((contact) => (
@@ -92,7 +94,7 @@ function AllContacts() {
                 </TableCell>
               </TableRow>
             ))
-          ) : (
+          ) : !isLoading ? (
             <TableRow>
               <TableCell
                 colSpan={4}
@@ -101,9 +103,18 @@ function AllContacts() {
                 No contacts found.
               </TableCell>
             </TableRow>
-          )}
+          ) : null}
         </TableBody>
       </Table>
+      {isLoading && (
+        <div className="flex h-[300px] justify-center items-center w-full gap-2">
+          {' '}
+          <Loader />
+          <span className="text-muted-foreground text-sm font-semibold">
+            Loading Contacts
+          </span>
+        </div>
+      )}
     </div>
   );
 }
