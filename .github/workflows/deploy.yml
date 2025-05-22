@@ -66,7 +66,6 @@ jobs:
 
           if [ -f "dist/index.html" ]; then
             pm2 delete web || true
-            pm2 start "npx serve dist -l 4173" --name web --cwd $APP_DIR/packages/web
           else
             echo "❌ Web build failed — dist/index.html not found."
           fi
@@ -85,13 +84,12 @@ jobs:
           # === CADDY CONFIG ===
           sudo tee /etc/caddy/Caddyfile > /dev/null <<EOC
           $DOMAIN {
-            reverse_proxy localhost:4173
+            root * $APP_DIR/packages/web/dist
+            file_server
+            try_files {path} /index.html
           }
 
           $API_DOMAIN {
             reverse_proxy localhost:3000
           }
           EOC
-
-          sudo systemctl reload caddy
-          EOF
