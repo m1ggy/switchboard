@@ -2,6 +2,7 @@ import { TwilioVoiceProvider } from '@/hooks/twilio-provider';
 import { useTRPC } from '@/lib/trpc';
 import { useQuery } from '@tanstack/react-query';
 import { Outlet } from 'react-router';
+import ActiveCallDialog from './active-call-dialog';
 import BaseSidebar from './base-sidebar';
 import CreateContactDialog from './create-contact-dialog';
 import DialerDialog from './dialer-dialog';
@@ -35,6 +36,7 @@ function Layout() {
         <CreateContactDialog />
         <DialerDialog />
         <IncomingCallDialog />
+        <ActiveCallDialog />
       </SidebarProvider>
     </TwilioVoiceProvider>
   );

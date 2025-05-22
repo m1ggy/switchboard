@@ -8,19 +8,21 @@ import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import { Phone, X } from 'lucide-react';
 import { useState } from 'react';
 
+import clsx from 'clsx';
 import { Button } from './ui/button';
-import { PhoneInput } from './ui/phone-input';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from './ui/select';
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from './ui/command';
+import { PhoneInput } from './ui/phone-input';
 
 const buttons = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
 
 function Dialer() {
+  const [mode, setMode] = useState<'phone' | 'contact'>('phone');
   const trpc = useTRPC();
   const { activeCompany } = useMainStore();
 
@@ -66,10 +68,27 @@ function Dialer() {
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="flex gap-2 mb-2">
+        <Button
+          type="button"
+          variant={mode === 'phone' ? 'default' : 'outline'}
+          onClick={() => setMode('phone')}
+        >
+          Phone Number
+        </Button>
+        <Button
+          type="button"
+          variant={mode === 'contact' ? 'default' : 'outline'}
+          onClick={() => setMode('contact')}
+        >
+          From Contacts
+        </Button>
+      </div>
+
       {selectedContactId && selectedContact && (
         <div className="flex items-center justify-between text-sm text-green-600 font-medium px-1">
           <span>
-            Using contact: {selectedContact.label} — {selectedContact.number}
+            {selectedContact.label} — {selectedContact.number}
           </span>
           <Button
             variant="ghost"
@@ -83,28 +102,37 @@ function Dialer() {
         </div>
       )}
 
-      {!number && contacts && (
-        <Select
-          onValueChange={(value) => {
-            setSelectedContactId(value);
-            setNumber(''); // ensure manual input is cleared
-          }}
-          value={selectedContactId ?? ''}
-        >
-          <SelectTrigger className="w-full">
-            <SelectValue placeholder="Select contact" />
-          </SelectTrigger>
-          <SelectContent>
+      {!number && contacts && mode === 'contact' && (
+        <Command className="border rounded-md shadow-sm">
+          <CommandInput placeholder="Search contacts..." />
+          <CommandList>
+            <CommandEmpty>No contacts found.</CommandEmpty>
             {contacts.map((contact) => (
-              <SelectItem key={contact.id} value={contact.id}>
-                {contact.label} — {contact.number}
-              </SelectItem>
+              <CommandItem
+                key={contact.phone}
+                value={contact.phone}
+                onSelect={() => {
+                  setSelectedContactId(contact.id);
+                }}
+                className={clsx(
+                  'cursor-pointer',
+                  selectedContactId == contact.id &&
+                    ' bg-accent text-accent-foreground'
+                )}
+              >
+                <div>
+                  <p className="font-medium">{contact.label}</p>
+                  <p className="text-muted-foreground text-sm">
+                    {contact.number}
+                  </p>
+                </div>
+              </CommandItem>
             ))}
-          </SelectContent>
-        </Select>
+          </CommandList>
+        </Command>
       )}
 
-      {!selectedContactId && (
+      {!selectedContactId && mode === 'phone' && (
         <>
           <PhoneInput
             value={number}

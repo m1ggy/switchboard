@@ -1,3 +1,4 @@
+import useMainStore from '@/lib/store';
 import { TwilioVoiceClient } from '@/lib/voice';
 import type { Call } from '@twilio/voice-sdk';
 import {
@@ -19,6 +20,8 @@ interface TwilioVoiceContextValue {
   incomingCall: Call | null;
   acceptIncoming: () => void;
   rejectIncoming: () => void;
+  activeCall: Call | null;
+  setActiveCall: (call: Call | null) => void;
 }
 
 const TwilioVoiceContext = createContext<TwilioVoiceContextValue | null>(null);
@@ -37,10 +40,12 @@ interface Props {
 }
 
 export const TwilioVoiceProvider = ({ token, children }: Props) => {
+  const { setDialerModalShown } = useMainStore();
   const clientRef = useRef<TwilioVoiceClient | null>(null);
   const [ready, setReady] = useState(false);
   const [callState, setCallState] = useState<CallState>('idle');
   const [incomingCall, setIncomingCall] = useState<Call | null>(null);
+  const [activeCall, setActiveCall] = useState<Call | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -56,10 +61,13 @@ export const TwilioVoiceProvider = ({ token, children }: Props) => {
         console.log('📴 Call disconnected');
         setCallState('disconnected');
         setIncomingCall(null);
+        setActiveCall(null);
       },
       onError: (err) => {
         console.error('❌ Twilio error', err);
         setCallState('error');
+        setActiveCall(null);
+        setIncomingCall(null);
       },
     });
 
@@ -79,20 +87,25 @@ export const TwilioVoiceProvider = ({ token, children }: Props) => {
 
   const makeCall = (params: Record<string, string>) => {
     if (clientRef.current) {
-      setCallState('connected');
-      clientRef.current.connect(params);
+      clientRef.current.connect(params).then((call) => {
+        setCallState('connected');
+        setActiveCall(call as unknown as Call);
+        setDialerModalShown(false);
+      });
     }
   };
 
   const hangUp = () => {
     clientRef.current?.disconnect();
     setCallState('disconnected');
+    setActiveCall(null);
   };
 
   const acceptIncoming = () => {
     if (incomingCall) {
       incomingCall.accept();
       setCallState('connected');
+      setActiveCall(incomingCall);
     }
   };
 
@@ -112,6 +125,8 @@ export const TwilioVoiceProvider = ({ token, children }: Props) => {
         incomingCall,
         acceptIncoming,
         rejectIncoming,
+        activeCall,
+        setActiveCall,
       }}
     >
       {children}

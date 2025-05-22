@@ -1,11 +1,9 @@
 import useMainStore from '@/lib/store';
 import Dialer from './dialer';
-import { Button } from './ui/button';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from './ui/dialog';
@@ -20,9 +18,6 @@ function DialerDialog() {
           <DialogDescription>Initiate a call</DialogDescription>
         </DialogHeader>
         <Dialer />
-        <DialogFooter>
-          <Button>Close</Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

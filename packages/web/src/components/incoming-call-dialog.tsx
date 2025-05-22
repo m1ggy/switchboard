@@ -11,10 +11,15 @@ import {
 import { useTwilioVoice } from '@/hooks/twilio-provider';
 
 export function IncomingCallDialog() {
-  const { incomingCall, acceptIncoming, rejectIncoming, callState } =
-    useTwilioVoice();
+  const {
+    incomingCall,
+    acceptIncoming,
+    rejectIncoming,
+    callState,
+    activeCall,
+  } = useTwilioVoice();
 
-  const open = callState === 'incoming' && !!incomingCall;
+  const open = callState === 'incoming' && !!incomingCall && !activeCall;
 
   return (
     <Dialog open={open}>
