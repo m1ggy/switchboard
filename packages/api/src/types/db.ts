@@ -25,6 +25,7 @@ export interface NumberEntry {
   company_id: string;
   number: string;
   created_at: Date;
+  label: string;
 }
 
 export interface Contact {

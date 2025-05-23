@@ -1,4 +1,5 @@
 import pool from '@/lib/pg';
+import { NumberEntry } from '@/types/db';
 
 interface Company {
   id: string;
@@ -58,17 +59,30 @@ export const UserCompaniesRepository = {
     return this.create({ userId, companyId });
   },
 
-  async findCompaniesByUserId(userId: string): Promise<Company[]> {
-    const res = await pool.query<Company>(
+  async findCompaniesByUserId(
+    userId: string
+  ): Promise<(Company & { numbers: NumberEntry[] })[]> {
+    const res = await pool.query(
       `
-      SELECT c.*
-      FROM companies c
-      JOIN user_companies uc ON c.id = uc.company_id
-      WHERE uc.user_id = $1
-      `,
+    SELECT 
+      c.*, 
+      COALESCE(json_agg(
+        jsonb_build_object(
+          'id', n.id,
+          'number', n.number,
+          'label', n.label,
+          'created_at', n.created_at
+        )
+      ) FILTER (WHERE n.id IS NOT NULL), '[]') AS numbers
+    FROM companies c
+    JOIN user_companies uc ON c.id = uc.company_id
+    LEFT JOIN numbers n ON c.id = n.company_id
+    WHERE uc.user_id = $1
+    GROUP BY c.id
+    `,
       [userId]
     );
 
-    return res.rows;
+    return res.rows as (Company & { numbers: NumberEntry[] })[];
   },
 };

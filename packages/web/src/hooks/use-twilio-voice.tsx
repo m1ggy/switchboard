@@ -36,7 +36,6 @@ export const useTwilioVoice = (token: string) => {
   }, [token]);
 
   const makeCall = (params: Record<string, string>) => {
-    console.log({ clientRef });
     clientRef.current?.connect(params);
   };
 

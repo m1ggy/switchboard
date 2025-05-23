@@ -49,8 +49,6 @@ function CreateContactDialog() {
 
   const onSubmit: SubmitHandler<Schema> = async (data) => {
     try {
-      console.log({ data, activeCompany });
-
       if (activeCompany) {
         await createContact({
           number: data.number,

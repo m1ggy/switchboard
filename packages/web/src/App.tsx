@@ -27,6 +27,7 @@ function makeQueryClient() {
         // With SSR, we usually want to set some default staleTime
         // above 0 to avoid refetching immediately on the client
         staleTime: 60 * 1000,
+        refetchOnWindowFocus: false,
       },
     },
   });
@@ -57,6 +58,7 @@ function App() {
             const token = currentUser ? await currentUser.getIdToken() : null;
             return token ? { Authorization: `Bearer ${token}` } : {};
           },
+          maxURLLength: 2048,
         }),
       ],
     })

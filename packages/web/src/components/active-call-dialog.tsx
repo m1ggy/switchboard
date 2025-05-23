@@ -36,9 +36,6 @@ function ActiveCallDialog() {
   );
 
   const [callerId, setCallerId] = useState('Unknown');
-
-  console.log({ activeCall });
-
   useEffect(() => {
     if (!activeCall) return;
     if (!contacts) return;

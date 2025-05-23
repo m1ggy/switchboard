@@ -1,9 +1,11 @@
 import { TwilioVoiceProvider } from '@/hooks/twilio-provider';
+import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
 import { useQuery } from '@tanstack/react-query';
 import { Outlet } from 'react-router';
 import ActiveCallDialog from './active-call-dialog';
 import BaseSidebar from './base-sidebar';
+import CompanySwitcherDialog from './company-switcher-dialog';
 import CreateContactDialog from './create-contact-dialog';
 import DialerDialog from './dialer-dialog';
 import Header from './header';
@@ -13,17 +15,16 @@ import { SidebarProvider } from './ui/sidebar';
 
 function Layout() {
   const trpc = useTRPC();
+  const { activeNumber } = useMainStore();
 
   const { data: token } = useQuery({
-    ...trpc.twilio.token.queryOptions(),
+    ...trpc.twilio.token.queryOptions({ identity: activeNumber?.number }),
     refetchInterval: 4 * 60 * 60 * 1000,
     refetchOnMount: true,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
+    enabled: Boolean(activeNumber),
   });
-
-  console.log('MAIN: ', { token });
-
   return (
     <TwilioVoiceProvider token={token ?? ''}>
       <SidebarProvider className="transition-all">
@@ -37,6 +38,7 @@ function Layout() {
         <DialerDialog />
         <IncomingCallDialog />
         <ActiveCallDialog />
+        <CompanySwitcherDialog />
       </SidebarProvider>
     </TwilioVoiceProvider>
   );

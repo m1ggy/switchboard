@@ -30,6 +30,8 @@ type MainStore = {
   activeCompany: ActiveCompany | null;
   setActiveNumber: (number: ActiveNumber | null) => void;
   setActiveCompany: (company: ActiveCompany | null) => void;
+  companySwitcherDialogShown: boolean;
+  setCompanySwitcherDialogShown: (flag: boolean) => void;
 };
 
 const useMainStore = create<MainStore>()(
@@ -55,6 +57,9 @@ const useMainStore = create<MainStore>()(
       activeNumber: null,
       setActiveCompany: (activeCompany) => set({ activeCompany }),
       setActiveNumber: (activeNumber) => set({ activeNumber }),
+      companySwitcherDialogShown: false,
+      setCompanySwitcherDialogShown: (companySwitcherDialogShown) =>
+        set({ companySwitcherDialogShown }),
     }),
     {
       name: 'switchboard',

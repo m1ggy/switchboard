@@ -1,5 +1,5 @@
 import { UserCompaniesRepository } from '@/db/repositories/companies';
-import type { Company } from '@/types/db';
+import type { Company, NumberEntry } from '@/types/db';
 import { protectedProcedure, t } from '../trpc';
 
 export const companiesRouter = t.router({
@@ -8,6 +8,6 @@ export const companiesRouter = t.router({
       request.ctx.user.uid
     );
 
-    return companies as Company[];
+    return companies as (Company & { numbers: NumberEntry[] })[];
   }),
 });

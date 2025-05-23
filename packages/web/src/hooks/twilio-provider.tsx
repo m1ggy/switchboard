@@ -53,6 +53,22 @@ export const TwilioVoiceProvider = ({ token, children }: Props) => {
     const client = new TwilioVoiceClient({
       token,
       onIncomingCall: (conn) => {
+        conn.addListener('disconnect', () => {
+          console.log('Call disconnected');
+          setIncomingCall(null);
+          setCallState('idle');
+        });
+        conn.addListener('error', (error) => {
+          console.error('Call error:', error);
+          setIncomingCall(null);
+          setCallState('idle');
+        });
+        conn.addListener('cancel', () => {
+          console.log('Call was cancelled');
+          setIncomingCall(null);
+          setCallState('idle');
+        });
+
         console.log('📞 Incoming call', conn);
         setIncomingCall(conn);
         setCallState('incoming');

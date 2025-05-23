@@ -32,7 +32,6 @@ function AllContacts() {
   const [search, setSearch] = useState('');
 
   const filteredContacts = useMemo(() => {
-    console.log({ contacts });
     return (
       (contacts ?? [])?.filter((c) =>
         [c.label.toLowerCase(), c.number.toLowerCase()].some((val) =>

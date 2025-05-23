@@ -28,5 +28,6 @@
       "api/*": ["../api/src/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "references": [{ "path": "../api" }]
 }

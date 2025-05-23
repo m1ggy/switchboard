@@ -56,7 +56,6 @@ function SignIn() {
       navigate('/dashboard');
     } catch (error) {
       const firebaseError = error as unknown as FirebaseError;
-      console.log({ firebaseError });
       switch (firebaseError.code) {
         case 'auth/invalid-email':
           setError('The email address is not valid.');

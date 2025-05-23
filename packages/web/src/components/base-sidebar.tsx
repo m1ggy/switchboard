@@ -1,4 +1,5 @@
 import {
+  ChevronsUpDown,
   Contact2,
   History,
   Home,
@@ -7,12 +8,14 @@ import {
   MessageSquareDashed,
   MessageSquareShareIcon,
   PhoneIcon,
+  Settings,
   UserPlus,
 } from 'lucide-react';
 
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -25,7 +28,6 @@ import {
 
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
-import { faker } from '@faker-js/faker';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { Link, useLocation } from 'react-router';
@@ -86,46 +88,27 @@ const contactsItems = [
   },
 ];
 
-const companies = [
-  {
-    number: faker.phone.number({ style: 'international' }),
-    label: faker.company.name(),
-  },
-  {
-    number: faker.phone.number({ style: 'international' }),
-    label: faker.company.name(),
-  },
-  {
-    number: faker.phone.number({ style: 'international' }),
-    label: faker.company.name(),
-  },
-  {
-    number: faker.phone.number({ style: 'international' }),
-    label: faker.company.name(),
-  },
-  {
-    number: faker.phone.number({ style: 'international' }),
-    label: faker.company.name(),
-  },
-];
-
 function BaseSidebar() {
   const location = useLocation();
   const trpc = useTRPC();
-  const { activeCompany, activeNumber, setActiveCompany, setActiveNumber } =
-    useMainStore();
+  const {
+    activeCompany,
+    activeNumber,
+    setActiveCompany,
+    setActiveNumber,
+    setCompanySwitcherDialogShown,
+  } = useMainStore();
 
   const { data: companies, isFetching: companiesLoading } = useQuery(
     trpc.companies.getUserCompanies.queryOptions()
   );
 
-  const currentCompany = companies?.[0];
-
-  const { data: numbers, isFetching: numbersLoading } = useQuery(
-    trpc.numbers.getCompanyNumbers.queryOptions({
-      companyId: currentCompany?.id,
-    })
-  );
+  const { data: numbers, isFetching: numbersLoading } = useQuery({
+    ...trpc.numbers.getCompanyNumbers.queryOptions({
+      companyId: activeCompany?.id as string,
+    }),
+    enabled: !!activeCompany,
+  });
 
   useEffect(() => {
     if (companies?.length) {
@@ -148,9 +131,16 @@ function BaseSidebar() {
         {companiesLoading ? (
           <Skeleton className="w-[200px] h-[20px] rounded-full" />
         ) : (
-          <p className="text-muted-foreground font-semibold">
-            {activeCompany?.name}
-          </p>
+          <div
+            className="flex hover:bg-accent rounded pl-3 pr-2 justify-between items-center cursor-pointer"
+            title="Change company"
+            onClick={() => setCompanySwitcherDialogShown(true)}
+          >
+            <p className="text-muted-foreground font-semibold">
+              {activeCompany?.name}
+            </p>
+            <ChevronsUpDown size={18} />
+          </div>
         )}
         <NumberSwitcher
           numbers={numbers ?? []}
@@ -266,6 +256,21 @@ function BaseSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+        <SidebarFooter>
+          <SidebarGroup>
+            <SidebarGroupLabel>Account</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton>
+                    <Settings />
+                    Settings
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarFooter>
       </SidebarContent>
     </Sidebar>
   );

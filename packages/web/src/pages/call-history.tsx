@@ -26,7 +26,6 @@ function CallHistory() {
   const [search, setSearch] = useState('');
 
   const filteredCallLogs = useMemo(() => {
-    console.log({ calls });
     return (
       (calls ?? [])?.filter((c) =>
         [c.contact.label.toLowerCase(), c.contact.number.toLowerCase()].some(
@@ -35,8 +34,6 @@ function CallHistory() {
       ) ?? []
     );
   }, [calls, search]);
-
-  console.log({ calls });
 
   if (isLoading) {
     return (
