@@ -9,6 +9,8 @@ async function routes(app: FastifyInstance) {
 
     const callerId = CallerId || From;
 
+    console.log({ callerId, To });
+
     if (!To || !callerId) {
       reply.code(400).send('Missing required fields: To or CallerId/From');
       return;
