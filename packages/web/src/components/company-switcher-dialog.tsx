@@ -32,6 +32,7 @@ function CompanySwitcherDialog() {
   const onSelectCompany = (company: GetUserCompaniesOutput) => {
     const { numbers, ...baseCompany } = company;
     setActiveCompany(baseCompany);
+    console.log('SELECTING COMPANY: ', company);
 
     if (numbers.length) {
       setActiveNumber(numbers[0]);
