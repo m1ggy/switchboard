@@ -11,6 +11,7 @@ import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
 import { formatDuration } from '@/lib/utils';
 import { useQuery } from '@tanstack/react-query';
+import { PhoneMissedIcon } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 function CallHistory() {
@@ -68,12 +69,24 @@ function CallHistory() {
             <TableRow key={log.id}>
               <TableCell>{log.contact.label}</TableCell>
               <TableCell>{log.contact.number}</TableCell>
-              <TableCell>{formatDuration(log.duration)} </TableCell>
-              <TableCell>{new Date(log.initiated_at).toDateString()}</TableCell>
+              <TableCell>{formatDuration(log.duration ?? 0)} </TableCell>
+              <TableCell>
+                {log.initiated_at && new Date(log.initiated_at).toDateString()}
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>
       </Table>
+      {!isLoading && !filteredCallLogs.length && (
+        <div className="flex justify-center">
+          <div className="flex gap-2 items-center">
+            <PhoneMissedIcon size={14} className="text-muted-foreground" />
+            <span className="text-center text-muted-foreground text-sm">
+              No Call History
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

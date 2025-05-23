@@ -46,6 +46,14 @@ async function routes(app: FastifyInstance) {
 
     res.status(200).send('OK');
   });
+  app.post('/voice/bridge', async (req, reply) => {
+    const { client } = req.query as Record<string, string>;
+    const response = new twiml.VoiceResponse();
+    response.say('Connecting you now.');
+    const dial = response.dial();
+    dial.client(client);
+    reply.type('text/xml').send(response.toString());
+  });
 }
 
 export default routes;

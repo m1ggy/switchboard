@@ -128,4 +128,21 @@ export class TwilioClient {
 
     return token.toJwt();
   }
+
+  /**
+   * Redirect a live call to a client identity (bridge to agent)
+   * @param callSid The active Call SID
+   * @param clientIdentity The Twilio Client identity (e.g., "+15551234567")
+   * @param webhookUrl The TwiML URL that returns `<Dial><Client>...</Client></Dial>`
+   */
+  async bridgeCallToClient(
+    callSid: string,
+    clientIdentity: string,
+    webhookUrl: string
+  ): Promise<CallInstance> {
+    return await this.client.calls(callSid).update({
+      url: webhookUrl + `?client=${encodeURIComponent(clientIdentity)}`,
+      method: 'POST',
+    });
+  }
 }

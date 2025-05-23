@@ -19,7 +19,23 @@ import {
 } from './ui/command';
 import { PhoneInput } from './ui/phone-input';
 
-const buttons = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
+const buttons = [
+  '1',
+  '2',
+  '3',
+  '4',
+  '5',
+  '6',
+  '7',
+  '8',
+  '9',
+  '*',
+  '0',
+  '#',
+  '+',
+  '',
+  '<',
+];
 
 function Dialer() {
   const [mode, setMode] = useState<'phone' | 'contact'>('phone');
@@ -60,6 +76,12 @@ function Dialer() {
   };
 
   const handleDial = (digit: string) => {
+    if (digit === '<') {
+      setNumber((prev) => prev?.slice(0, -1));
+      setSelectedContactId(null); // clear contact selection on manual input
+
+      return;
+    }
     setNumber((prev) => prev + digit);
     setSelectedContactId(null); // clear contact selection on manual input
   };
@@ -109,8 +131,8 @@ function Dialer() {
             <CommandEmpty>No contacts found.</CommandEmpty>
             {contacts.map((contact) => (
               <CommandItem
-                key={contact.phone}
-                value={contact.phone}
+                key={contact.number}
+                value={contact.number}
                 onSelect={() => {
                   setSelectedContactId(contact.id);
                 }}

@@ -33,6 +33,7 @@ export interface Contact {
   number: string;
   created_at: Date | null;
   company_id: string;
+  label: string;
 }
 
 export interface Inbox {

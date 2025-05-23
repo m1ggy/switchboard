@@ -1,7 +1,6 @@
 'use client';
 
 import { ChevronsUpDown, Plus } from 'lucide-react';
-import * as React from 'react';
 
 import {
   DropdownMenu,
@@ -17,33 +16,26 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from '@/components/ui/sidebar';
+import useMainStore from '@/lib/store';
 import NumberWithCopy from './number-copy';
 import { Skeleton } from './ui/skeleton';
 
 type Number = {
   number: string;
   label: string;
+  id: string;
 };
 
 export function NumberSwitcher({
   numbers,
   isLoading,
-  defaultValue,
 }: {
   numbers: Number[];
   isLoading?: boolean;
   defaultValue?: Number | null;
 }) {
   const { isMobile } = useSidebar();
-  const [activeNumber, setActiveNumber] = React.useState<Number | null>(null);
-
-  React.useEffect(() => {
-    if (numbers.length && !activeNumber && !defaultValue) {
-      setActiveNumber(numbers[0]);
-    } else if (defaultValue && numbers.length && !activeNumber) {
-      setActiveNumber(defaultValue);
-    }
-  }, [numbers, activeNumber, defaultValue]);
+  const { activeNumber, setActiveNumber } = useMainStore();
 
   if (isLoading) {
     return (

@@ -1,3 +1,4 @@
+import { getQueryClient } from '@/App';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
 import { useQuery } from '@tanstack/react-query';
@@ -22,6 +23,7 @@ function CompanySwitcherDialog() {
     activeCompany,
     setActiveCompany,
     setActiveNumber,
+    activeNumber,
   } = useMainStore();
 
   const trpc = useTRPC();
@@ -35,8 +37,14 @@ function CompanySwitcherDialog() {
     console.log('SELECTING COMPANY: ', company);
 
     if (numbers.length) {
+      getQueryClient().invalidateQueries({
+        queryKey: trpc.twilio.token.queryOptions({
+          identity: activeNumber?.number as string,
+        }).queryKey,
+      });
       setActiveNumber(numbers[0]);
     }
+    setCompanySwitcherDialogShown(false);
   };
 
   console.log({ companies });
