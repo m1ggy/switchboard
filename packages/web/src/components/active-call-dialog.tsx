@@ -115,6 +115,8 @@ function ActiveCallDialog() {
           }
         }
 
+        console.log({ currentContact });
+
         await createCallLog({
           numberId: activeNumber?.id as string,
           contactId: currentContact?.id as string,
@@ -126,7 +128,6 @@ function ActiveCallDialog() {
         getQueryClient().invalidateQueries({
           queryKey: trpc.logs.getNumberCallLogs.queryOptions({
             numberId: activeNumber?.id as string,
-            companyId: activeCompany?.id as string,
           }).queryKey,
         });
         setOpen(false);
