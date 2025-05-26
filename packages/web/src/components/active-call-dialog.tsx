@@ -75,7 +75,7 @@ function ActiveCallDialog() {
         let currentContact = null;
 
         if (callerId === 'Unknown') {
-          let number = null;
+          let number: string | null | undefined = null;
           if (activeCall.direction === 'OUTGOING') {
             const callTo = activeCall.customParameters.get('To');
 
@@ -88,11 +88,18 @@ function ActiveCallDialog() {
             if (number.startsWith('client:')) {
               number = number.replace(/^client:/, '');
             }
-            currentContact = await createContact({
-              number,
-              label: number,
-              companyId: activeCompany?.id as string,
-            });
+
+            const matchingContact = contacts?.find(
+              (contact) => contact.number === number
+            );
+
+            if (!matchingContact)
+              currentContact = await createContact({
+                number,
+                label: number,
+                companyId: activeCompany?.id as string,
+              });
+            else currentContact = matchingContact;
           }
         } else {
           let number = null;
@@ -114,8 +121,6 @@ function ActiveCallDialog() {
             }
           }
         }
-
-        console.log({ currentContact });
 
         await createCallLog({
           numberId: activeNumber?.id as string,
