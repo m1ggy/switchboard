@@ -1,4 +1,9 @@
 import { WebClient } from '@slack/web-api';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+console.log({ env: process.env.SLACK_BOT_TOKEN });
 
 const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
 
@@ -17,8 +22,14 @@ export async function sendCallAlertToSlack(
 ): Promise<void> {
   const { from, to, channel } = params;
   const targetChannel = channel || process.env.SLACK_ALERT_CHANNEL;
+  const message = `📞 *Incoming Call Alert!*
 
-  const message = `📞 *Incoming Call Alert!*\n• From: \`${from}\`\n• To: \`${to}\``;
+*From:* \`${from}\`  
+*To:* \`${to}\`
+
+🔗 <https://stagingspace.org|Click here to respond>
+
+🕒 *Call is currently on hold.*`;
 
   try {
     await slack.chat.postMessage({

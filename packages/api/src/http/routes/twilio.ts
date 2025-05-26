@@ -10,19 +10,17 @@ async function routes(app: FastifyInstance) {
 
     const callerId = CallerId || From;
 
-    console.log('INCOMING VOICE: ', JSON.stringify(request.body, null, 2));
-
     if (!To && !callerId) {
       reply.code(400).send('Missing required fields: To or CallerId/From');
       return;
     }
 
     if (To.startsWith('+')) {
+      console.log('INCOMING VOICE: ', JSON.stringify(request.body, null, 2));
       response.say('Connecting your call...');
       response.dial({ callerId }, To);
-    } else {
       await sendCallAlertToSlack({ from: callerId, to: To });
-
+    } else {
       response.say('Connecting your call, please wait...');
       const dial = response.dial({ callerId });
       dial.client(To);
