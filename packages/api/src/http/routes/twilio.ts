@@ -1,3 +1,4 @@
+import { sendCallAlertToSlack } from '@/lib/slack';
 import { type FastifyInstance } from 'fastify';
 import twilio from 'twilio';
 
@@ -20,6 +21,8 @@ async function routes(app: FastifyInstance) {
       response.say('Connecting your call...');
       response.dial({ callerId }, To);
     } else {
+      await sendCallAlertToSlack({ from: callerId, to: To });
+
       response.say('Connecting your call, please wait...');
       const dial = response.dial({ callerId });
       dial.client(To);
