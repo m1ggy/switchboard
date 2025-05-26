@@ -65,6 +65,8 @@ const useMainStore = create<MainStore>()(
       name: 'switchboard',
       partialize: (state) => ({
         user: state.user,
+        activeCompany: state.activeCompany,
+        activeNumber: state.activeNumber,
       }),
       onRehydrateStorage: (state) => {
         return () => state.setHasRehydrated(true);
