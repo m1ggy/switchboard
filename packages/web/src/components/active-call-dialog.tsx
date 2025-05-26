@@ -84,12 +84,16 @@ function ActiveCallDialog() {
             const callTo = activeCall.parameters.From;
             number = callTo;
           }
-          if (number)
+          if (number) {
+            if (number.startsWith('client:')) {
+              number = number.replace(/^client:/, '');
+            }
             currentContact = await createContact({
               number,
               label: number,
               companyId: activeCompany?.id as string,
             });
+          }
         } else {
           let number = null;
           if (activeCall.direction === 'OUTGOING') {
@@ -122,6 +126,7 @@ function ActiveCallDialog() {
         getQueryClient().invalidateQueries({
           queryKey: trpc.logs.getNumberCallLogs.queryOptions({
             numberId: activeNumber?.id as string,
+            companyId: activeCompany?.id as string,
           }).queryKey,
         });
         setOpen(false);
