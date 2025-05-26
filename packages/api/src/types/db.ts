@@ -63,6 +63,7 @@ export interface Call {
   initiated_at: Date | null;
   duration: number | null;
   meta: Record<string, unknown> | null;
+  call_sid: string;
 }
 
 export type Notification = {

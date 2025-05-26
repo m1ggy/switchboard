@@ -116,6 +116,7 @@ function ActiveCallDialog() {
           contactId: currentContact?.id as string,
           duration: callDuration,
           meta: { CallSid: activeCall.parameters.CallSid },
+          callSid: activeCall.parameters.CallSid,
         });
 
         getQueryClient().invalidateQueries({

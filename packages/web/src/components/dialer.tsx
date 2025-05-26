@@ -40,7 +40,7 @@ const buttons = [
 function Dialer() {
   const [mode, setMode] = useState<'phone' | 'contact'>('phone');
   const trpc = useTRPC();
-  const { activeCompany } = useMainStore();
+  const { activeCompany, activeNumber } = useMainStore();
 
   const { data: contacts } = useQuery(
     trpc.contacts.getCompanyContacts.queryOptions({
@@ -72,7 +72,7 @@ function Dialer() {
       return;
     }
 
-    makeCall({ To: parsed.number, CallerId: '+12244707658' });
+    makeCall({ To: parsed.number, CallerId: activeNumber?.number as string });
   };
 
   const handleDial = (digit: string) => {
@@ -160,7 +160,7 @@ function Dialer() {
             value={number}
             onChange={(e) => {
               setNumber(e);
-              setSelectedContactId(null); // clear contact if typing
+              setSelectedContactId(null);
             }}
             placeholder="Enter phone number"
           />
@@ -171,6 +171,7 @@ function Dialer() {
                 key={dialItem}
                 variant="outline"
                 onClick={() => handleDial(dialItem)}
+                disabled={dialItem.length === 0}
               >
                 {dialItem}
               </Button>

@@ -97,6 +97,10 @@ jobs:
           $API_DOMAIN {
             reverse_proxy localhost:3000
           }
+
+          bot.$DOMAIN {
+            reverse_proxy localhost:3978
+          }
           EOC
 
           sudo systemctl reload caddy

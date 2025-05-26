@@ -53,4 +53,11 @@ export const NumbersRepository = {
   async delete(id: string): Promise<void> {
     await pool.query(`DELETE FROM numbers WHERE id = $1`, [id]);
   },
+  async findByNumber(number: string): Promise<NumberEntry | null> {
+    const res = await pool.query<NumberEntry>(
+      `SELECT * FROM numbers WHERE number = $1`,
+      [number]
+    );
+    return res.rows?.[0] || null;
+  },
 };

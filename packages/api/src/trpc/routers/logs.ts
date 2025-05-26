@@ -24,9 +24,17 @@ export const logsRouter = t.router({
             AudioIssues: z.array(z.string()).optional(),
           })
           .passthrough(),
+        callSid: z.string(),
       })
     )
     .mutation(async ({ input }) => {
+      const existingCallLog = await CallsRepository.findBySID(input.callSid);
+
+      if (existingCallLog) {
+        return await CallsRepository.update(input.callSid, {
+          duration: input.duration,
+        });
+      }
       const callLog = await CallsRepository.create({
         id: crypto.randomUUID() as string,
         number_id: input.numberId,
@@ -34,6 +42,7 @@ export const logsRouter = t.router({
         initiated_at: input.initiatedAt,
         duration: input.duration,
         meta: input.meta,
+        call_sid: input.callSid,
       });
 
       return callLog;

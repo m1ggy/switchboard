@@ -119,6 +119,33 @@ exports.up = (pgm) => {
   pgm.createIndex('notifications', 'user_id');
   pgm.createIndex('notifications', 'viewed');
   pgm.createIndex('notifications', 'type');
+
+  pgm.createTable('bot_subscribers', {
+    id: {
+      type: 'uuid',
+      primaryKey: true,
+      default: pgm.func('gen_random_uuid()'),
+    },
+
+    user_id: { type: 'text', notNull: true, unique: true },
+    conversation_reference: { type: 'jsonb', notNull: true },
+
+    name: { type: 'text' },
+    team_id: { type: 'text' },
+
+    created_at: {
+      type: 'timestamp',
+      notNull: true,
+      default: pgm.func('now()'),
+    },
+    updated_at: {
+      type: 'timestamp',
+      notNull: true,
+      default: pgm.func('now()'),
+    },
+  });
+
+  pgm.createIndex('bot_subscribers', 'user_id');
 };
 
 exports.down = (pgm) => {
@@ -134,4 +161,5 @@ exports.down = (pgm) => {
   pgm.dropType('message_direction');
   pgm.dropType('message_statuses');
   pgm.dropType('notification_types');
+  pgm.dropTable('bot_subscribers');
 };

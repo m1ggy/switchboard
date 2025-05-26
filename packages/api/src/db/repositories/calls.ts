@@ -12,6 +12,7 @@ export const CallsRepository = {
     initiated_at,
     duration,
     meta,
+    call_sid,
   }: {
     id: string;
     number_id: string;
@@ -19,12 +20,13 @@ export const CallsRepository = {
     initiated_at?: Date;
     duration?: number;
     meta?: Record<string, unknown>;
+    call_sid: string;
   }): Promise<Call> {
     const res = await pool.query<Call>(
       `INSERT INTO calls (
-         id, number_id, contact_id, initiated_at, duration, meta
+         id, number_id, contact_id, initiated_at, duration, meta, call_sid
        ) VALUES (
-         $1, $2, $3, $4, $5, $6
+         $1, $2, $3, $4, $5, $6, $7
        ) RETURNING *`,
       [
         id,
@@ -33,6 +35,7 @@ export const CallsRepository = {
         initiated_at || new Date(),
         duration || null,
         meta || null,
+        call_sid,
       ]
     );
 
@@ -110,5 +113,38 @@ export const CallsRepository = {
    */
   async delete(id: string): Promise<void> {
     await pool.query(`DELETE FROM calls WHERE id = $1`, [id]);
+  },
+
+  async findBySID(sid: string): Promise<Call | null> {
+    const res = await pool.query('SELECT * FROM calls WHERE call_sid = $1', [
+      sid,
+    ]);
+
+    return res.rows?.[0] ?? null;
+  },
+
+  async update(sid: string, updates: Partial<Call>): Promise<Call | null> {
+    const fields = [];
+    const values = [];
+    let paramIndex = 1;
+
+    for (const [key, value] of Object.entries(updates)) {
+      fields.push(`${key} = $${paramIndex}`);
+      values.push(value);
+      paramIndex++;
+    }
+
+    if (fields.length === 0) {
+      throw new Error('No fields provided to update.');
+    }
+
+    values.push(sid); // last value is the call_sid
+
+    const res = await pool.query<Call>(
+      `UPDATE calls SET ${fields.join(', ')} WHERE call_sid = $${paramIndex} RETURNING *`,
+      values
+    );
+
+    return res.rows[0] || null;
   },
 };
