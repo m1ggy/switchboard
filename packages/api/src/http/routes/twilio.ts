@@ -5,7 +5,7 @@ import twilio from 'twilio';
 
 const { twiml } = twilio;
 async function routes(app: FastifyInstance) {
-  app.post('/twilio/voice', async (request, reply) => {
+  app.post('/voice', async (request, reply) => {
     const response = new twiml.VoiceResponse();
     const { To, From, CallerId, Direction, ParentCallSid } =
       request.body as Record<string, string>;
