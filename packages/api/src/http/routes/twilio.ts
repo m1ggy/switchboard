@@ -29,7 +29,7 @@ async function routes(app: FastifyInstance) {
     }
 
     // Handle outbound PSTN call
-    if (To.startsWith('+')) {
+    if (!isInbound && To.startsWith('+')) {
       console.log('📤 Outbound call to PSTN:', To);
       response.say('Connecting your call...');
       response.dial({ callerId }, To);
