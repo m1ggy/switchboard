@@ -115,7 +115,11 @@ async function routes(app: FastifyInstance) {
   });
 
   app.post('/voice/bridge', async (req, reply) => {
-    const { client } = req.query as Record<string, string>;
+    let { client } = req.query as Record<string, string>;
+
+    if (client.startsWith('client:')) {
+      client = client.replace(/^client:/, '');
+    }
     const response = new twiml.VoiceResponse();
     response.say('Connecting you now.');
     const dial = response.dial();
