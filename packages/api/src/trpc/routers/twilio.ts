@@ -38,7 +38,7 @@ export const twilioRouter = router({
         );
 
       if (heldCall) {
-        const webhookUrl = 'https://stagingspace.org/voice/bridge';
+        const webhookUrl = 'https://stagingspace.org/twilio/voice/bridge';
         await tw.bridgeCallToClient(heldCall.sid, input.identity, webhookUrl);
         activeCallStore.updateStatus(heldCall.sid, 'bridged', input.identity);
         console.log(
