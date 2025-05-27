@@ -81,7 +81,6 @@ async function routes(app: FastifyInstance) {
         response.say('All agents are currently busy. Please hold.');
         response.dial().conference(
           {
-            waitUrl: 'https://stagingspace.org/hold-music.xml',
             startConferenceOnEnter: true,
             endConferenceOnExit: false,
           },
