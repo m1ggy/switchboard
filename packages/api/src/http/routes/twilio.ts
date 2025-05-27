@@ -30,7 +30,7 @@ async function routes(app: FastifyInstance) {
 
     // Lookup internal number mapping (if any)
     const numberRecord = await NumbersRepository.findByNumber(To);
-    const agentIdentity = numberRecord?.number;
+    const agentIdentity = numberRecord?.number as string;
 
     // Evaluate conditions for outbound PSTN call
     const isFromClient = From?.startsWith('client:');
@@ -52,8 +52,6 @@ async function routes(app: FastifyInstance) {
       console.log('📤 Outbound PSTN call from client:', From, '→', To);
       response.say('Connecting your call...');
       response.dial({ callerId }, To);
-      await sendCallAlertToSlack({ from: callerId, to: To });
-
       return reply.type('text/xml').status(200).send(response.toString());
     }
 
@@ -76,6 +74,43 @@ async function routes(app: FastifyInstance) {
       startedAt: new Date(),
     });
 
+    // ✅ Handle external inbound calls to internal numbers
+    const isExternalInbound =
+      isInbound && !!numberRecord && !From.startsWith('client:');
+    if (isExternalInbound) {
+      const isAgentAvailable = presenceStore.isOnline(agentIdentity);
+
+      if (isAgentAvailable) {
+        console.log(
+          `📞 External inbound call to ${To}. Bridging to agent ${agentIdentity}`
+        );
+        await twilioClient.bridgeCallToClient(
+          CallSid,
+          agentIdentity,
+          'https://api.stagingspace.org/twilio/voice/bridge'
+        );
+        response.say('Connecting you to an agent now.');
+      } else {
+        const holdRoom = `hold-${CallSid}`;
+        console.log(
+          `⏳ External caller to ${To}, agent ${agentIdentity} is offline. Holding in ${holdRoom}`
+        );
+        response.say('All agents are currently busy. Please hold.');
+        await sendCallAlertToSlack({ from: callerId, to: To });
+        response.dial().conference(
+          {
+            startConferenceOnEnter: true,
+            endConferenceOnExit: false,
+          },
+          holdRoom
+        );
+        activeCallStore.updateStatus(CallSid, 'held', agentIdentity);
+      }
+
+      return reply.type('text/xml').status(200).send(response.toString());
+    }
+
+    // ✅ Handle in-house calls (Twilio client to internal number)
     if (isInboundToOwnNumber && agentIdentity) {
       const isAgentAvailable = presenceStore.isOnline(agentIdentity);
 
@@ -92,8 +127,9 @@ async function routes(app: FastifyInstance) {
         console.log(
           `🕒 Agent ${agentIdentity} is offline. Holding in ${holdRoom}`
         );
-        response.say('All agents are currently busy. Please hold.');
         await sendCallAlertToSlack({ from: callerId, to: To });
+
+        response.say('All agents are currently busy. Please hold.');
         response.dial().conference(
           {
             startConferenceOnEnter: true,
