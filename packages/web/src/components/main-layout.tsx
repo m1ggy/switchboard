@@ -1,7 +1,8 @@
 import { TwilioVoiceProvider } from '@/hooks/twilio-provider';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { Outlet } from 'react-router';
 import ActiveCallDialog from './active-call-dialog';
 import BaseSidebar from './base-sidebar';
@@ -25,6 +26,15 @@ function Layout() {
     refetchOnWindowFocus: false,
     enabled: Boolean(activeNumber),
   });
+
+  const { mutate } = useMutation(trpc.twilio.presence.mutationOptions());
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (activeNumber) mutate({ identity: activeNumber?.number });
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [activeNumber, mutate]);
   return (
     <TwilioVoiceProvider token={token ?? ''}>
       <SidebarProvider className="transition-all">

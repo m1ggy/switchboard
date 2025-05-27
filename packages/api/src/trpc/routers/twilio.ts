@@ -1,19 +1,19 @@
+import { activeCallStore, presenceStore } from '@/lib/store';
 import { TwilioClient } from '@/lib/twilio';
 import dotenv from 'dotenv';
 import { z } from 'zod';
 import { protectedProcedure, router } from '../trpc';
 
 dotenv.config();
+const tw = new TwilioClient(
+  process.env.TWILIO_ACCOUNT_SID as string,
+  process.env.TWILIO_AUTH_TOKEN as string
+);
 
 export const twilioRouter = router({
   token: protectedProcedure
     .input(z.object({ identity: z.string().optional() }))
     .query(({ input }) => {
-      const tw = new TwilioClient(
-        process.env.TWILIO_ACCOUNT_SID as string,
-        process.env.TWILIO_AUTH_TOKEN as string
-      );
-
       console.log({ input });
 
       const jwt = tw.generateVoiceToken({
@@ -25,5 +25,27 @@ export const twilioRouter = router({
       });
 
       return jwt as string;
+    }),
+  presence: protectedProcedure
+    .input(z.object({ identity: z.string() }))
+    .mutation(async ({ input }) => {
+      presenceStore.set(input.identity);
+
+      const heldCall = activeCallStore
+        .listActive()
+        .find(
+          (call) => call.agent === input.identity && call.status === 'held'
+        );
+
+      if (heldCall) {
+        const webhookUrl = 'https://stagingspace.org/voice/bridge';
+        await tw.bridgeCallToClient(heldCall.sid, input.identity, webhookUrl);
+        activeCallStore.updateStatus(heldCall.sid, 'bridged', input.identity);
+        console.log(
+          `🔗 Reconnected agent ${input.identity} to held call ${heldCall.sid}`
+        );
+      }
+
+      return { ok: true };
     }),
 });
