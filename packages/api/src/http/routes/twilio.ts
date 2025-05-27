@@ -17,6 +17,8 @@ async function routes(app: FastifyInstance) {
     const { To, From, CallerId, Direction, ParentCallSid, CallSid } =
       request.body as Record<string, string>;
 
+    console.log('CALL BODY: ', request.body);
+
     const response = new twiml.VoiceResponse();
     const callerId = CallerId || From;
     const isInbound = Direction === 'inbound';
