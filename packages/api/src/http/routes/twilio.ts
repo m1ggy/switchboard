@@ -17,7 +17,7 @@ async function routes(app: FastifyInstance) {
     const { To, From, CallerId, Direction, ParentCallSid, CallSid } =
       request.body as Record<string, string>;
 
-    console.log('CALL BODY: ', request.body);
+    console.log('📞 CALL BODY:', request.body);
 
     const response = new twiml.VoiceResponse();
     const callerId = CallerId || From;
@@ -28,18 +28,36 @@ async function routes(app: FastifyInstance) {
       return reply.type('text/xml').status(400).send(response.toString());
     }
 
-    // Handle outbound PSTN call
-    if (!isInbound && To.startsWith('+')) {
-      console.log('📤 Outbound call to PSTN:', To);
+    // Lookup internal number mapping (if any)
+    const numberRecord = await NumbersRepository.findByNumber(To);
+    const agentIdentity = numberRecord?.number;
+
+    // Evaluate conditions for outbound PSTN call
+    const isFromClient = From?.startsWith('client:');
+    const isToPSTN = To.startsWith('+');
+    const isOutboundToPSTN = isFromClient && isToPSTN && !numberRecord;
+
+    console.log('🔎 PSTN Call Evaluation:', {
+      From,
+      To,
+      isFromClient,
+      isToPSTN,
+      numberRecordExists: !!numberRecord,
+      isOutboundToPSTN,
+      Direction,
+    });
+
+    // ✅ Handle outbound PSTN call from Twilio client
+    if (isOutboundToPSTN) {
+      console.log('📤 Outbound PSTN call from client:', From, '→', To);
       response.say('Connecting your call...');
       response.dial({ callerId }, To);
+      await sendCallAlertToSlack({ from: callerId, to: To });
 
       return reply.type('text/xml').status(200).send(response.toString());
     }
 
-    // Inbound logic only
-    const numberRecord = await NumbersRepository.findByNumber(To);
-    const agentIdentity = numberRecord?.number;
+    // 🔁 Handle inbound to in-house number
     const isInboundToOwnNumber = isInbound && !!numberRecord;
     const isDialLoop = isInboundToOwnNumber && !!ParentCallSid;
 
@@ -49,6 +67,7 @@ async function routes(app: FastifyInstance) {
       return reply.type('text/xml').status(200).send(response.toString());
     }
 
+    // Add to call store
     activeCallStore.add({
       sid: CallSid,
       from: From,
@@ -88,6 +107,7 @@ async function routes(app: FastifyInstance) {
       return reply.type('text/xml').status(200).send(response.toString());
     }
 
+    // 🚫 Fallback for unmapped numbers
     console.warn(`🚫 No agent identity mapped for number: ${To}`);
     response.say('We could not route your call at this time.');
     return reply.type('text/xml').status(200).send(response.toString());
