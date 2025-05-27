@@ -4,19 +4,8 @@ import { activeCallStore, presenceStore } from '@/lib/store';
 import { TwilioClient } from '@/lib/twilio';
 import { type FastifyInstance } from 'fastify';
 import twilio from 'twilio';
-import { z } from 'zod';
 
 const { twiml } = twilio;
-
-const agentConnectBodySchema = z.object({
-  callSid: z.string(),
-  clientIdentity: z.string(),
-  webhookUrl: z.string().url(),
-});
-
-const agentBridgeBodySchema = z.object({
-  client: z.string(),
-});
 
 const twilioClient = new TwilioClient(
   process.env.TWILIO_ACCOUNT_SID as string,
@@ -32,6 +21,23 @@ async function routes(app: FastifyInstance) {
     const callerId = CallerId || From;
     const isInbound = Direction === 'inbound';
 
+    if (!To) {
+      response.say('Invalid destination number.');
+      return reply.type('text/xml').status(400).send(response.toString());
+    }
+
+    // Handle outbound PSTN call
+    if (!isInbound && To.startsWith('+')) {
+      console.log('📤 Outbound call to PSTN:', To);
+      response.say('Connecting your call...');
+      response.dial({ callerId }, To);
+
+      await sendCallAlertToSlack({ from: callerId, to: To });
+
+      return reply.type('text/xml').status(200).send(response.toString());
+    }
+
+    // Inbound logic only
     const numberRecord = await NumbersRepository.findByNumber(To);
     const agentIdentity = numberRecord?.number;
     const isInboundToOwnNumber = isInbound && !!numberRecord;
@@ -51,20 +57,10 @@ async function routes(app: FastifyInstance) {
       startedAt: new Date(),
     });
 
-    if (To.startsWith('+') && !isInbound) {
-      console.log('📤 Outbound call to PSTN:', To);
-      response.say('Connecting your call...');
-      response.dial({ callerId }, To);
-      await sendCallAlertToSlack({ from: callerId, to: To });
-
-      return reply.type('text/xml').status(200).send(response.toString());
-    }
-
-    if (agentIdentity) {
+    if (isInboundToOwnNumber && agentIdentity) {
       const isAgentAvailable = presenceStore.isOnline(agentIdentity);
 
       if (isAgentAvailable) {
-        // 🔗 Connect directly
         console.log(`✅ Agent ${agentIdentity} is online. Bridging...`);
         await twilioClient.bridgeCallToClient(
           CallSid,
@@ -77,7 +73,6 @@ async function routes(app: FastifyInstance) {
         console.log(
           `🕒 Agent ${agentIdentity} is offline. Holding in ${holdRoom}`
         );
-
         response.say('All agents are currently busy. Please hold.');
         response.dial().conference(
           {
@@ -86,7 +81,6 @@ async function routes(app: FastifyInstance) {
           },
           holdRoom
         );
-
         activeCallStore.updateStatus(CallSid, 'held', agentIdentity);
       }
 

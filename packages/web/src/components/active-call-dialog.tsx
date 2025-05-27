@@ -121,14 +121,14 @@ function ActiveCallDialog() {
             }
           }
         }
-
-        await createCallLog({
-          numberId: activeNumber?.id as string,
-          contactId: currentContact?.id as string,
-          duration: callDuration,
-          meta: { CallSid: activeCall.parameters.CallSid },
-          callSid: activeCall.parameters.CallSid,
-        });
+        if (currentContact)
+          await createCallLog({
+            numberId: activeNumber?.id as string,
+            contactId: currentContact?.id as string,
+            duration: callDuration,
+            meta: { CallSid: activeCall.parameters.CallSid },
+            callSid: activeCall.parameters.CallSid,
+          });
 
         getQueryClient().invalidateQueries({
           queryKey: trpc.logs.getNumberCallLogs.queryOptions({

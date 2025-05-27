@@ -92,4 +92,46 @@ export const ContactsRepository = {
   async delete(id: string): Promise<void> {
     await pool.query(`DELETE FROM contacts WHERE id = $1`, [id]);
   },
+
+  /**
+   * Update a contact's fields by ID
+   */
+  async update(id: string, updates: Partial<Contact>): Promise<Contact> {
+    const fields = Object.keys(updates) as (keyof Contact)[];
+    if (fields.length === 0) {
+      throw new Error('No updates provided.');
+    }
+
+    // Optional: Ensure that number or label uniqueness is maintained
+    if ((updates.number || updates.label) && updates.company_id) {
+      const conflict = await pool.query<Contact>(
+        `SELECT * FROM contacts
+       WHERE company_id = $1
+         AND id != $2
+         AND (number = $3 OR label = $4)
+       LIMIT 1`,
+        [updates.company_id, id, updates.number || '', updates.label || '']
+      );
+
+      if (conflict.rows.length > 0) {
+        throw new Error(
+          'A contact with the same number or label already exists.'
+        );
+      }
+    }
+
+    // Dynamically build SET clause
+    const setClauses = fields.map((field, index) => `${field} = $${index + 2}`);
+    const values = fields.map((f) => updates[f]);
+
+    const res = await pool.query<Contact>(
+      `UPDATE contacts
+     SET ${setClauses.join(', ')}
+     WHERE id = $1
+     RETURNING *`,
+      [id, ...values]
+    );
+
+    return res.rows[0];
+  },
 };

@@ -1,3 +1,4 @@
+import EditContactDialog from '@/components/edit-contact-dialog';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -15,15 +16,21 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { useTwilioVoice } from '@/hooks/twilio-provider';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
 import { useQuery } from '@tanstack/react-query';
+import type { Contact } from 'api/types/db';
 import { formatDistanceToNow } from 'date-fns';
 import { useMemo, useState } from 'react';
 
 function AllContacts() {
   const trpc = useTRPC();
-  const { activeCompany } = useMainStore();
+  const { makeCall } = useTwilioVoice();
+  const [openEditContact, setOpenEditContact] = useState(false);
+  const [selectedContact, setSelectedContact] =
+    useState<Partial<Contact> | null>(null);
+  const { activeCompany, activeNumber } = useMainStore();
   const { data: contacts, isLoading } = useQuery(
     trpc.contacts.getCompanyContacts.queryOptions({
       companyId: activeCompany?.id as string,
@@ -70,9 +77,10 @@ function AllContacts() {
                 <TableCell>{contact.label}</TableCell>
                 <TableCell>{contact.number}</TableCell>
                 <TableCell>
-                  {formatDistanceToNow(new Date(contact.created_at), {
-                    addSuffix: true,
-                  })}
+                  {contact.created_at &&
+                    formatDistanceToNow(new Date(contact.created_at), {
+                      addSuffix: true,
+                    })}
                 </TableCell>
                 <TableCell className="text-right">
                   <DropdownMenu>
@@ -82,10 +90,26 @@ function AllContacts() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem>Call</DropdownMenuItem>
-                      <DropdownMenuItem>Message</DropdownMenuItem>
-                      <DropdownMenuItem>Edit</DropdownMenuItem>
-                      <DropdownMenuItem className="text-red-500">
+                      <DropdownMenuItem
+                        onClick={() => {
+                          makeCall({
+                            To: contact.number,
+                            CallerId: activeNumber?.number as string,
+                          });
+                        }}
+                      >
+                        Call
+                      </DropdownMenuItem>
+                      <DropdownMenuItem disabled>Message</DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => {
+                          setOpenEditContact(true);
+                          setSelectedContact(contact as Contact);
+                        }}
+                      >
+                        Edit
+                      </DropdownMenuItem>
+                      <DropdownMenuItem className="text-red-500" disabled>
                         Delete
                       </DropdownMenuItem>
                     </DropdownMenuContent>
@@ -114,6 +138,12 @@ function AllContacts() {
           </span>
         </div>
       )}
+
+      <EditContactDialog
+        open={openEditContact}
+        onOpenChange={setOpenEditContact}
+        selectedContact={selectedContact as Contact}
+      />
     </div>
   );
 }

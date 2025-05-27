@@ -30,4 +30,22 @@ export const contactsRouter = t.router({
 
       return contacts as Contact[];
     }),
+  updateCompanyContact: protectedProcedure
+    .input(
+      z.object({
+        companyId: z.string(),
+        number: z.string(),
+        label: z.string(),
+        contactId: z.string(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const updatedContact = await ContactsRepository.update(input.contactId, {
+        company_id: input.companyId,
+        number: input.number,
+        label: input.label,
+      });
+
+      return updatedContact;
+    }),
 });
