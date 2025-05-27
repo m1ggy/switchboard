@@ -69,7 +69,7 @@ async function routes(app: FastifyInstance) {
         await twilioClient.bridgeCallToClient(
           CallSid,
           agentIdentity,
-          'https://stagingspace.org/twilio/voice/bridge'
+          'https://api.stagingspace.org/twilio/voice/bridge'
         );
         response.say('Connecting you to an agent now.');
       } else {
