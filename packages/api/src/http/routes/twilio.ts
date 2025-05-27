@@ -27,12 +27,10 @@ async function routes(app: FastifyInstance) {
     }
 
     // Handle outbound PSTN call
-    if (!isInbound && To.startsWith('+')) {
+    if (To.startsWith('+')) {
       console.log('📤 Outbound call to PSTN:', To);
       response.say('Connecting your call...');
       response.dial({ callerId }, To);
-
-      await sendCallAlertToSlack({ from: callerId, to: To });
 
       return reply.type('text/xml').status(200).send(response.toString());
     }
@@ -74,6 +72,7 @@ async function routes(app: FastifyInstance) {
           `🕒 Agent ${agentIdentity} is offline. Holding in ${holdRoom}`
         );
         response.say('All agents are currently busy. Please hold.');
+        await sendCallAlertToSlack({ from: callerId, to: To });
         response.dial().conference(
           {
             startConferenceOnEnter: true,
