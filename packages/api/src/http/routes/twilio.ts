@@ -5,6 +5,7 @@ import { sendCallAlertToSlack } from '@/lib/slack';
 import { activeCallStore, presenceStore } from '@/lib/store';
 import { TwilioClient } from '@/lib/twilio';
 import { Company } from '@/types/db';
+import crypto from 'crypto';
 import { type FastifyInstance } from 'fastify';
 import twilio from 'twilio';
 
