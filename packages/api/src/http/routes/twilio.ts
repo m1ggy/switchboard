@@ -135,7 +135,21 @@ async function routes(app: FastifyInstance) {
         console.log(
           `🕒 Agent ${agentIdentity} is offline. Holding in ${holdRoom}`
         );
-        await sendCallAlertToSlack({ from: callerId, to: To });
+
+        let to = To;
+
+        const existingNumber = await NumbersRepository.findByNumber(To);
+
+        if (existingNumber) {
+          const existingCompany = await UserCompaniesRepository.findCompanyById(
+            existingNumber.company_id
+          );
+
+          if (existingCompany) {
+            to = `${to} (${existingCompany.name})`;
+          }
+        }
+        await sendCallAlertToSlack({ from: callerId, to });
 
         response.say('All agents are currently busy. Please hold.');
         response.dial().conference(
