@@ -26,7 +26,7 @@ app.register(fastifyCors, {
 });
 app.register(fastifyTRPCPlugin, {
   prefix: '/trpc',
-  trpcOptions: { router: appRouter, createContext },
+  trpcOptions: { router: appRouter, createContext, allowBatching: false },
 });
 
 app.register(fastifySocketIO, { path: '/ws', cors: { origin: '*' } });

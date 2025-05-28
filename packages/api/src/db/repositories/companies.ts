@@ -86,8 +86,8 @@ export const UserCompaniesRepository = {
 
     return res.rows as (Company & { numbers: NumberEntry[] })[];
   },
-  async findCompanyById(id: string): Promise<UserCompany | null> {
-    const res = await pool.query<UserCompany>(
+  async findCompanyById(id: string): Promise<Company | null> {
+    const res = await pool.query<Company>(
       `SELECT * FROM companies WHERE id = $1`,
       [id]
     );

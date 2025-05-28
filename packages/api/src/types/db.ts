@@ -4,7 +4,7 @@ export type MessageDirection = 'inbound' | 'outbound';
 export interface Company {
   id: string;
   name: string;
-  created_at: Date;
+  created_at?: Date;
 }
 
 export interface User {

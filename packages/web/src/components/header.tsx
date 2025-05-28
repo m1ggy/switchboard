@@ -1,11 +1,14 @@
 import { useAuth } from '@/hooks/auth-provider';
 import { auth } from '@/lib/firebase';
+import { useTRPC } from '@/lib/trpc';
+import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { signOut } from 'firebase/auth';
 import { Bell, LogOut } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router';
 import Notifications from './notifications';
 import { Button } from './ui/button';
+import { NotificationBadge } from './ui/notification-badge';
 import { SidebarTrigger } from './ui/sidebar';
 import { ModeToggle } from './ui/toggle-mode';
 import TooltipStandalone from './ui/tooltip-standalone';
@@ -24,10 +27,15 @@ const pagesMap = {
   '/dashboard': 'Dashboard',
 } as Record<string, string>;
 function Header({ isLoggedIn }: HeaderProps) {
+  const trpc = useTRPC();
   const location = useLocation();
   const navigate = useNavigate();
   const pathname = location.pathname;
   const authContext = useAuth();
+
+  const { data: unreadCount } = useQuery(
+    trpc.notifications.getUnreadNotificationsCount.queryOptions()
+  );
   return (
     <div
       className={clsx([
@@ -55,11 +63,13 @@ function Header({ isLoggedIn }: HeaderProps) {
       <div className="flex gap-4 items-center">
         {isLoggedIn && (
           <TooltipStandalone content={'Notifications'}>
-            <Notifications>
-              <Button variant={'outline'} size={'icon'}>
-                <Bell />
-              </Button>
-            </Notifications>
+            <NotificationBadge label={unreadCount}>
+              <Notifications>
+                <Button variant={'outline'} size={'icon'}>
+                  <Bell />
+                </Button>
+              </Notifications>
+            </NotificationBadge>
           </TooltipStandalone>
         )}
         <ModeToggle />

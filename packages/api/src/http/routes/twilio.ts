@@ -1,8 +1,10 @@
 import { UserCompaniesRepository } from '@/db/repositories/companies';
+import { NotificationsRepository } from '@/db/repositories/notifications';
 import { NumbersRepository } from '@/db/repositories/numbers';
 import { sendCallAlertToSlack } from '@/lib/slack';
 import { activeCallStore, presenceStore } from '@/lib/store';
 import { TwilioClient } from '@/lib/twilio';
+import { Company } from '@/types/db';
 import { type FastifyInstance } from 'fastify';
 import twilio from 'twilio';
 
@@ -94,9 +96,9 @@ async function routes(app: FastifyInstance) {
         let to = To;
 
         const existingNumber = await NumbersRepository.findByNumber(To);
-
+        let existingCompany: Company | null = null;
         if (existingNumber) {
-          const existingCompany = await UserCompaniesRepository.findCompanyById(
+          existingCompany = await UserCompaniesRepository.findCompanyById(
             existingNumber.company_id
           );
 
@@ -114,6 +116,16 @@ async function routes(app: FastifyInstance) {
           holdRoom
         );
         activeCallStore.updateStatus(CallSid, 'held', agentIdentity);
+        if (existingCompany) {
+          const notif = await NotificationsRepository.create({
+            id: crypto.randomUUID() as string,
+            message: `Incoming call from ${callerId}`,
+            createdAt: new Date(),
+            meta: { companyId: existingCompany.id },
+          });
+
+          app.io.emit('notif', notif);
+        }
       }
 
       return reply.type('text/xml').status(200).send(response.toString());
@@ -139,9 +151,9 @@ async function routes(app: FastifyInstance) {
         let to = To;
 
         const existingNumber = await NumbersRepository.findByNumber(To);
-
+        let existingCompany: Company | null = null;
         if (existingNumber) {
-          const existingCompany = await UserCompaniesRepository.findCompanyById(
+          existingCompany = await UserCompaniesRepository.findCompanyById(
             existingNumber.company_id
           );
 
@@ -160,6 +172,16 @@ async function routes(app: FastifyInstance) {
           holdRoom
         );
         activeCallStore.updateStatus(CallSid, 'held', agentIdentity);
+        if (existingCompany) {
+          const notif = await NotificationsRepository.create({
+            id: crypto.randomUUID() as string,
+            message: `Incoming call from ${callerId}`,
+            createdAt: new Date(),
+            meta: { companyId: existingCompany.id },
+          });
+
+          app.io.emit('notif', notif);
+        }
       }
 
       return reply.type('text/xml').status(200).send(response.toString());

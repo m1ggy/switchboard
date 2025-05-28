@@ -1,6 +1,6 @@
 import { Toaster } from '@/components/ui/sonner';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createTRPCClient, httpBatchLink } from '@trpc/client';
+import { createTRPCClient, httpLink } from '@trpc/client';
 import type { AppRouter } from 'api/trpc';
 import { useState } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router';
@@ -51,14 +51,13 @@ function App() {
   const [trpcClient] = useState(() =>
     createTRPCClient<AppRouter>({
       links: [
-        httpBatchLink({
+        httpLink({
           url: `${import.meta.env.VITE_TRPC_URL || 'http://localhost:3000/trpc'}`,
           async headers() {
             const currentUser = auth.currentUser;
             const token = currentUser ? await currentUser.getIdToken() : null;
             return token ? { Authorization: `Bearer ${token}` } : {};
           },
-          maxURLLength: 4096,
         }),
       ],
     })

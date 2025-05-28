@@ -17,9 +17,8 @@ onAuthStateChanged(auth, async (user) => {
         token,
       },
     });
-
-    socket.onAny((event, ...args) => {
-      console.log('EVENT:', event, ...args);
+    socket.on('notif', (args) => {
+      console.log(args);
     });
   }
 });
