@@ -107,16 +107,17 @@ function BaseSidebar() {
   });
 
   useEffect(() => {
-    if (companies?.length) {
+    if (companies?.length && !activeCompany) {
       setActiveCompany(companies?.[0]);
     }
-  }, [companies, setActiveCompany]);
+  }, [companies, setActiveCompany, activeCompany]);
 
   useEffect(() => {
-    if (numbers?.length) {
+    if (numbers?.length && !activeNumber) {
       setActiveNumber(numbers?.[0]);
     }
-  }, [setActiveNumber, numbers]);
+  }, [setActiveNumber, numbers, activeNumber]);
+
   return (
     <Sidebar>
       <SidebarContent className="overflow-x-hidden p-2">
