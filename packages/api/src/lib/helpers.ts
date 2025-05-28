@@ -49,6 +49,7 @@ async function notifyIncomingCall({
       message: `Incoming call from ${callerId}`,
       createdAt: new Date(),
       meta: { companyId: existingCompany.id },
+      userId: userCompany.user_id,
     });
 
     console.log('✅ Notification created:', notif);

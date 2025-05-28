@@ -130,9 +130,16 @@ function ActiveCallDialog() {
             callSid: activeCall.parameters.CallSid,
           });
 
-        getQueryClient().invalidateQueries({
+        const client = getQueryClient();
+
+        client.invalidateQueries({
           queryKey: trpc.logs.getNumberCallLogs.queryOptions({
             numberId: activeNumber?.id as string,
+          }).queryKey,
+        });
+        client.invalidateQueries({
+          queryKey: trpc.contacts.getCompanyContacts.queryOptions({
+            companyId: activeCompany?.id as string,
           }).queryKey,
         });
         setOpen(false);
