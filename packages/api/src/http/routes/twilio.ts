@@ -1,11 +1,9 @@
 import { UserCompaniesRepository } from '@/db/repositories/companies';
-import { NotificationsRepository } from '@/db/repositories/notifications';
 import { NumbersRepository } from '@/db/repositories/numbers';
+import { notifyIncomingCall } from '@/lib/helpers';
 import { sendCallAlertToSlack } from '@/lib/slack';
 import { activeCallStore, presenceStore } from '@/lib/store';
 import { TwilioClient } from '@/lib/twilio';
-import { Company } from '@/types/db';
-import crypto from 'crypto';
 import { type FastifyInstance } from 'fastify';
 import twilio from 'twilio';
 
@@ -75,8 +73,16 @@ async function routes(app: FastifyInstance) {
 
     const isExternalInbound =
       isInbound && !!numberRecord && !From.startsWith('client:');
+
     if (isExternalInbound) {
       const isAgentAvailable = presenceStore.isOnline(agentIdentity);
+
+      await notifyIncomingCall({
+        callerId,
+        toNumber: To,
+        callSid: CallSid,
+        app,
+      });
 
       if (isAgentAvailable) {
         console.log(
@@ -95,20 +101,19 @@ async function routes(app: FastifyInstance) {
         );
 
         let to = To;
-
         const existingNumber = await NumbersRepository.findByNumber(To);
-        let existingCompany: Company | null = null;
         if (existingNumber) {
-          existingCompany = await UserCompaniesRepository.findCompanyById(
+          const existingCompany = await UserCompaniesRepository.findCompanyById(
             existingNumber.company_id
           );
-
           if (existingCompany) {
             to = `${to} (${existingCompany.name})`;
           }
         }
+
         response.say('All agents are currently busy. Please hold.');
         await sendCallAlertToSlack({ from: callerId, to });
+
         response.dial().conference(
           {
             startConferenceOnEnter: true,
@@ -117,38 +122,6 @@ async function routes(app: FastifyInstance) {
           holdRoom
         );
         activeCallStore.updateStatus(CallSid, 'held', agentIdentity);
-        if (existingCompany) {
-          console.log(`🏢 Found company for number ${To}:`, existingCompany);
-
-          const userCompany = await UserCompaniesRepository.findUserIdById(
-            existingCompany.id
-          );
-
-          if (!userCompany) {
-            console.warn(
-              `⚠️ No user found for company ${existingCompany.id} (${existingCompany.name})`
-            );
-            return;
-          }
-
-          console.log(
-            `👤 Found user ${userCompany.user_id} for company ${existingCompany.name}`
-          );
-
-          const notif = await NotificationsRepository.create({
-            id: crypto.randomUUID() as string,
-            message: `Incoming call from ${callerId}`,
-            createdAt: new Date(),
-            meta: { companyId: existingCompany.id },
-          });
-
-          console.log('✅ Notification created:', notif);
-
-          app.io.emit(`${userCompany.user_id}-notif`, notif);
-          console.log(
-            `📢 Emitted notification to channel: ${userCompany.user_id}-notif`
-          );
-        }
       }
 
       return reply.type('text/xml').status(200).send(response.toString());
@@ -156,6 +129,13 @@ async function routes(app: FastifyInstance) {
 
     if (isInboundToOwnNumber && agentIdentity) {
       const isAgentAvailable = presenceStore.isOnline(agentIdentity);
+
+      await notifyIncomingCall({
+        callerId,
+        toNumber: To,
+        callSid: CallSid,
+        app,
+      });
 
       if (isAgentAvailable) {
         console.log(`✅ Agent ${agentIdentity} is online. Bridging...`);
@@ -172,18 +152,16 @@ async function routes(app: FastifyInstance) {
         );
 
         let to = To;
-
         const existingNumber = await NumbersRepository.findByNumber(To);
-        let existingCompany: Company | null = null;
         if (existingNumber) {
-          existingCompany = await UserCompaniesRepository.findCompanyById(
+          const existingCompany = await UserCompaniesRepository.findCompanyById(
             existingNumber.company_id
           );
-
           if (existingCompany) {
             to = `${to} (${existingCompany.name})`;
           }
         }
+
         await sendCallAlertToSlack({ from: callerId, to });
 
         response.say('All agents are currently busy. Please hold.');
@@ -195,44 +173,11 @@ async function routes(app: FastifyInstance) {
           holdRoom
         );
         activeCallStore.updateStatus(CallSid, 'held', agentIdentity);
-        if (existingCompany) {
-          console.log(`🏢 Found company for number ${To}:`, existingCompany);
-
-          const userCompany = await UserCompaniesRepository.findUserIdById(
-            existingCompany.id
-          );
-
-          if (!userCompany) {
-            console.warn(
-              `⚠️ No user found for company ${existingCompany.id} (${existingCompany.name})`
-            );
-            return;
-          }
-
-          console.log(
-            `👤 Found user ${userCompany.user_id} for company ${existingCompany.name}`
-          );
-
-          const notif = await NotificationsRepository.create({
-            id: crypto.randomUUID() as string,
-            message: `Incoming call from ${callerId}`,
-            createdAt: new Date(),
-            meta: { companyId: existingCompany.id },
-          });
-
-          console.log('✅ Notification created:', notif);
-
-          app.io.emit(`${userCompany.user_id}-notif`, notif);
-          console.log(
-            `📢 Emitted notification to channel: ${userCompany.user_id}-notif`
-          );
-        }
       }
 
       return reply.type('text/xml').status(200).send(response.toString());
     }
 
-    // 🚫 Fallback for unmapped numbers
     console.warn(`🚫 No agent identity mapped for number: ${To}`);
     response.say('We could not route your call at this time.');
     return reply.type('text/xml').status(200).send(response.toString());
