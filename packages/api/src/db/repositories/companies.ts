@@ -88,7 +88,7 @@ export const UserCompaniesRepository = {
   },
   async findCompanyById(id: string): Promise<UserCompany | null> {
     const res = await pool.query<UserCompany>(
-      `SELECT * FROM companies WHERE company_id = $1`,
+      `SELECT * FROM companies WHERE id = $1`,
       [id]
     );
     return res.rows?.[0] || null;
