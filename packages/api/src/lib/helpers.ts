@@ -1,6 +1,7 @@
 import { UserCompaniesRepository } from '@/db/repositories/companies';
 import { NotificationsRepository } from '@/db/repositories/notifications';
 import { NumbersRepository } from '@/db/repositories/numbers';
+import crypto from 'crypto';
 import { type FastifyInstance } from 'fastify';
 
 async function notifyIncomingCall({
