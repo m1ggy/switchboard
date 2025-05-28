@@ -58,7 +58,7 @@ function App() {
             const token = currentUser ? await currentUser.getIdToken() : null;
             return token ? { Authorization: `Bearer ${token}` } : {};
           },
-          maxURLLength: 2048,
+          maxURLLength: 4096,
         }),
       ],
     })
