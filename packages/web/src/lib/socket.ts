@@ -17,7 +17,7 @@ onAuthStateChanged(auth, async (user) => {
         token,
       },
     });
-    socket.on('notif', (args) => {
+    socket.on(`${user.uid}-notif`, (args) => {
       console.log(args);
     });
   }

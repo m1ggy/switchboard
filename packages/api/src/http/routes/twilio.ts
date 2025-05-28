@@ -117,6 +117,10 @@ async function routes(app: FastifyInstance) {
         );
         activeCallStore.updateStatus(CallSid, 'held', agentIdentity);
         if (existingCompany) {
+          const userCompany = await UserCompaniesRepository.findUserIdById(
+            existingCompany.id
+          );
+          if (!userCompany) return;
           const notif = await NotificationsRepository.create({
             id: crypto.randomUUID() as string,
             message: `Incoming call from ${callerId}`,
@@ -124,7 +128,7 @@ async function routes(app: FastifyInstance) {
             meta: { companyId: existingCompany.id },
           });
 
-          app.io.emit('notif', notif);
+          app.io.emit(`${userCompany.user_id}-notif`, notif);
         }
       }
 
@@ -173,6 +177,10 @@ async function routes(app: FastifyInstance) {
         );
         activeCallStore.updateStatus(CallSid, 'held', agentIdentity);
         if (existingCompany) {
+          const userCompany = await UserCompaniesRepository.findUserIdById(
+            existingCompany.id
+          );
+          if (!userCompany) return;
           const notif = await NotificationsRepository.create({
             id: crypto.randomUUID() as string,
             message: `Incoming call from ${callerId}`,
@@ -180,7 +188,7 @@ async function routes(app: FastifyInstance) {
             meta: { companyId: existingCompany.id },
           });
 
-          app.io.emit('notif', notif);
+          app.io.emit(`${userCompany.user_id}-notif`, notif);
         }
       }
 

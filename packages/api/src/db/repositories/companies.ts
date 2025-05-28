@@ -93,4 +93,12 @@ export const UserCompaniesRepository = {
     );
     return res.rows?.[0] || null;
   },
+
+  async findUserIdById(id: string): Promise<UserCompany | null> {
+    const res = await pool.query<UserCompany>(
+      `SELECT * FROM user_companies WHERE company_id = $1`,
+      [id]
+    );
+    return res.rows?.[0] || null;
+  },
 };
