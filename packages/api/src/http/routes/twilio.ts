@@ -26,7 +26,7 @@ async function routes(app: FastifyInstance) {
 
     if (!To) {
       response.say('Invalid destination number.');
-      return reply.type('text/xml').status(400).send(response.toString());
+      return reply.type('text/xml').status(200).send(response.toString());
     }
 
     const numberRecord = await NumbersRepository.findByNumber(To);
