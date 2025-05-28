@@ -82,4 +82,40 @@ export const NotificationsRepository = {
   async delete(id: string): Promise<void> {
     await pool.query(`DELETE FROM notifications WHERE id = $1`, [id]);
   },
+
+  /**
+   * Mark multiple notifications as viewed
+   */
+  async markManyAsViewed(ids: string[], viewedAt: Date): Promise<void> {
+    if (ids.length === 0) return;
+
+    const placeholders = ids.map((_, idx) => `$${idx + 1}`).join(', ');
+    await pool.query(
+      `UPDATE notifications SET viewed = true, viewed_at = $${ids.length + 1}
+       WHERE id IN (${placeholders})`,
+      [...ids, viewedAt]
+    );
+  },
+
+  /**
+   * Get count of unread notifications for a user
+   */
+  async getUnreadCountByUser(userId: string): Promise<number> {
+    const res = await pool.query(
+      `SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND viewed = false`,
+      [userId]
+    );
+    return parseInt(res.rows[0].count, 10);
+  },
+
+  /**
+   * Get unread (unviewed) notifications for a specific user
+   */
+  async getUnreadByUser(userId: string): Promise<Notification[]> {
+    const res = await pool.query<Notification>(
+      `SELECT * FROM notifications WHERE user_id = $1 AND viewed = false ORDER BY created_at DESC`,
+      [userId]
+    );
+    return res.rows;
+  },
 };

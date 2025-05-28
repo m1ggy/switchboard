@@ -10,6 +10,7 @@ interface UserCompany {
   id: string;
   user_id: string;
   company_id: string;
+  name: string;
 }
 
 export const UserCompaniesRepository = {
@@ -84,5 +85,12 @@ export const UserCompaniesRepository = {
     );
 
     return res.rows as (Company & { numbers: NumberEntry[] })[];
+  },
+  async findCompanyById(id: string): Promise<UserCompany | null> {
+    const res = await pool.query<UserCompany>(
+      `SELECT * FROM companies AND company_id = $1`,
+      [id]
+    );
+    return res.rows?.[0] || null;
   },
 };

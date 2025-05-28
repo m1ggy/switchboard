@@ -114,6 +114,7 @@ exports.up = (pgm) => {
     user_id: { type: 'text', default: null },
     viewed_at: { type: 'timestamp', default: null },
     type: { type: 'notification_types', default: 'user' },
+    company_id: { type: 'uuid', default: null },
   });
 
   pgm.createIndex('notifications', 'user_id');

@@ -3,10 +3,6 @@ import {
   Contact2,
   History,
   Home,
-  Inbox,
-  MessageCirclePlus,
-  MessageSquareDashed,
-  MessageSquareShareIcon,
   PhoneIcon,
   Settings,
   UserPlus,
@@ -34,31 +30,31 @@ import { Link, useLocation } from 'react-router';
 import { NumberSwitcher } from './number-switcher';
 import { Button } from './ui/button';
 import { Skeleton } from './ui/skeleton';
-const smsItems = [
-  {
-    title: 'New Message',
-    url: null,
-    icon: MessageCirclePlus,
-    onClick: () => {
-      useMainStore.getState().setSendMessageModalShown(true);
-    },
-  },
-  {
-    title: 'Inbox',
-    url: '/dashboard/inbox',
-    icon: Inbox,
-  },
-  {
-    title: 'Drafts',
-    url: '/dashboard/drafts',
-    icon: MessageSquareDashed,
-  },
-  {
-    title: 'Sent',
-    url: '/dashboard/sent',
-    icon: MessageSquareShareIcon,
-  },
-];
+// const smsItems: unknown[] = [
+//   // {
+//   //   title: 'New Message',
+//   //   url: null,
+//   //   icon: MessageCirclePlus,
+//   //   onClick: () => {
+//   //     useMainStore.getState().setSendMessageModalShown(true);
+//   //   },
+//   // },
+//   // {
+//   //   title: 'Inbox',
+//   //   url: '/dashboard/inbox',
+//   //   icon: Inbox,
+//   // },
+//   // {
+//   //   title: 'Drafts',
+//   //   url: '/dashboard/drafts',
+//   //   icon: MessageSquareDashed,
+//   // },
+//   // {
+//   //   title: 'Sent',
+//   //   url: '/dashboard/sent',
+//   //   icon: MessageSquareShareIcon,
+//   // },
+// ];
 
 const callsItems = [
   {
@@ -163,37 +159,39 @@ function BaseSidebar() {
           </SidebarMenuItem>
         </SidebarMenu>
 
-        <SidebarGroup>
-          <SidebarGroupLabel>Messages</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {smsItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={location.pathname === item.url}
-                  >
-                    {item.url ? (
-                      <Link to={item.url}>
-                        <item.icon />
-                        <span>{item.title}</span>
-                      </Link>
-                    ) : item.onClick ? (
-                      <Button
-                        onClick={item.onClick}
-                        className=" cursor-pointer"
-                        variant={'outline'}
-                      >
-                        <item.icon />
-                        <span>{item.title}</span>
-                      </Button>
-                    ) : null}
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {/* {smsItems.length ? (
+          <SidebarGroup>
+            <SidebarGroupLabel>Messages</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {smsItems.map((item) => (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname === item.url}
+                    >
+                      {item.url ? (
+                        <Link to={item.url}>
+                          <item.icon />
+                          <span>{item.title}</span>
+                        </Link>
+                      ) : item.onClick ? (
+                        <Button
+                          onClick={item.onClick}
+                          className=" cursor-pointer"
+                          variant={'outline'}
+                        >
+                          <item.icon />
+                          <span>{item.title}</span>
+                        </Button>
+                      ) : null}
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ) : null} */}
         <SidebarGroup>
           <SidebarGroupLabel>Calls</SidebarGroupLabel>
           <SidebarGroupContent>
