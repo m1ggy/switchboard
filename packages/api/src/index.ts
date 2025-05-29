@@ -38,8 +38,10 @@ app.register(fastifySocketIO, {
     },
     methods: ['GET', 'POST', 'OPTIONS'],
     credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization'],
   },
 });
+
 app.register(fastifyCors, {
   origin: ['http://localhost:5173', 'https://stagingspace.org'],
 });
@@ -64,6 +66,21 @@ app.register(twilioRoutes, { prefix: '/twilio' });
 
 app.listen({ port: 3000 }, () => {
   console.log('API listening on http://localhost:3000');
+
+  app.io.engine.on('initial_headers', (headers, req) => {
+    const origin = req.headers.origin;
+    const allowedOrigins = [
+      'http://localhost:5173',
+      'https://stagingspace.org',
+    ];
+
+    if (allowedOrigins.includes(origin)) {
+      headers['Access-Control-Allow-Origin'] = origin;
+      headers['Access-Control-Allow-Credentials'] = 'true';
+      headers['Access-Control-Allow-Methods'] = ['GET,POST,OPTIONS'];
+      headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization';
+    }
+  });
 
   app.io.use(async (socket, next) => {
     try {
