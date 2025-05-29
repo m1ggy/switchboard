@@ -41,7 +41,7 @@ function Notifications({ children }: PropsWithChildren) {
           <SheetTitle>Notifications</SheetTitle>
           <SheetDescription>Recent</SheetDescription>
         </SheetHeader>
-        <div className="flex flex-col">
+        <div className="flex flex-col overflow-auto">
           {notifications &&
             notifications?.map((notif) => (
               <div
