@@ -21,18 +21,15 @@ const app = Fastify({
   },
 });
 
-app.register(fastifyCors, {
-  origin: ['http://localhost:5173', 'https://stagingspace.org'],
-});
 app.register(fastifySocketIO, {
   path: '/ws',
   cors: {
     origin: ['http://localhost:5173', 'https://stagingspace.org'],
-    methods: ['GET', 'POST'],
-    credentials: true,
   },
 });
-
+app.register(fastifyCors, {
+  origin: ['http://localhost:5173', 'https://stagingspace.org'],
+});
 app.register(formBody);
 app.register(fastifyTRPCPlugin, {
   prefix: '/trpc',
