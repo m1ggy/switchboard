@@ -23,9 +23,6 @@ const app = Fastify({
 
 app.register(fastifySocketIO, {
   path: '/ws',
-  cors: {
-    origin: ['http://localhost:5173', 'https://stagingspace.org'],
-  },
 });
 app.register(fastifyCors, {
   origin: ['http://localhost:5173', 'https://stagingspace.org'],
