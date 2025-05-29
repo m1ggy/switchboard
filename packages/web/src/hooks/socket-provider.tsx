@@ -37,6 +37,10 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
     trpc.notifications.getUnreadNotificationsCount.queryOptions()
   );
 
+  const { data: companies } = useQuery(
+    trpc.companies.getUserCompanies.queryOptions()
+  );
+
   useEffect(() => {
     if (user && socket) {
       socket.on(`${user.uid}-notif`, (notif: Notification) => {
@@ -44,10 +48,22 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
         refetchNotifications();
         refetchCount();
 
-        toast.info(notif.message);
+        let title = 'New Notification';
+
+        if (notif.meta.companyId) {
+          const notifCompany = companies?.find(
+            (company) => company.id === notif.meta.companyId
+          );
+
+          if (notifCompany) {
+            title = `Notification for ${notifCompany.name}`;
+          }
+        }
+
+        toast.info(title, { description: notif.message });
       });
     }
-  }, [user, socket, refetchCount, refetchNotifications]);
+  }, [user, socket, refetchCount, refetchNotifications, companies]);
 
   if (!socket) return children;
 
