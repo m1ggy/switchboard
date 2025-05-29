@@ -24,20 +24,7 @@ const app = Fastify({
 app.register(fastifySocketIO, {
   path: '/ws',
   cors: {
-    origin: (origin, callback) => {
-      console.log('ORIGIN: ', origin);
-      const allowedOrigins = [
-        'http://localhost:5173',
-        'https://stagingspace.org',
-      ];
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
-    },
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    origin: ['http://localhost:5173', 'https://stagingspace.org'],
   },
 });
 
