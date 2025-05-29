@@ -31,7 +31,6 @@ function CompanySwitcherDialog() {
     trpc.companies.getUserCompanies.queryOptions()
   );
   const { mutate } = useMutation(trpc.twilio.presence.mutationOptions());
-
   const onSelectCompany = (company: GetUserCompaniesOutput) => {
     const { numbers, ...baseCompany } = company;
     setActiveCompany(baseCompany);
