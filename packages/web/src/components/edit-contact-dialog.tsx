@@ -102,7 +102,6 @@ function EditContactDialog({
     }
   }
 
-  console.log({ selectedContact });
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>

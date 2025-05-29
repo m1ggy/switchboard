@@ -45,14 +45,32 @@ export const NotificationsRepository = {
   },
 
   /**
-   * Get all notifications for a given user
+   * Get paginated notifications for a given user
    */
-  async findByUser(userId: string): Promise<Notification[]> {
-    const res = await pool.query<Notification>(
-      `SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC`,
-      [userId]
-    );
-    return res.rows;
+  async findByUser(
+    userId: string,
+    options: { limit?: number; offset?: number } = {}
+  ): Promise<{ data: Notification[]; total: number }> {
+    const { limit = 20, offset = 0 } = options;
+
+    const [dataRes, countRes] = await Promise.all([
+      pool.query<Notification>(
+        `SELECT * FROM notifications
+       WHERE user_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2 OFFSET $3`,
+        [userId, limit, offset]
+      ),
+      pool.query<{ count: string }>(
+        `SELECT COUNT(*) FROM notifications WHERE user_id = $1`,
+        [userId]
+      ),
+    ]);
+
+    return {
+      data: dataRes.rows,
+      total: parseInt(countRes.rows[0].count, 10),
+    };
   },
 
   /**

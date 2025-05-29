@@ -8,7 +8,6 @@ const auth = getAuth(app);
 
 onAuthStateChanged(auth, async (user) => {
   if (user) {
-    console.log('USER: ', user);
     const token = await user.getIdToken();
 
     socket = io(import.meta.env.VITE_WEBSOCKET_URL, {

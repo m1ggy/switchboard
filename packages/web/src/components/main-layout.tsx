@@ -1,9 +1,12 @@
+import { SocketProvider } from '@/hooks/socket-provider';
 import { TwilioVoiceProvider } from '@/hooks/twilio-provider';
+import { getSocket } from '@/lib/socket';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Outlet } from 'react-router';
+import type { Socket } from 'socket.io-client';
 import ActiveCallDialog from './active-call-dialog';
 import BaseSidebar from './base-sidebar';
 import CompanySwitcherDialog from './company-switcher-dialog';
@@ -15,6 +18,8 @@ import SendMessageDialog from './send-message';
 import { SidebarProvider } from './ui/sidebar';
 
 function Layout() {
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const rootSocket = getSocket();
   const trpc = useTRPC();
   const { activeNumber } = useMainStore();
 
@@ -35,22 +40,30 @@ function Layout() {
     }, 15000);
     return () => clearInterval(interval);
   }, [activeNumber, mutate]);
+
+  useEffect(() => {
+    if (rootSocket) {
+      setSocket(rootSocket);
+    }
+  }, [rootSocket]);
   return (
-    <TwilioVoiceProvider token={token ?? ''}>
-      <SidebarProvider className="transition-all">
-        <BaseSidebar />
-        <main className="w-full">
-          <Header isLoggedIn />
-          <Outlet />
-        </main>
-        <SendMessageDialog />
-        <CreateContactDialog />
-        <DialerDialog />
-        <IncomingCallDialog />
-        <ActiveCallDialog />
-        <CompanySwitcherDialog />
-      </SidebarProvider>
-    </TwilioVoiceProvider>
+    <SocketProvider socket={socket}>
+      <TwilioVoiceProvider token={token ?? ''}>
+        <SidebarProvider className="transition-all">
+          <BaseSidebar />
+          <main className="w-full">
+            <Header isLoggedIn />
+            <Outlet />
+          </main>
+          <SendMessageDialog />
+          <CreateContactDialog />
+          <DialerDialog />
+          <IncomingCallDialog />
+          <ActiveCallDialog />
+          <CompanySwitcherDialog />
+        </SidebarProvider>
+      </TwilioVoiceProvider>
+    </SocketProvider>
   );
 }
 

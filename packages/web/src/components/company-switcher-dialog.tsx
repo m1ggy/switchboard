@@ -1,7 +1,7 @@
 import { getQueryClient } from '@/App';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import type { GetUserCompaniesOutput } from 'api/trpc/types';
 import clsx from 'clsx';
 import { formatDate } from 'date-fns';
@@ -30,11 +30,11 @@ function CompanySwitcherDialog() {
   const { data: companies, isFetching } = useQuery(
     trpc.companies.getUserCompanies.queryOptions()
   );
+  const { mutate } = useMutation(trpc.twilio.presence.mutationOptions());
 
   const onSelectCompany = (company: GetUserCompaniesOutput) => {
     const { numbers, ...baseCompany } = company;
     setActiveCompany(baseCompany);
-    console.log('SELECTING COMPANY: ', company);
 
     if (numbers.length) {
       getQueryClient().invalidateQueries({
@@ -42,12 +42,14 @@ function CompanySwitcherDialog() {
           identity: activeNumber?.number as string,
         }).queryKey,
       });
-      setActiveNumber(numbers[0]);
+
+      const mainNumber = numbers[0];
+      setActiveNumber(mainNumber);
+      mutate({ identity: mainNumber.number });
     }
     setCompanySwitcherDialogShown(false);
   };
 
-  console.log({ companies });
   return (
     <Dialog
       open={companySwitcherDialogShown}
@@ -79,7 +81,8 @@ function CompanySwitcherDialog() {
               <CardContent>
                 <CardTitle>{company.name}</CardTitle>
                 <CardDescription>
-                  {formatDate(company.created_at, 'd MMM yyyy')}
+                  {company.created_at &&
+                    formatDate(company.created_at, 'd MMM yyyy')}
                 </CardDescription>
                 {company.numbers.length == 0 ? (
                   <span className=" text-muted-foreground text-sm font-bold">

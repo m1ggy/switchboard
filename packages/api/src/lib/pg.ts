@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { Pool } from 'pg';
+import { Pool, QueryResult, QueryResultRow } from 'pg';
 
 dotenv.config();
 
@@ -11,15 +11,53 @@ const client = new Pool({
   database: process.env.DB_NAME,
   max: 10,
   idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
 });
 
-export async function connectDB() {
-  try {
-    await client.connect();
-    console.log('✅ Connected to PostgreSQL database');
-  } catch (err) {
-    console.error('❌ Connection error', err);
+client.on('error', (err) => {
+  console.error('🔥 Unexpected error on idle PostgreSQL client', err);
+});
+
+const RETRYABLE_ERRORS = ['ETIMEDOUT', 'ECONNRESET', 'EPIPE', 'ECONNREFUSED'];
+
+async function queryWithRetry<T extends QueryResultRow>(
+  text: string,
+  params?: unknown[],
+  retries = 3,
+  delay = 500
+): Promise<QueryResult<T>> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      if (attempt > 0) {
+        console.warn(`🔁 Retrying query (attempt ${attempt}):`, text);
+      }
+
+      return await client.query<T>(text, params);
+    } catch (err: unknown) {
+      const error = err as NodeJS.ErrnoException;
+
+      if (
+        attempt < retries &&
+        error &&
+        RETRYABLE_ERRORS.includes(error.code ?? error.name)
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+
+      console.error('❌ Query failed:', text, params, error);
+      throw error;
+    }
   }
+
+  throw new Error('Query unexpectedly failed after retries');
 }
 
-export default client;
+const wrappedClient: Pool & {
+  query: <T extends QueryResultRow>(
+    text: string,
+    params?: unknown[]
+  ) => Promise<QueryResult<T>>;
+} = Object.assign({}, client, { query: queryWithRetry });
+
+export default wrappedClient;
