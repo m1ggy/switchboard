@@ -29,7 +29,14 @@ app.register(fastifyTRPCPlugin, {
   trpcOptions: { router: appRouter, createContext, allowBatching: false },
 });
 
-app.register(fastifySocketIO, { path: '/ws', cors: { origin: '*' } });
+app.register(fastifySocketIO, {
+  path: '/ws',
+  cors: {
+    origin: ['http://localhost:5173', 'https://stagingspace.org'],
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
+});
 
 app.get('/', (_, reply) => {
   return reply
