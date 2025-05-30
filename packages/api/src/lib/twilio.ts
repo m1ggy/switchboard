@@ -12,7 +12,7 @@ type AvailablePhoneNumberInstance = Awaited<
 >[number];
 
 export class TwilioClient {
-  private client: Twilio;
+  client: Twilio;
   private from: string;
 
   constructor(accountSid: string, authToken: string, fromNumber?: string) {

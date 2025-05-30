@@ -1,40 +1,66 @@
-import { CallInstance } from 'twilio/lib/rest/insights/v1/call';
+type CallQueueItem = {
+  callSid: string;
+  callerId: string;
+  toNumber: string;
+  enqueueTime: number;
+  agentId?: string;
+  companyId?: string;
+  source?: 'pstn' | 'client' | 'sip';
+};
 
 export class NumberCallQueueManager<T> {
   private queue: Map<string, T[]> = new Map();
 
   enqueue(number: string, data: T) {
-    this.queue.get(number)?.push(data);
+    this._getQueue(number).push(data);
   }
 
-  dequeue(number: string) {
-    return this.queue.get(number)?.shift();
+  dequeue(number: string): T | undefined {
+    return this._getQueue(number).shift();
   }
 
-  list(number: string) {
-    return this.queue.get(number);
+  peek(number: string): T | undefined {
+    return this._getQueue(number)[0];
   }
 
-  count(number: string) {
-    return this.queue.get(number)?.length;
+  list(number: string): T[] {
+    return this._getQueue(number);
   }
 
-  _createQueue(number: string) {
-    const existingQueue = this.queue.get(number);
-
-    if (existingQueue) return existingQueue;
-
-    this.queue.set(number, []);
-
-    return this.queue.get(number) as T[];
+  count(number: string): number {
+    return this._getQueue(number).length;
   }
-  _getQueue(number: string) {
-    const numberQueue = this.queue.get(number);
 
-    if (!numberQueue) return this._createQueue(number);
+  clear(number: string): void {
+    this.queue.delete(number);
+  }
 
-    return numberQueue;
+  removeByPredicate(predicate: (item: T) => boolean): boolean {
+    for (const [number, queue] of this.queue.entries()) {
+      const index = queue.findIndex(predicate);
+      if (index !== -1) {
+        queue.splice(index, 1);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  getActiveNumbers(): string[] {
+    return [...this.queue.entries()]
+      .filter(([_, queue]) => queue.length > 0)
+      .map(([number]) => number);
+  }
+
+  private _createQueue(number: string): T[] {
+    const newQueue: T[] = [];
+    this.queue.set(number, newQueue);
+    return newQueue;
+  }
+
+  private _getQueue(number: string): T[] {
+    return this.queue.get(number) ?? this._createQueue(number);
   }
 }
 
-export const callQueueManager = new NumberCallQueueManager<CallInstance>();
+export const callQueueManager = new NumberCallQueueManager<CallQueueItem>();

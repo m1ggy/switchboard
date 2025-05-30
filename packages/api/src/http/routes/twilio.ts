@@ -1,6 +1,7 @@
 import { UserCompaniesRepository } from '@/db/repositories/companies';
 import { NumbersRepository } from '@/db/repositories/numbers';
 import { notifyIncomingCall } from '@/lib/helpers';
+import { callQueueManager } from '@/lib/queue';
 import { sendCallAlertToSlack } from '@/lib/slack';
 import { activeCallStore, presenceStore } from '@/lib/store';
 import { TwilioClient } from '@/lib/twilio';
@@ -17,15 +18,14 @@ const twilioClient = new TwilioClient(
 const SERVER_DOMAIN = process.env.SERVER_DOMAIN;
 
 async function routes(app: FastifyInstance) {
+  // 🔹 Voice Entry Point
   app.post('/voice', async (request, reply) => {
     const { To, From, CallerId, Direction, ParentCallSid, CallSid } =
       request.body as Record<string, string>;
 
-    console.log('📞 CALL BODY:', request.body);
-
-    const response = new twiml.VoiceResponse();
     const callerId = CallerId || From;
     const isInbound = Direction === 'inbound';
+    const response = new twiml.VoiceResponse();
 
     if (!To) {
       response.say('Invalid destination number.');
@@ -33,36 +33,26 @@ async function routes(app: FastifyInstance) {
     }
 
     const numberRecord = await NumbersRepository.findByNumber(To);
-    const agentIdentity = numberRecord?.number as string;
+    if (!numberRecord) {
+      response.say('We could not route your call at this time.');
+      return reply.type('text/xml').status(200).send(response.toString());
+    }
 
+    const agentIdentity = numberRecord.number;
     const isFromClient = From?.startsWith('client:');
     const isToPSTN = To.startsWith('+');
     const isOutboundToPSTN = isFromClient && isToPSTN && !numberRecord;
 
-    console.log('🔎 PSTN Call Evaluation:', {
-      From,
-      To,
-      isFromClient,
-      isToPSTN,
-      numberRecordExists: !!numberRecord,
-      isOutboundToPSTN,
-      Direction,
-    });
-
     if (isOutboundToPSTN) {
-      console.log('📤 Outbound PSTN call from client:', From, '→', To);
       response.say('Connecting your call...');
       response.dial({ callerId }, To);
-      return reply.type('text/xml').status(200).send(response.toString());
+      return reply.type('text/xml').send(response.toString());
     }
 
-    const isInboundToOwnNumber = isInbound && !!numberRecord;
-    const isDialLoop = isInboundToOwnNumber && !!ParentCallSid;
-
+    const isDialLoop = isInbound && ParentCallSid;
     if (isDialLoop) {
-      console.log('⚠️ Detected call loop. Ending call.');
       response.say('Sorry, we could not connect your call.');
-      return reply.type('text/xml').status(200).send(response.toString());
+      return reply.type('text/xml').send(response.toString());
     }
 
     activeCallStore.add({
@@ -71,147 +61,117 @@ async function routes(app: FastifyInstance) {
       to: To,
       status: 'initiated',
       startedAt: new Date(),
+      agent: agentIdentity,
     });
 
-    const isExternalInbound =
-      isInbound && !!numberRecord && !From.startsWith('client:');
+    await notifyIncomingCall({ callerId, toNumber: To, callSid: CallSid, app });
 
-    if (isExternalInbound) {
-      const isAgentAvailable = presenceStore.isOnline(agentIdentity);
+    const agentIsAvailable = presenceStore.isAvailable(agentIdentity);
 
-      await notifyIncomingCall({
+    if (agentIsAvailable) {
+      presenceStore.setStatus(agentIdentity, 'on-call');
+
+      await twilioClient.bridgeCallToClient(
+        CallSid,
+        agentIdentity,
+        `${SERVER_DOMAIN}/twilio/voice/bridge?client=${agentIdentity}`
+      );
+
+      response.say('Connecting you to an agent now.');
+    } else {
+      const queueRoom = `queue-${agentIdentity}`;
+
+      callQueueManager.enqueue(agentIdentity, {
+        callSid: CallSid,
         callerId,
         toNumber: To,
-        callSid: CallSid,
-        app,
+        enqueueTime: Date.now(),
+        agentId: agentIdentity,
+        companyId: numberRecord.company_id,
       });
 
-      if (isAgentAvailable) {
-        console.log(
-          `📞 External inbound call to ${To}. Bridging to agent ${agentIdentity}`
-        );
-        await twilioClient.bridgeCallToClient(
-          CallSid,
-          agentIdentity,
-          `${SERVER_DOMAIN}/twilio/voice/bridge`
-        );
-        response.say('Connecting you to an agent now.');
-      } else {
-        const holdRoom = `hold-${CallSid}`;
-        console.log(
-          `⏳ External caller to ${To}, agent ${agentIdentity} is offline. Holding in ${holdRoom}`
-        );
+      await sendCallAlertToSlack({ from: callerId, to: To });
 
-        let to = To;
-        const existingNumber = await NumbersRepository.findByNumber(To);
-        if (existingNumber) {
-          const existingCompany = await UserCompaniesRepository.findCompanyById(
-            existingNumber.company_id
-          );
-          if (existingCompany) {
-            to = `${to} (${existingCompany.name})`;
-          }
-        }
+      response.say('All agents are currently busy. Please hold.');
+      response.dial().conference(
+        {
+          startConferenceOnEnter: false,
+          endConferenceOnExit: false,
+          statusCallback: `${SERVER_DOMAIN}/twilio/voice/conference-events`,
+          statusCallbackEvent: ['leave'],
+          statusCallbackMethod: 'POST',
+        },
+        queueRoom
+      );
 
-        response.say('All agents are currently busy. Please hold.');
-        await sendCallAlertToSlack({ from: callerId, to });
-
-        response.dial().conference(
-          {
-            startConferenceOnEnter: true,
-            endConferenceOnExit: false,
-          },
-          holdRoom
-        );
-        activeCallStore.updateStatus(CallSid, 'held', agentIdentity);
-      }
-
-      return reply.type('text/xml').status(200).send(response.toString());
+      activeCallStore.updateStatus(CallSid, 'held', agentIdentity);
     }
 
-    if (isInboundToOwnNumber && agentIdentity) {
-      const isAgentAvailable = presenceStore.isOnline(agentIdentity);
-
-      await notifyIncomingCall({
-        callerId,
-        toNumber: To,
-        callSid: CallSid,
-        app,
-      });
-
-      if (isAgentAvailable) {
-        console.log(`✅ Agent ${agentIdentity} is online. Bridging...`);
-        await twilioClient.bridgeCallToClient(
-          CallSid,
-          agentIdentity,
-          `${SERVER_DOMAIN}/twilio/voice/bridge`
-        );
-        response.say('Connecting you to an agent now.');
-      } else {
-        const holdRoom = `hold-${CallSid}`;
-        console.log(
-          `🕒 Agent ${agentIdentity} is offline. Holding in ${holdRoom}`
-        );
-
-        let to = To;
-        const existingNumber = await NumbersRepository.findByNumber(To);
-        if (existingNumber) {
-          const existingCompany = await UserCompaniesRepository.findCompanyById(
-            existingNumber.company_id
-          );
-          if (existingCompany) {
-            to = `${to} (${existingCompany.name})`;
-          }
-        }
-
-        await sendCallAlertToSlack({ from: callerId, to });
-
-        response.say('All agents are currently busy. Please hold.');
-        response.dial().conference(
-          {
-            startConferenceOnEnter: true,
-            endConferenceOnExit: false,
-          },
-          holdRoom
-        );
-        activeCallStore.updateStatus(CallSid, 'held', agentIdentity);
-      }
-
-      return reply.type('text/xml').status(200).send(response.toString());
-    }
-
-    console.warn(`🚫 No agent identity mapped for number: ${To}`);
-    response.say('We could not route your call at this time.');
     return reply.type('text/xml').status(200).send(response.toString());
   });
 
+  // 🔹 Call Status Updates (e.g., when a call ends)
   app.post('/voice/status', async (req, res) => {
-    const { CallStatus, From, To, Duration } = req.body as Record<
-      string,
-      string
-    >;
+    const { CallSid, CallStatus, To } = req.body as Record<string, string>;
 
-    const isMissed =
-      CallStatus === 'completed' && (!Duration || Duration === '0');
+    activeCallStore.remove(CallSid);
 
-    if (isMissed) {
-      console.log(`Missed call from ${From} to ${To}`);
+    if (CallStatus === 'completed') {
+      presenceStore.setStatus(To, 'idle');
+
+      const next = callQueueManager.dequeue(To);
+      if (next) {
+        console.log(
+          `➡️ Bridging next queued caller ${next.callSid} to agent ${To}`
+        );
+
+        await twilioClient.client.calls(next.callSid).update({
+          url: `${SERVER_DOMAIN}/twilio/voice/bridge?client=${To}`,
+          method: 'POST',
+        });
+
+        presenceStore.setStatus(To, 'on-call');
+      }
     }
 
     res.status(200).send('OK');
   });
 
+  // 🔹 Bridge Logic
   app.post('/voice/bridge', async (req, reply) => {
     let { client } = req.query as Record<string, string>;
-
     if (client.startsWith('client:')) {
       client = client.replace(/^client:/, '');
     }
+
     const response = new twiml.VoiceResponse();
     response.say('Connecting you now.');
-    const dial = response.dial();
-    dial.client(client);
-    reply.type('text/xml').send(response.toString());
+    response.dial().client(client);
+
+    return reply.type('text/xml').send(response.toString());
+  });
+
+  // 🔹 Caller Leaves Conference (queue abandonment)
+  app.post('/voice/conference-events', async (req, reply) => {
+    const { EventType, CallSid } = req.body as Record<string, string>;
+
+    if (EventType === 'participant-leave') {
+      const wasRemoved = callQueueManager.removeByPredicate(
+        (item) => item.callSid === CallSid
+      );
+
+      if (wasRemoved) {
+        console.log(
+          `🗑️ Caller ${CallSid} left the queue. Removed from queueManager.`
+        );
+      } else {
+        console.log(`ℹ️ Caller ${CallSid} left, but was not in queue.`);
+      }
+
+      activeCallStore.remove(CallSid);
+    }
+
+    return reply.status(200).send('OK');
   });
 }
 

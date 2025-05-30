@@ -32,23 +32,32 @@ export class ActiveCallStore {
     this.calls.delete(callSid);
   }
 
-  listActive() {
+  listActive(): ActiveCall[] {
     return Array.from(this.calls.values()).filter(
       (c) => c.status !== 'completed'
     );
   }
 
-  findUnassigned() {
+  findUnassigned(): ActiveCall[] {
     return Array.from(this.calls.values()).filter(
       (c) => !c.agent && c.status === 'initiated'
     );
   }
+
+  findByAgent(agentId: string): ActiveCall[] {
+    return Array.from(this.calls.values()).filter(
+      (c) => c.agent === agentId && c.status !== 'completed'
+    );
+  }
 }
 
-type PresenceRecord = {
+type PresenceStatus = 'idle' | 'on-call';
+
+interface PresenceRecord {
   identity: string;
   lastSeen: number;
-};
+  status: PresenceStatus;
+}
 
 export class PresenceStore {
   private ttl: number;
@@ -60,39 +69,71 @@ export class PresenceStore {
   }
 
   /**
-   * Update or insert agent presence
+   * Ping or initialize presence — sets to 'idle' if new
    */
   set(identity: string) {
+    const existing = this.store.get(identity);
+    const status: PresenceStatus = existing?.status || 'idle';
+
     this.store.set(identity, {
       identity,
       lastSeen: Date.now(),
+      status,
     });
   }
 
   /**
-   * Mark agent as offline manually
+   * Update just the status ('idle' or 'on-call')
    */
+  setStatus(identity: string, status: PresenceStatus) {
+    const existing = this.store.get(identity);
+    if (existing) {
+      existing.status = status;
+      existing.lastSeen = Date.now();
+    } else {
+      this.store.set(identity, {
+        identity,
+        lastSeen: Date.now(),
+        status,
+      });
+    }
+  }
+
+  getStatus(identity: string): PresenceStatus | 'offline' {
+    const record = this.store.get(identity);
+    if (!record || Date.now() - record.lastSeen > this.ttl) return 'offline';
+    return record.status;
+  }
+
+  isOnline(identity: string): boolean {
+    const record = this.store.get(identity);
+    return !!record && Date.now() - record.lastSeen < this.ttl;
+  }
+
+  isAvailable(identity: string): boolean {
+    const record = this.store.get(identity);
+    return (
+      !!record &&
+      Date.now() - record.lastSeen < this.ttl &&
+      record.status === 'idle'
+    );
+  }
+
   remove(identity: string) {
     this.store.delete(identity);
   }
 
-  /**
-   * Check if the agent is considered online
-   */
-  isOnline(identity: string): boolean {
-    const record = this.store.get(identity);
-    if (!record) return false;
-
-    return Date.now() - record.lastSeen < this.ttl;
-  }
-
-  /**
-   * Get all online identities
-   */
   listOnline(): string[] {
     const now = Date.now();
     return Array.from(this.store.values())
       .filter((r) => now - r.lastSeen < this.ttl)
+      .map((r) => r.identity);
+  }
+
+  listAvailable(): string[] {
+    const now = Date.now();
+    return Array.from(this.store.values())
+      .filter((r) => now - r.lastSeen < this.ttl && r.status === 'idle')
       .map((r) => r.identity);
   }
 }
