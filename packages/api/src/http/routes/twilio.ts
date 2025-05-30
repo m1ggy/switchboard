@@ -14,6 +14,8 @@ const twilioClient = new TwilioClient(
   process.env.TWILIO_AUTH_TOKEN as string
 );
 
+const SERVER_DOMAIN = process.env.SERVER_DOMAIN;
+
 async function routes(app: FastifyInstance) {
   app.post('/voice', async (request, reply) => {
     const { To, From, CallerId, Direction, ParentCallSid, CallSid } =
@@ -91,7 +93,7 @@ async function routes(app: FastifyInstance) {
         await twilioClient.bridgeCallToClient(
           CallSid,
           agentIdentity,
-          'https://api.stagingspace.org/twilio/voice/bridge'
+          `${SERVER_DOMAIN}/twilio/voice/bridge`
         );
         response.say('Connecting you to an agent now.');
       } else {
@@ -142,7 +144,7 @@ async function routes(app: FastifyInstance) {
         await twilioClient.bridgeCallToClient(
           CallSid,
           agentIdentity,
-          'https://api.stagingspace.org/twilio/voice/bridge'
+          `${SERVER_DOMAIN}/twilio/voice/bridge`
         );
         response.say('Connecting you to an agent now.');
       } else {

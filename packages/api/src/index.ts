@@ -8,6 +8,9 @@ import twilioRoutes from './http/routes/twilio';
 import { auth } from './lib/firebase';
 import { appRouter } from './trpc';
 import { createContext } from './trpc/context';
+
+if (!process.env.SERVER_DOMAIN)
+  throw new Error('SERVER DOMAIN not set! exiting');
 const app = Fastify({
   logger: {
     level: 'info',
@@ -24,12 +27,12 @@ const app = Fastify({
 app.register(fastifySocketIO, {
   path: '/ws',
   cors: {
-    origin: ['http://localhost:5173', 'https://stagingspace.org'],
+    origin: ['http://localhost:5173', process.env.SERVER_DOMAIN as string],
   },
 });
 
 app.register(fastifyCors, {
-  origin: ['http://localhost:5173', 'https://stagingspace.org'],
+  origin: ['http://localhost:5173', process.env.SERVER_DOMAIN as string],
 });
 app.register(formBody);
 app.register(fastifyTRPCPlugin, {
