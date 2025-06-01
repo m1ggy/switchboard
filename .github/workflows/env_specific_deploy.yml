@@ -49,11 +49,14 @@ jobs:
           corepack prepare pnpm@latest --activate
           sudo npm install -g pm2
 
-          # === INSTALL CADDY (via .deb) ===
-          CADDY_DEB="caddy_latest_amd64.deb"
-          curl -fsSL -o \$CADDY_DEB "https://github.com/caddyserver/caddy/releases/latest/download/\$CADDY_DEB"
-          sudo dpkg -i \$CADDY_DEB
-          rm \$CADDY_DEB
+          # === CLEAN UP any broken Caddy APT repo ===
+          sudo rm -f /etc/apt/sources.list.d/caddy-stable.list || true
+          sudo rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg || true
+
+          # === INSTALL LATEST CADDY from Debian mirror ===
+          wget -qO caddy.deb "https://deb.debian.org/debian/pool/main/c/caddy/caddy_2.*_amd64.deb"
+          sudo dpkg -i caddy.deb
+          rm caddy.deb
 
           # === CLONE OR PULL PROJECT ===
           if [ ! -d "\$APP_DIR" ]; then
