@@ -7,6 +7,7 @@ on:
         description: 'Select deployment environment'
         type: environment
         required: true
+
   push:
     branches:
       - dev
@@ -36,7 +37,7 @@ jobs:
           # === CONFIG ===
           DEPLOY_ENV=${{ inputs.environment }}
           APP_DIR=~/apps/$DEPLOY_ENV
-          WEB_ROOT=/var/www/$DEPLOY_ENV
+          WEB_ROOT=${{ secrets.WEB_ROOT }}
           DOMAIN=${{ secrets.DOMAIN_NAME }}
           API_DOMAIN=api.\$DOMAIN
           REPO_URL=https://github.com/${{ github.repository }}.git
@@ -48,21 +49,11 @@ jobs:
           corepack prepare pnpm@latest --activate
           sudo npm install -g pm2
 
-            # === INSTALL CADDY ===
-            sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
-
-            # Download and install the GPG key properly
-            curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
-            | gpg --dearmor \
-            | sudo tee /usr/share/keyrings/caddy-stable-archive-keyring.gpg > /dev/null
-
-            # Add the repository with signed-by correctly set
-            echo "deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian all main" \
-            | sudo tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null
-
-            # Update and install
-            sudo apt update
-            sudo apt install -y caddy
+          # === INSTALL CADDY (via .deb) ===
+          CADDY_DEB="caddy_latest_amd64.deb"
+          curl -fsSL -o \$CADDY_DEB "https://github.com/caddyserver/caddy/releases/latest/download/\$CADDY_DEB"
+          sudo dpkg -i \$CADDY_DEB
+          rm \$CADDY_DEB
 
           # === CLONE OR PULL PROJECT ===
           if [ ! -d "\$APP_DIR" ]; then
