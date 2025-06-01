@@ -30,17 +30,17 @@ jobs:
 
       - name: Deploy via SSH
         run: |
-          ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'EOF'
+          REPO_URL="https://github.com/${{ github.repository }}.git"
+          DEPLOY_ENV="${{ inputs.environment }}"
+
+          ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} <<EOF
 
           set -e
 
-          # === CONFIG ===
-          DEPLOY_ENV=${{ inputs.environment }}
           APP_DIR=~/apps/$DEPLOY_ENV
-          WEB_ROOT=${{ secrets.WEB_ROOT }}
-          DOMAIN=${{ secrets.DOMAIN_NAME }}
+          WEB_ROOT='${{ secrets.WEB_ROOT }}'
+          DOMAIN='${{ secrets.DOMAIN_NAME }}'
           API_DOMAIN=api.\$DOMAIN
-          REPO_URL=https://github.com/${{ github.repository }}.git
 
           # === SETUP NODE/PNPM/PM2 ===
           curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
@@ -57,15 +57,15 @@ jobs:
 
           # === CLONE OR PULL PROJECT ===
           if [ ! -d "\$APP_DIR" ]; then
-            git clone \$REPO_URL \$APP_DIR
+            git clone $REPO_URL \$APP_DIR
           else
             cd \$APP_DIR && git pull origin main
           fi
 
           # === INJECT ENV FILES ===
-          echo "${{ secrets.API_ENV_FILE }}" > \$APP_DIR/packages/api/.env
+          echo '${{ secrets.API_ENV_FILE }}' > \$APP_DIR/packages/api/.env
           echo '${{ secrets.FIREBASE_JSON }}' > \$APP_DIR/packages/api/firebase.json
-          echo "${{ secrets.WEB_ENV_FILE }}" > \$APP_DIR/packages/web/.env
+          echo '${{ secrets.WEB_ENV_FILE }}' > \$APP_DIR/packages/web/.env
 
           # === INSTALL DEPENDENCIES ===
           cd \$APP_DIR
