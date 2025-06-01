@@ -48,12 +48,21 @@ jobs:
           corepack prepare pnpm@latest --activate
           sudo npm install -g pm2
 
-          # === SETUP CADDY ===
-          sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
-          curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo tee /etc/apt/keyrings/caddy.asc
-          curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
-          sudo apt update
-          sudo apt install -y caddy
+            # === INSTALL CADDY ===
+            sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+
+            # Download and install the GPG key properly
+            curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+            | gpg --dearmor \
+            | sudo tee /usr/share/keyrings/caddy-stable-archive-keyring.gpg > /dev/null
+
+            # Add the repository with signed-by correctly set
+            echo "deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian all main" \
+            | sudo tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null
+
+            # Update and install
+            sudo apt update
+            sudo apt install -y caddy
 
           # === CLONE OR PULL PROJECT ===
           if [ ! -d "\$APP_DIR" ]; then
