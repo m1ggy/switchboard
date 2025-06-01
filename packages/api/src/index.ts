@@ -8,6 +8,21 @@ import twilioRoutes from './http/routes/twilio';
 import { auth } from './lib/firebase';
 import { appRouter } from './trpc';
 import { createContext } from './trpc/context';
+import dotenv from 'dotenv';
+import path from 'path';
+
+dotenv.config();
+
+console.info('Starting Switchboard Server');
+
+if (process.env.NODE_ENV === 'development') {
+  dotenv.config({
+    path: path.resolve(__dirname, '../.env.development'),
+    override: true,
+  });
+
+  console.info('Using DEVELOPMENT vars');
+}
 
 if (!process.env.SERVER_DOMAIN)
   throw new Error('SERVER DOMAIN not set! exiting');

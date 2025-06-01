@@ -1,5 +1,5 @@
 node_modules
-.env
+.env*
 .turbo
 
 
@@ -8,3 +8,4 @@ build/
 
 
 firebase.json
+firebase.*.json
