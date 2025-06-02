@@ -30,14 +30,14 @@ jobs:
 
       - name: Deploy via SSH
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} <<EOF
+          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} <<'EOF'
           REPO_URL="https://github.com/${{ github.repository }}.git"
           DEPLOY_ENV="${{ inputs.environment }}"
           set -euo pipefail
 
           echo "🚀 Starting deployment to environment: \$DEPLOY_ENV"
 
-          APP_DIR=~/apps/\$DEPLOY_ENV
+          APP_DIR="\$HOME/apps/\$DEPLOY_ENV"
           WEB_ROOT='${{ secrets.WEB_ROOT }}'
           DOMAIN='${{ secrets.DOMAIN_NAME }}'
           API_DOMAIN=\$DOMAIN
@@ -66,31 +66,32 @@ jobs:
           # === CLONE OR PULL PROJECT ===
           if [ ! -d "\$APP_DIR/.git" ]; then
             echo "📥 Cloning repository..."
-            rm -rf \$APP_DIR
-            git clone $REPO_URL \$APP_DIR
+            rm -rf "\$APP_DIR"
+            mkdir -p "\$APP_DIR"
+            git clone "\$REPO_URL" "\$APP_DIR"
           else
             echo "🔄 Pulling latest code..."
-            cd \$APP_DIR && git pull origin main
+            cd "\$APP_DIR" && git pull origin main
           fi
 
           echo "🔐 Injecting environment files..."
-          echo '${{ secrets.API_ENV_FILE }}' > \$APP_DIR/packages/api/.env
-          echo '${{ secrets.FIREBASE_JSON }}' > \$APP_DIR/packages/api/firebase.json
-          echo '${{ secrets.WEB_ENV_FILE }}' > \$APP_DIR/packages/web/.env
+          echo '${{ secrets.API_ENV_FILE }}' > "\$APP_DIR/packages/api/.env"
+          echo '${{ secrets.FIREBASE_JSON }}' > "\$APP_DIR/packages/api/firebase.json"
+          echo '${{ secrets.WEB_ENV_FILE }}' > "\$APP_DIR/packages/web/.env"
 
           echo "📦 Installing dependencies..."
-          cd \$APP_DIR
+          cd "\$APP_DIR"
           pnpm install
 
           # === BUILD WEB ===
           echo "🛠️ Building Web..."
-          cd \$APP_DIR/packages/web
+          cd "\$APP_DIR/packages/web"
           NODE_OPTIONS="--max-old-space-size=1024" pnpm run build
 
           if [ -f "dist/index.html" ]; then
             echo "✅ Web build succeeded."
-            sudo mkdir -p \$WEB_ROOT
-            sudo cp -r dist/* \$WEB_ROOT/
+            sudo mkdir -p "\$WEB_ROOT"
+            sudo cp -r dist/* "\$WEB_ROOT/"
             echo "🚚 Deployed web files to \$WEB_ROOT"
           else
             echo "❌ Web build failed — dist/index.html not found."
@@ -98,7 +99,7 @@ jobs:
 
           # === BUILD & RUN API ===
           echo "🛠️ Building API..."
-          cd \$APP_DIR/packages/api
+          cd "\$APP_DIR/packages/api"
           NODE_OPTIONS="--max-old-space-size=1024" pnpm run build
 
           if [ -f "\$APP_DIR/packages/api/dist/index.mjs" ]; then
