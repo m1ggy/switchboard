@@ -46,7 +46,8 @@ jobs:
           APP_DIR="\$HOME/apps/\$DEPLOY_ENV"
           WEB_ROOT='${{ secrets.WEB_ROOT }}'
           DOMAIN='${{ secrets.DOMAIN_NAME }}'
-          API_DOMAIN=\$DOMAIN
+          API_DOMAIN='${{ secrets.API_DOMAIN }}'
+          WEB_DOMAIN='${{ secrets.WEB_DOMAIN }}'
 
           echo "📦 App directory: \$APP_DIR"
           echo "Github repository: \$REPO_URL"
