@@ -93,7 +93,7 @@ jobs:
           echo '${{ secrets.API_ENV_FILE }}' > "\$APP_DIR/packages/api/.env"
 
           rm -f "\$APP_DIR/packages/web/.env"
-          echo '${{ secrets.WEB_ENV_FILE }}' > "\$APP_DIR/packages/web/.env"
+          echo "${{ secrets.WEB_ENV_FILE }}" > "\$APP_DIR/packages/web/.env"
           echo '${{ secrets.FIREBASE_JSON }}' > "\$APP_DIR/packages/api/firebase.json"
 
           echo "📦 Installing dependencies..."
