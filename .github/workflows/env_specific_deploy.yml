@@ -71,14 +71,19 @@ jobs:
           echo "📁 Checking application directory..."
 
           # === CLONE OR PULL PROJECT ===
+          BRANCH_NAME="${{ github.ref_name }}"
+
           if [ ! -d "\$APP_DIR/.git" ]; then
-            echo "📥 Cloning repository..."
+            echo "📥 Cloning repository (branch: \$BRANCH_NAME)..."
             rm -rf "\$APP_DIR"
             mkdir -p "\$APP_DIR"
-            git clone "\$REPO_URL" "\$APP_DIR"
+            git clone --branch \$BRANCH_NAME \$REPO_URL \$APP_DIR
           else
-            echo "🔄 Pulling latest code..."
-            cd "\$APP_DIR" && git pull origin main
+            echo "🔄 Pulling latest code from \$BRANCH_NAME..."
+            cd "\$APP_DIR"
+            git fetch origin \$BRANCH_NAME
+            git checkout \$BRANCH_NAME
+            git pull origin \$BRANCH_NAME
           fi
 
           echo "🔐 Injecting environment files..."
