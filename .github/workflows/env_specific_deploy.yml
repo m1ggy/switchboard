@@ -67,7 +67,7 @@ jobs:
           if [ ! -d "\$APP_DIR/.git" ]; then
             echo "📥 Cloning repository..."
             rm -rf \$APP_DIR
-            git clone $REPO_URL $APP_DIR
+            git clone $REPO_URL \$APP_DIR
           else
             echo "🔄 Pulling latest code..."
             cd \$APP_DIR && git pull origin main
