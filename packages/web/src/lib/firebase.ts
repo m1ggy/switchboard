@@ -7,15 +7,17 @@ import { getAuth } from 'firebase/auth';
 
 // Your web app's Firebase configuration
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
-const firebaseConfig = {
-  apiKey: 'AIzaSyCRtzVO1QNOKrGp2U-yOr2Gb5wd1JJx2qA',
-  authDomain: 'switchboard-a651a.firebaseapp.com',
-  projectId: 'switchboard-a651a',
-  storageBucket: 'switchboard-a651a.firebasestorage.app',
-  messagingSenderId: '179772756218',
-  appId: '1:179772756218:web:583142e0ee7b484eebb943',
-  measurementId: 'G-1FLNLYVYCH',
-};
+const firebaseConfig = import.meta.env.VITE_FIREBASE_CONFIG
+  ? JSON.parse(import.meta.env.VITE_FIREBASE)
+  : {
+      apiKey: 'AIzaSyCRtzVO1QNOKrGp2U-yOr2Gb5wd1JJx2qA',
+      authDomain: 'switchboard-a651a.firebaseapp.com',
+      projectId: 'switchboard-a651a',
+      storageBucket: 'switchboard-a651a.firebasestorage.app',
+      messagingSenderId: '179772756218',
+      appId: '1:179772756218:web:583142e0ee7b484eebb943',
+      measurementId: 'G-1FLNLYVYCH',
+    };
 
 // Initialize Firebase
 export const app = initializeApp(firebaseConfig);
