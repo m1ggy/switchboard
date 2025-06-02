@@ -30,7 +30,7 @@ jobs:
 
       - name: Deploy via SSH
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} <<'EOF'
+          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} <<EOF
           REPO_URL="https://github.com/${{ github.repository }}.git"
           DEPLOY_ENV="${{ inputs.environment }}"
           set -euo pipefail
