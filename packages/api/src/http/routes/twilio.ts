@@ -1,4 +1,7 @@
 import { UserCompaniesRepository } from '@/db/repositories/companies';
+import { ContactsRepository } from '@/db/repositories/contacts';
+import { InboxesRepository } from '@/db/repositories/inboxes';
+import { MessagesRepository } from '@/db/repositories/messages';
 import { NumbersRepository } from '@/db/repositories/numbers';
 import { notifyIncomingCall } from '@/lib/helpers';
 import { callQueueManager } from '@/lib/queue';
@@ -173,6 +176,43 @@ async function routes(app: FastifyInstance) {
     }
 
     return reply.status(200).send('OK');
+  });
+
+  app.post('/sms', async (req, reply) => {
+    const { From, To, Body, MessageSid } = req.body as Record<string, string>;
+
+    const matchingNumber = await NumbersRepository.findByNumber(To);
+
+    if (!matchingNumber) return reply.status(204).send();
+
+    let contact = await ContactsRepository.findByNumber(
+      From,
+      matchingNumber.company_id
+    );
+
+    if (!contact)
+      contact = await ContactsRepository.create({
+        id: crypto.randomUUID() as string,
+        number: From,
+        company_id: matchingNumber.company_id,
+        label: From,
+      });
+    const inbox = await InboxesRepository.findOrCreate({
+      numberId: matchingNumber.id,
+      contactId: contact.id,
+    });
+    await MessagesRepository.create({
+      id: crypto.randomUUID() as string,
+      numberId: matchingNumber.id,
+      createdAt: new Date(),
+      message: Body,
+      contactId: contact.id,
+      inboxId: inbox.id,
+      direction: 'inbound',
+      meta: { MessageSid },
+    });
+
+    return reply.status(204).send();
   });
 }
 
