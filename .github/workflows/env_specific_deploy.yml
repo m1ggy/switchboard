@@ -33,14 +33,20 @@ jobs:
           REPO_URL="https://github.com/${{ github.repository }}.git"
           DEPLOY_ENV="${{ inputs.environment }}"
 
-          ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} <<EOF
+          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} <<EOF
 
-          set -e
+          set -euo pipefail
 
-          APP_DIR=~/apps/$DEPLOY_ENV
+          echo "🚀 Starting deployment to environment: \$DEPLOY_ENV"
+
+          APP_DIR=~/apps/\$DEPLOY_ENV
           WEB_ROOT='${{ secrets.WEB_ROOT }}'
           DOMAIN='${{ secrets.DOMAIN_NAME }}'
           API_DOMAIN=api.\$DOMAIN
+
+          echo "📦 App directory: \$APP_DIR"
+          echo "🌍 Domain: \$DOMAIN"
+          echo "🛠️ Preparing system dependencies..."
 
           # === SETUP NODE/PNPM/PM2 ===
           curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
@@ -49,29 +55,36 @@ jobs:
           corepack prepare pnpm@latest --activate
           sudo npm install -g pm2
 
+          echo "🔐 Installing Caddy..."
           sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl gnupg
           curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --batch --yes --dearmor | sudo tee /usr/share/keyrings/caddy-stable-archive-keyring.gpg > /dev/null
           curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null
           sudo apt update
           sudo apt install caddy
 
+          echo "📁 Checking application directory..."
+
           # === CLONE OR PULL PROJECT ===
-          if [ ! -d "\$APP_DIR" ]; then
+          if [ ! -d "\$APP_DIR/.git" ]; then
+            echo "📥 Cloning repository..."
+            rm -rf \$APP_DIR
             git clone $REPO_URL \$APP_DIR
           else
+            echo "🔄 Pulling latest code..."
             cd \$APP_DIR && git pull origin main
           fi
 
-          # === INJECT ENV FILES ===
+          echo "🔐 Injecting environment files..."
           echo '${{ secrets.API_ENV_FILE }}' > \$APP_DIR/packages/api/.env
           echo '${{ secrets.FIREBASE_JSON }}' > \$APP_DIR/packages/api/firebase.json
           echo '${{ secrets.WEB_ENV_FILE }}' > \$APP_DIR/packages/web/.env
 
-          # === INSTALL DEPENDENCIES ===
+          echo "📦 Installing dependencies..."
           cd \$APP_DIR
           pnpm install
 
           # === BUILD WEB ===
+          echo "🛠️ Building Web..."
           cd \$APP_DIR/packages/web
           NODE_OPTIONS="--max-old-space-size=1024" pnpm run build
 
@@ -79,15 +92,18 @@ jobs:
             echo "✅ Web build succeeded."
             sudo mkdir -p \$WEB_ROOT
             sudo cp -r dist/* \$WEB_ROOT/
+            echo "🚚 Deployed web files to \$WEB_ROOT"
           else
             echo "❌ Web build failed — dist/index.html not found."
           fi
 
           # === BUILD & RUN API ===
+          echo "🛠️ Building API..."
           cd \$APP_DIR/packages/api
           NODE_OPTIONS="--max-old-space-size=1024" pnpm run build
 
           if [ -f "\$APP_DIR/packages/api/dist/index.mjs" ]; then
+            echo "🚀 Starting API with PM2..."
             pm2 delete api-\$DEPLOY_ENV || true
             pm2 start dist/index.mjs --name api-\$DEPLOY_ENV --interpreter node
           else
@@ -95,6 +111,7 @@ jobs:
           fi
 
           # === CADDY CONFIG ===
+          echo "🧾 Configuring Caddy..."
           sudo tee /etc/caddy/Caddyfile > /dev/null <<EOC
           \$DOMAIN {
             root * \$WEB_ROOT
@@ -108,4 +125,5 @@ jobs:
           EOC
 
           sudo systemctl reload caddy
+          echo "✅ Deployment complete!"
           EOF
