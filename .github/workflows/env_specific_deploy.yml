@@ -40,9 +40,10 @@ jobs:
           APP_DIR=~/apps/\$DEPLOY_ENV
           WEB_ROOT='${{ secrets.WEB_ROOT }}'
           DOMAIN='${{ secrets.DOMAIN_NAME }}'
-          API_DOMAIN=api.\$DOMAIN
+          API_DOMAIN=\$DOMAIN
 
           echo "📦 App directory: \$APP_DIR"
+          echo "Github repository: \$REPO_URL"
           echo "🌍 Domain: \$DOMAIN"
           echo "🛠️ Preparing system dependencies..."
 
