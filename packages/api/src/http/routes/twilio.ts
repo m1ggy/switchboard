@@ -33,12 +33,7 @@ async function routes(app: FastifyInstance) {
     }
 
     const numberRecord = await NumbersRepository.findByNumber(To);
-    if (!numberRecord) {
-      response.say('We could not route your call at this time.');
-      return reply.type('text/xml').status(200).send(response.toString());
-    }
 
-    const agentIdentity = numberRecord.number;
     const isFromClient = From?.startsWith('client:');
     const isToPSTN = To.startsWith('+');
     const isOutboundToPSTN = isFromClient && isToPSTN && !numberRecord;
@@ -48,6 +43,12 @@ async function routes(app: FastifyInstance) {
       response.dial({ callerId }, To);
       return reply.type('text/xml').send(response.toString());
     }
+
+    if (!numberRecord) {
+      response.say('We could not route your call at this time.');
+      return reply.type('text/xml').status(200).send(response.toString());
+    }
+    const agentIdentity = numberRecord.number;
 
     const isDialLoop = isInbound && ParentCallSid;
     if (isDialLoop) {

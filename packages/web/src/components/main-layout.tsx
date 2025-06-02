@@ -23,7 +23,7 @@ function Layout() {
   const trpc = useTRPC();
   const { activeNumber } = useMainStore();
 
-  const { data: token } = useQuery({
+  const { data: token, refetch: refetchToken } = useQuery({
     ...trpc.twilio.token.queryOptions({ identity: activeNumber?.number }),
     refetchInterval: 4 * 60 * 60 * 1000,
     refetchOnMount: true,
@@ -48,7 +48,10 @@ function Layout() {
   }, [rootSocket]);
   return (
     <SocketProvider socket={socket}>
-      <TwilioVoiceProvider token={token ?? ''}>
+      <TwilioVoiceProvider
+        token={token ?? ''}
+        refetchToken={refetchToken as unknown as () => Promise<void>}
+      >
         <SidebarProvider className="transition-all">
           <BaseSidebar />
           <main className="w-full">

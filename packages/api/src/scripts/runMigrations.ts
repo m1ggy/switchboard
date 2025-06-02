@@ -1,8 +1,16 @@
 // scripts/run-migrate.js
 import { spawn } from 'child_process';
 import { config } from 'dotenv';
+import path from 'path';
 
-config();
+config({ path: path.resolve(__dirname, '../../.env') });
+
+if (process.env.NODE_ENV === 'development') {
+  config({
+    path: path.resolve(__dirname, '../../.env.development'),
+    override: true,
+  });
+}
 
 function buildDatabaseUri() {
   const { DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME } = process.env;

@@ -37,9 +37,14 @@ export function useTwilioVoice() {
 interface Props {
   token: string;
   children: ReactNode;
+  refetchToken: () => Promise<void>;
 }
 
-export const TwilioVoiceProvider = ({ token, children }: Props) => {
+export const TwilioVoiceProvider = ({
+  token,
+  children,
+  refetchToken,
+}: Props) => {
   const { setDialerModalShown } = useMainStore();
   const clientRef = useRef<TwilioVoiceClient | null>(null);
   const [ready, setReady] = useState(false);
@@ -84,6 +89,7 @@ export const TwilioVoiceProvider = ({ token, children }: Props) => {
         setCallState('error');
         setActiveCall(null);
         setIncomingCall(null);
+        refetchToken();
       },
     });
 
@@ -99,7 +105,7 @@ export const TwilioVoiceProvider = ({ token, children }: Props) => {
       setCallState('idle');
       setIncomingCall(null);
     };
-  }, [token]);
+  }, [token, refetchToken]);
 
   const makeCall = (params: Record<string, string>) => {
     if (clientRef.current) {
