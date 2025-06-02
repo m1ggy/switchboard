@@ -42,12 +42,12 @@ const app = Fastify({
 app.register(fastifySocketIO, {
   path: '/ws',
   cors: {
-    origin: ['http://localhost:5173', process.env.SERVER_DOMAIN as string],
+    origin: ['http://localhost:5173', process.env.WEB_DOMAIN as string],
   },
 });
 
 app.register(fastifyCors, {
-  origin: ['http://localhost:5173', process.env.SERVER_DOMAIN as string],
+  origin: ['http://localhost:5173', process.env.WEB_DOMAIN as string],
 });
 app.register(formBody);
 app.register(fastifyTRPCPlugin, {
