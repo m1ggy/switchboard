@@ -11,36 +11,20 @@ import {
   SidebarMenuItem,
   SidebarSeparator,
 } from '@/components/ui/sidebar';
-
-const inboxes = [
-  {
-    lastMessage: 'Hi, can you send over the report?',
-    number: '+15551234567',
-    name: 'Alice Johnson',
-  },
-  {
-    lastMessage: 'Thanks for the update. Talk soon!',
-    number: '+15557654321',
-    name: 'Ben Carter',
-  },
-  {
-    lastMessage: 'Please confirm our meeting time.',
-    number: '+15559876543',
-    name: 'Clara Lee',
-  },
-  {
-    lastMessage: 'Here’s the invoice for April.',
-    number: '+15553456789',
-    name: 'David Romero',
-  },
-  {
-    lastMessage: 'Following up on our last call.',
-    number: '+15552345678',
-    name: 'Emma Zhang',
-  },
-];
+import useMainStore from '@/lib/store';
+import { useTRPC } from '@/lib/trpc';
+import { useQuery } from '@tanstack/react-query';
+import { LoaderCircle } from 'lucide-react';
 
 function Inbox() {
+  const trpc = useTRPC();
+  const { activeNumber } = useMainStore();
+
+  const { data: inboxes, isLoading } = useQuery(
+    trpc.inboxes.getNumberInboxes.queryOptions({
+      numberId: activeNumber?.id as string,
+    })
+  );
   return (
     <div className="h-full">
       <Sidebar collapsible="none" className="h-full">
@@ -53,13 +37,24 @@ function Inbox() {
           <SidebarGroup className="flex">
             <SidebarGroupLabel>Messages</SidebarGroupLabel>
             <SidebarMenu>
-              {inboxes.map((inbox) => (
-                <SidebarMenuItem key={inbox.number}>
-                  <SidebarMenuButton>{inbox.name}</SidebarMenuButton>
+              {inboxes?.map((inbox) => (
+                <SidebarMenuItem key={inbox.id}>
+                  <SidebarMenuButton>{inbox.contact.label}</SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>
           </SidebarGroup>
+          {isLoading && (
+            <div className="flex justify-center">
+              <LoaderCircle className="animate-spin" />
+            </div>
+          )}
+
+          {!inboxes?.length ? (
+            <span className="text-muted-foreground text-xs text-center">
+              No messages
+            </span>
+          ) : null}
         </SidebarContent>
       </Sidebar>
     </div>

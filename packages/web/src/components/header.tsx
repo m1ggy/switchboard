@@ -6,6 +6,7 @@ import clsx from 'clsx';
 import { signOut } from 'firebase/auth';
 import { Bell, LogOut } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router';
+import AudioSettingsHoverCard from './audio-settings-dialog';
 import Notifications from './notifications';
 import { Button } from './ui/button';
 import { NotificationBadge } from './ui/notification-badge';
@@ -32,7 +33,6 @@ function Header({ isLoggedIn }: HeaderProps) {
   const navigate = useNavigate();
   const pathname = location.pathname;
   const authContext = useAuth();
-
   const { data: unreadCount } = useQuery(
     trpc.notifications.getUnreadNotificationsCount.queryOptions()
   );
@@ -61,6 +61,8 @@ function Header({ isLoggedIn }: HeaderProps) {
         )}
       </div>
       <div className="flex gap-4 items-center">
+        {isLoggedIn && <AudioSettingsHoverCard />}
+
         {isLoggedIn && (
           <TooltipStandalone content={'Notifications'}>
             <NotificationBadge label={unreadCount}>

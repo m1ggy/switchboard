@@ -10,11 +10,12 @@ interface TwilioVoiceOptions {
 }
 
 export class TwilioVoiceClient {
-  private device: Device | null = null;
+  device: Device | null = null;
   private token: string;
   private onIncomingCall?: (connection: Call) => void;
   private onDisconnect?: () => void;
   private onError?: (error: Error) => void;
+  connection: TwilioConnection | null = null;
 
   constructor(options: TwilioVoiceOptions) {
     this.token = options.token;

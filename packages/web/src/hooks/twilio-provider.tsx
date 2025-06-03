@@ -22,6 +22,7 @@ interface TwilioVoiceContextValue {
   rejectIncoming: () => void;
   activeCall: Call | null;
   setActiveCall: (call: Call | null) => void;
+  clientRef: { current: TwilioVoiceClient | null };
 }
 
 const TwilioVoiceContext = createContext<TwilioVoiceContextValue | null>(null);
@@ -149,6 +150,7 @@ export const TwilioVoiceProvider = ({
         rejectIncoming,
         activeCall,
         setActiveCall,
+        clientRef,
       }}
     >
       {children}

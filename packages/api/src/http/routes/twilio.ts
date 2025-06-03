@@ -1,4 +1,3 @@
-import { UserCompaniesRepository } from '@/db/repositories/companies';
 import { ContactsRepository } from '@/db/repositories/contacts';
 import { InboxesRepository } from '@/db/repositories/inboxes';
 import { MessagesRepository } from '@/db/repositories/messages';
@@ -51,14 +50,32 @@ async function routes(app: FastifyInstance) {
       response.say('We could not route your call at this time.');
       return reply.type('text/xml').status(200).send(response.toString());
     }
+
     const agentIdentity = numberRecord.number;
 
+    // 🆕 Prevent loop
     const isDialLoop = isInbound && ParentCallSid;
     if (isDialLoop) {
       response.say('Sorry, we could not connect your call.');
       return reply.type('text/xml').send(response.toString());
     }
 
+    // 🆕 Create/find contact and inbox
+    if (isInbound) {
+      const contact = await ContactsRepository.findOrCreate({
+        number: callerId,
+        companyId: numberRecord.company_id,
+      });
+
+      await InboxesRepository.findOrCreate({
+        numberId: numberRecord.id,
+        contactId: contact.id,
+      });
+
+      // Optionally: log or update last_call_id later
+    }
+
+    // Track active call
     activeCallStore.add({
       sid: CallSid,
       from: From,

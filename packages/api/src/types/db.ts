@@ -76,3 +76,40 @@ export type Notification = {
   viewed_at: Date | null;
   type: string;
 };
+
+export type InboxWithDetails = {
+  id: string;
+  numberId: string;
+  contactId: string;
+  lastMessageId: string | null;
+  lastCallId: string | null;
+
+  contact: {
+    id: string;
+    number: string;
+    label: string;
+    company_id: string;
+    created_at: string | null;
+  };
+
+  lastMessage: {
+    id: string;
+    number_id: string;
+    contact_id: string;
+    inbox_id: string;
+    message: string | null;
+    created_at: string | null;
+    meta: any;
+    status: 'sent' | 'draft' | null;
+    direction: 'inbound' | 'outbound';
+  } | null;
+
+  lastCall: {
+    id: string;
+    number_id: string;
+    contact_id: string;
+    initiated_at: string | null;
+    duration: number | null;
+    meta: any;
+  } | null;
+};

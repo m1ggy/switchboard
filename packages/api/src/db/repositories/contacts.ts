@@ -1,6 +1,6 @@
 import pool from '@/lib/pg';
 import { Contact } from '@/types/db';
-
+import crypto from 'crypto';
 export const ContactsRepository = {
   /**
    * Create a new contact
@@ -130,6 +130,35 @@ export const ContactsRepository = {
      WHERE id = $1
      RETURNING *`,
       [id, ...values]
+    );
+
+    return res.rows[0];
+  },
+  /**
+   * Find or create a contact by number and company_id
+   */
+  async findOrCreate({
+    number,
+    companyId,
+    label,
+  }: {
+    number: string;
+    companyId: string;
+    label?: string;
+  }): Promise<Contact> {
+    const existing = await this.findByNumber(number, companyId);
+    if (existing) return existing;
+
+    const id = crypto.randomUUID();
+    const contactLabel = label || number;
+
+    const res = await pool.query<Contact>(
+      `INSERT INTO contacts (
+         id, number, company_id, created_at, label
+       ) VALUES (
+         $1, $2, $3, $4, $5
+       ) RETURNING *`,
+      [id, number, companyId, new Date(), contactLabel]
     );
 
     return res.rows[0];

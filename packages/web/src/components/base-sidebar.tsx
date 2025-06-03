@@ -3,6 +3,10 @@ import {
   Contact2,
   History,
   Home,
+  Inbox,
+  MessageCirclePlus,
+  MessageSquareDashed,
+  MessageSquareShare,
   PhoneIcon,
   Settings,
   UserPlus,
@@ -30,31 +34,31 @@ import { Link, useLocation } from 'react-router';
 import { NumberSwitcher } from './number-switcher';
 import { Button } from './ui/button';
 import { Skeleton } from './ui/skeleton';
-// const smsItems: unknown[] = [
-//   // {
-//   //   title: 'New Message',
-//   //   url: null,
-//   //   icon: MessageCirclePlus,
-//   //   onClick: () => {
-//   //     useMainStore.getState().setSendMessageModalShown(true);
-//   //   },
-//   // },
-//   // {
-//   //   title: 'Inbox',
-//   //   url: '/dashboard/inbox',
-//   //   icon: Inbox,
-//   // },
-//   // {
-//   //   title: 'Drafts',
-//   //   url: '/dashboard/drafts',
-//   //   icon: MessageSquareDashed,
-//   // },
-//   // {
-//   //   title: 'Sent',
-//   //   url: '/dashboard/sent',
-//   //   icon: MessageSquareShareIcon,
-//   // },
-// ];
+const smsItems = [
+  {
+    title: 'New Message',
+    url: null,
+    icon: MessageCirclePlus,
+    onClick: () => {
+      useMainStore.getState().setSendMessageModalShown(true);
+    },
+  },
+  {
+    title: 'Inbox',
+    url: '/dashboard/inbox',
+    icon: Inbox,
+  },
+  {
+    title: 'Drafts',
+    url: '/dashboard/drafts',
+    icon: MessageSquareDashed,
+  },
+  {
+    title: 'Sent',
+    url: '/dashboard/sent',
+    icon: MessageSquareShare,
+  },
+];
 
 const callsItems = [
   {
@@ -159,8 +163,7 @@ function BaseSidebar() {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-
-        {/* {smsItems.length ? (
+        {smsItems.length ? (
           <SidebarGroup>
             <SidebarGroupLabel>Messages</SidebarGroupLabel>
             <SidebarGroupContent>
@@ -192,7 +195,7 @@ function BaseSidebar() {
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-        ) : null} */}
+        ) : null}
         <SidebarGroup>
           <SidebarGroupLabel>Calls</SidebarGroupLabel>
           <SidebarGroupContent>

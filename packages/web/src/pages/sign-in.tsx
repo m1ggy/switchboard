@@ -84,7 +84,7 @@ function SignIn() {
   };
   return (
     <div className="min-h-screen flex flex-col">
-      <Header />
+      {/* <Header /> */}
       <div className="flex-1 justify-center items-center w-full flex">
         <Card className="p-5 w-md">
           <CardTitle className="text-md text-center">
