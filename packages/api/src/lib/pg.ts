@@ -1,8 +1,15 @@
 import dotenv from 'dotenv';
+import path from 'path';
 import { Pool, QueryResult, QueryResultRow } from 'pg';
 
 dotenv.config();
 
+if (process.env.NODE_ENV === 'development') {
+  dotenv.config({
+    path: path.resolve(__dirname, '../../.env.development'),
+    override: true,
+  });
+}
 const client = new Pool({
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT),

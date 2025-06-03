@@ -99,6 +99,8 @@ exports.up = (pgm) => {
     initiated_at: { type: 'timestamp' },
     duration: { type: 'integer' },
     meta: { type: 'json' },
+    from: { type: 'string', notNull: true },
+    to: { type: 'string', notNull: true },
   });
 
   pgm.createIndex('calls', 'number_id');

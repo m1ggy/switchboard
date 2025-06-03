@@ -48,4 +48,11 @@ export const contactsRouter = t.router({
 
       return updatedContact;
     }),
+  findContactById: protectedProcedure
+    .input(z.object({ contactId: z.string() }))
+    .query(async ({ input }) => {
+      const contact = await ContactsRepository.findById(input.contactId);
+
+      return contact;
+    }),
 });

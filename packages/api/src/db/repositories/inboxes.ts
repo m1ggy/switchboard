@@ -33,26 +33,33 @@ export const InboxesRepository = {
     ]);
   },
 
+  async updateLastCall(inboxId: string, callId: string): Promise<void> {
+    await pool.query(`UPDATE inboxes SET last_call_id = $1 WHERE id = $2`, [
+      callId,
+      inboxId,
+    ]);
+  },
+
   async findByNumberId(numberId: string): Promise<InboxWithDetails[]> {
     const result = await pool.query(
       `
-    SELECT 
-      i.id,
-      i.number_id,
-      i.contact_id,
-      i.last_message_id,
-      i.last_call_id,
+      SELECT 
+        i.id,
+        i.number_id,
+        i.contact_id,
+        i.last_message_id,
+        i.last_call_id,
 
-      to_jsonb(c) AS contact,
-      to_jsonb(lm) AS "lastMessage",
-      to_jsonb(lc) AS "lastCall"
-    FROM inboxes i
-    JOIN contacts c ON i.contact_id = c.id
-    LEFT JOIN messages lm ON i.last_message_id = lm.id
-    LEFT JOIN calls lc ON i.last_call_id = lc.id
-    WHERE i.number_id = $1
-    ORDER BY lm.created_at DESC NULLS LAST
-    `,
+        to_jsonb(c) AS contact,
+        to_jsonb(lm) AS "lastMessage",
+        to_jsonb(lc) AS "lastCall"
+      FROM inboxes i
+      JOIN contacts c ON i.contact_id = c.id
+      LEFT JOIN messages lm ON i.last_message_id = lm.id
+      LEFT JOIN calls lc ON i.last_call_id = lc.id
+      WHERE i.number_id = $1
+      ORDER BY lm.created_at DESC NULLS LAST
+      `,
       [numberId]
     );
 
@@ -66,5 +73,63 @@ export const InboxesRepository = {
       lastMessage: row.lastMessage,
       lastCall: row.lastCall,
     }));
+  },
+
+  async findActivityByContactPaginated(
+    contactId: string,
+    { limit = 50, cursor }: { limit?: number; cursor?: string | null }
+  ): Promise<
+    {
+      type: 'message' | 'call';
+      id: string;
+      numberId: string;
+      createdAt: string;
+      direction?: 'inbound' | 'outbound';
+      message?: string;
+      status?: 'sent' | 'draft';
+      duration?: number;
+      meta?: any;
+    }[]
+  > {
+    const result = await pool.query(
+      `
+    SELECT *
+    FROM (
+      SELECT
+        'message' AS type,
+        m.id,
+        m.number_id AS "numberId",
+        m.created_at AS "createdAt",
+        m.direction,
+        m.message,
+        m.status,
+        NULL::integer AS duration,
+        m.meta
+      FROM messages m
+      WHERE m.contact_id = $1
+
+      UNION ALL
+
+      SELECT
+        'call' AS type,
+        c.id,
+        c.number_id AS "numberId",
+        c.initiated_at AS "createdAt",
+        NULL::message_direction AS direction,
+        NULL::text AS message,
+        NULL::message_statuses AS status,
+        c.duration,
+        c.meta
+      FROM calls c
+      WHERE c.contact_id = $1
+    ) AS combined
+    ${cursor ? `WHERE "createdAt" < $2` : ''}
+    ORDER BY "createdAt" ASC
+    LIMIT $${cursor ? 3 : 2}
+    `,
+      cursor ? [contactId, cursor, limit] : [contactId, limit]
+    );
+
+    return result.rows;
   },
 };

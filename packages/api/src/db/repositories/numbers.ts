@@ -58,6 +58,8 @@ export const NumbersRepository = {
       `SELECT * FROM numbers WHERE number = $1`,
       [number]
     );
+
+    console.log('findByNumber: ', res);
     return res.rows?.[0] || null;
   },
 };

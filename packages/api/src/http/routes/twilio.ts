@@ -7,6 +7,7 @@ import { callQueueManager } from '@/lib/queue';
 import { sendCallAlertToSlack } from '@/lib/slack';
 import { activeCallStore, presenceStore } from '@/lib/store';
 import { TwilioClient } from '@/lib/twilio';
+import crypto from 'crypto';
 import { type FastifyInstance } from 'fastify';
 import twilio from 'twilio';
 
@@ -200,6 +201,9 @@ async function routes(app: FastifyInstance) {
 
     const matchingNumber = await NumbersRepository.findByNumber(To);
 
+    console.log('BODY: ', JSON.stringify(req.body, null, 2));
+    console.log('MATCHING NUMBER: ', matchingNumber);
+
     if (!matchingNumber) return reply.status(204).send();
 
     let contact = await ContactsRepository.findByNumber(
@@ -218,7 +222,7 @@ async function routes(app: FastifyInstance) {
       numberId: matchingNumber.id,
       contactId: contact.id,
     });
-    await MessagesRepository.create({
+    const newMessage = await MessagesRepository.create({
       id: crypto.randomUUID() as string,
       numberId: matchingNumber.id,
       createdAt: new Date(),
@@ -228,6 +232,8 @@ async function routes(app: FastifyInstance) {
       direction: 'inbound',
       meta: { MessageSid },
     });
+
+    await InboxesRepository.updateLastMessage(inbox.id, newMessage.id);
 
     return reply.status(204).send();
   });

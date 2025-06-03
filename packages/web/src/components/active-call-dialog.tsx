@@ -126,7 +126,10 @@ function ActiveCallDialog() {
             numberId: activeNumber?.id as string,
             contactId: currentContact?.id as string,
             duration: callDuration,
-            meta: { CallSid: activeCall.parameters.CallSid },
+            meta: {
+              CallSid: activeCall.parameters.CallSid,
+              Direction: activeCall.direction,
+            },
             callSid: activeCall.parameters.CallSid,
           });
 

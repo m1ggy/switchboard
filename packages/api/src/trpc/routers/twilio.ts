@@ -1,10 +1,18 @@
 import { activeCallStore, presenceStore } from '@/lib/store';
 import { TwilioClient } from '@/lib/twilio';
 import dotenv from 'dotenv';
+import path from 'path';
 import { z } from 'zod';
 import { protectedProcedure, router } from '../trpc';
 
 dotenv.config();
+
+if (process.env.NODE_ENV === 'development') {
+  dotenv.config({
+    path: path.resolve(__dirname, '../.env.development'),
+    override: true,
+  });
+}
 const tw = new TwilioClient(
   process.env.TWILIO_ACCOUNT_SID as string,
   process.env.TWILIO_AUTH_TOKEN as string
