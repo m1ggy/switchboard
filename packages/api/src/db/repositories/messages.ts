@@ -75,4 +75,16 @@ export const MessagesRepository = {
     );
     return res.rows;
   },
+
+  async findById(messageId: string): Promise<Message | null> {
+    const res = await pool.query<Message>(
+      `
+      SELECT * FROM messages
+      WHERE id = $1
+      `,
+      [messageId]
+    );
+
+    return res.rows?.[0] ?? null;
+  },
 };

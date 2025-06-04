@@ -1,6 +1,7 @@
 import { createTRPCReact } from '@trpc/react-query';
 import type { AppRouter } from 'api/trpc';
 import { clsx, type ClassValue } from 'clsx';
+import { intervalToDuration } from 'date-fns';
 import { twMerge } from 'tailwind-merge';
 
 export function cn(...inputs: ClassValue[]) {
@@ -24,4 +25,19 @@ export function formatDuration(totalSeconds: number): string {
     parts.push(`${seconds} Second${seconds !== 1 ? 's' : ''}`);
 
   return parts.join(' ');
+}
+
+export function formatDurationWithDateFns(seconds: number) {
+  const duration = intervalToDuration({
+    start: 0,
+    end: seconds * 1000, // convert to ms
+  });
+
+  const { hours, minutes, seconds: secs } = duration;
+
+  const hrStr = hours ? `${hours}h ` : '';
+  const minStr = minutes ? `${minutes}m ` : '';
+  const secStr = `${secs}s`;
+
+  return `${hrStr}${minStr}${secStr}`.trim();
 }

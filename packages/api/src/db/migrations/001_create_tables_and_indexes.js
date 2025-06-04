@@ -64,6 +64,7 @@ exports.up = (pgm) => {
     contact_id: { type: 'uuid', notNull: true, references: 'contacts(id)' },
     last_message_id: { type: 'uuid' },
     last_call_id: { type: 'uuid' },
+    last_viewed_at: { type: 'timestamp' },
   });
 
   pgm.addConstraint('inboxes', 'unique_number_contact', {

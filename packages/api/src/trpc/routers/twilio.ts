@@ -1,5 +1,10 @@
+import { ContactsRepository } from '@/db/repositories/contacts';
+import { InboxesRepository } from '@/db/repositories/inboxes';
+import { MessagesRepository } from '@/db/repositories/messages';
+import { NumbersRepository } from '@/db/repositories/numbers';
 import { activeCallStore, presenceStore } from '@/lib/store';
 import { TwilioClient } from '@/lib/twilio';
+import crypto from 'crypto';
 import dotenv from 'dotenv';
 import path from 'path';
 import { z } from 'zod';
@@ -55,5 +60,58 @@ export const twilioRouter = router({
       }
 
       return { ok: true };
+    }),
+  sendSMS: protectedProcedure
+    .input(
+      z.object({
+        numberId: z.string(),
+        contactId: z.string(),
+        body: z.string().min(1).max(500),
+      })
+    )
+    .mutation(async ({ input }) => {
+      try {
+        const number = await NumbersRepository.findById(input.numberId);
+
+        if (!number) throw new Error('No matching number was found');
+        const contact = await ContactsRepository.findById(input.contactId);
+
+        if (!contact) throw new Error('No matching contact was found');
+
+        const twilz = new TwilioClient(
+          process.env.TWILIO_ACCOUNT_SID as string,
+          process.env.TWILIO_AUTH_TOKEN as string,
+          number.number
+        );
+
+        const message = await twilz.sendSms(contact.number, input.body);
+
+        const inbox = await InboxesRepository.findOrCreate({
+          numberId: input.numberId,
+          contactId: input.contactId,
+        });
+
+        const dbMessage = await MessagesRepository.create({
+          id: crypto.randomUUID() as string,
+          message: input.body,
+          inboxId: inbox.id,
+          numberId: input.numberId,
+          contactId: input.contactId,
+          direction: 'outbound',
+          meta: {
+            Direction: 'OUTGOING',
+            MessageSid: message.sid,
+            messageDetails: message.toJSON(),
+          },
+          status: 'sent',
+        });
+
+        await InboxesRepository.updateLastMessage(inbox.id, dbMessage.id);
+
+        return await MessagesRepository.findById(dbMessage.id);
+      } catch (error) {
+        console.error(error);
+        throw error;
+      }
     }),
 });

@@ -2,7 +2,7 @@ import { ContactsRepository } from '@/db/repositories/contacts';
 import { InboxesRepository } from '@/db/repositories/inboxes';
 import { MessagesRepository } from '@/db/repositories/messages';
 import { NumbersRepository } from '@/db/repositories/numbers';
-import { notifyIncomingCall } from '@/lib/helpers';
+import { notifyIncomingCall, notifyNewMessage } from '@/lib/helpers';
 import { callQueueManager } from '@/lib/queue';
 import { sendCallAlertToSlack } from '@/lib/slack';
 import { activeCallStore, presenceStore } from '@/lib/store';
@@ -200,12 +200,7 @@ async function routes(app: FastifyInstance) {
     const { From, To, Body, MessageSid } = req.body as Record<string, string>;
 
     const matchingNumber = await NumbersRepository.findByNumber(To);
-
-    console.log('BODY: ', JSON.stringify(req.body, null, 2));
-    console.log('MATCHING NUMBER: ', matchingNumber);
-
     if (!matchingNumber) return reply.status(204).send();
-
     let contact = await ContactsRepository.findByNumber(
       From,
       matchingNumber.company_id
@@ -234,6 +229,8 @@ async function routes(app: FastifyInstance) {
     });
 
     await InboxesRepository.updateLastMessage(inbox.id, newMessage.id);
+
+    notifyNewMessage({ from: From, toNumber: To, message: Body, app });
 
     return reply.status(204).send();
   });

@@ -42,27 +42,33 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
   );
 
   useEffect(() => {
-    if (user && socket) {
-      socket.on(`${user.uid}-notif`, (notif: Notification) => {
-        console.log(notif);
-        refetchNotifications();
-        refetchCount();
+    if (!user || !socket) return;
 
-        let title = 'New Notification';
+    const channel = `${user.uid}-notif`;
 
-        if (notif.meta.companyId) {
-          const notifCompany = companies?.find(
-            (company) => company.id === notif.meta.companyId
-          );
+    const handler = async (notif: Notification) => {
+      await refetchNotifications();
+      await refetchCount();
 
-          if (notifCompany) {
-            title = `Notification for ${notifCompany.name}`;
-          }
+      let title = 'New Notification';
+
+      if (notif.meta.companyId) {
+        const notifCompany = companies?.find(
+          (company) => company.id === notif.meta.companyId
+        );
+        if (notifCompany) {
+          title = `Notification for ${notifCompany.name}`;
         }
+      }
 
-        toast.info(title, { description: notif.message });
-      });
-    }
+      toast.info(title, { description: notif.message });
+    };
+
+    socket.on(channel, handler);
+
+    return () => {
+      socket.off(channel, handler);
+    };
   }, [user, socket, refetchCount, refetchNotifications, companies]);
 
   if (!socket) return children;

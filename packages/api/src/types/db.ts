@@ -112,4 +112,6 @@ export type InboxWithDetails = {
     duration: number | null;
     meta: any;
   } | null;
+
+  lastViewedAt: string | null;
 };

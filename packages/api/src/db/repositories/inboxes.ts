@@ -49,6 +49,7 @@ export const InboxesRepository = {
         i.contact_id,
         i.last_message_id,
         i.last_call_id,
+        i.last_viewed_at,
 
         to_jsonb(c) AS contact,
         to_jsonb(lm) AS "lastMessage",
@@ -72,6 +73,7 @@ export const InboxesRepository = {
       contact: row.contact,
       lastMessage: row.lastMessage,
       lastCall: row.lastCall,
+      lastViewedAt: row.last_viewed_at,
     }));
   },
 
@@ -131,5 +133,12 @@ export const InboxesRepository = {
     );
 
     return result.rows;
+  },
+
+  async markInboxAsViewed(inboxId: string): Promise<void> {
+    await pool.query(
+      `UPDATE inboxes SET last_viewed_at = NOW() WHERE id = $1`,
+      [inboxId]
+    );
   },
 };

@@ -1,8 +1,16 @@
 import { Skeleton } from '@/components/ui/skeleton';
+import { useTwilioVoice } from '@/hooks/twilio-provider';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
+import { Loader2, Paperclip, Phone, Send } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import ChatBubble from './chat-bubble';
+import { Button } from './ui/button';
+import { Form, FormControl, FormField } from './ui/form';
 import { Input } from './ui/input';
 
 interface MessengerProps {
@@ -13,6 +21,10 @@ function Messenger({ contactId }: MessengerProps) {
   const trpc = useTRPC();
 
   const { activeNumber } = useMainStore();
+
+  const { mutateAsync: sendMessage, isPending } = useMutation(
+    trpc.twilio.sendSMS.mutationOptions()
+  );
 
   const { data: contact, isLoading: isContactLoading } = useQuery(
     trpc.contacts.findContactById.queryOptions(
@@ -27,6 +39,7 @@ function Messenger({ contactId }: MessengerProps) {
     hasNextPage,
     isFetchingNextPage,
     isLoading: isMessagesLoading,
+    refetch: refetchMessages,
   } = useInfiniteQuery(
     trpc.inboxes.getActivityByContact.infiniteQueryOptions(
       {
@@ -43,6 +56,30 @@ function Messenger({ contactId }: MessengerProps) {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [prevHeight, setPrevHeight] = useState<number | null>(null);
+
+  const form = useForm({
+    resolver: zodResolver(z.object({ message: z.string().min(1).max(500) })),
+  });
+
+  function onSubmitMessage(data: { message: string }) {
+    console.log({ data });
+    if (!contactId) return;
+
+    sendMessage(
+      {
+        body: data.message,
+        contactId,
+        numberId: activeNumber?.id as string,
+      },
+      {
+        onSuccess: () => {
+          refetchMessages();
+        },
+      }
+    );
+
+    form.reset({ message: '' });
+  }
 
   useLayoutEffect(() => {
     if (!scrollRef.current || prevHeight === null) return;
@@ -68,8 +105,14 @@ function Messenger({ contactId }: MessengerProps) {
 
   const items = data?.pages.flatMap((page) => page.items) ?? [];
 
-  console.log({ items });
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
 
+    el.scrollTop = el.scrollHeight;
+  }, [items.length]);
+
+  const { makeCall } = useTwilioVoice();
   if (!contactId) {
     return (
       <div className="flex justify-center items-center w-full h-full">
@@ -81,66 +124,83 @@ function Messenger({ contactId }: MessengerProps) {
   }
 
   return (
-    <div className="flex flex-col w-full">
+    <div className="flex flex-col w-full border-l">
       <div className="border-b px-4 py-2 font-medium h-12 flex items-center w-full">
         {isContactLoading ? (
           <Skeleton className="w-full h-6" />
         ) : (
-          <span className="w-full">
-            {contact?.label} ({contact?.number})
-          </span>
+          <div className="flex justify-between w-full">
+            <span className="w-full">
+              {contact?.label} ({contact?.number})
+            </span>
+            <Button
+              variant={'outline'}
+              size={'icon'}
+              onClick={() =>
+                makeCall({
+                  To: contact?.number as string,
+                  CallerId: activeNumber?.number as string,
+                })
+              }
+            >
+              <Phone />
+            </Button>
+          </div>
         )}
       </div>
 
       {isMessagesLoading ? (
         <div className="flex-1 flex justify-center items-center">
           <span className="text-sm text-muted-foreground">
-            Loading messages...
+            <Loader2 className="animate-spin" />
           </span>
         </div>
       ) : (
         <div
+          className="flex-1 overflow-scroll scroll-smooth"
           ref={scrollRef}
-          className="overflow-y-auto px-4 py-2 space-y-2 justify-end flex flex-col h-[70vh]"
+          style={{ transform: 'translateZ(0)' }}
         >
-          {items.map((item) => {
-            const isOutbound = item.direction === 'outbound';
-            const alignClass = isOutbound ? 'items-end' : 'items-start';
-            const bubbleClass = isOutbound
-              ? 'bg-blue-500 text-white'
-              : 'bg-gray-200 text-gray-900';
-
-            return (
-              <div key={item.id} className={`flex flex-col ${alignClass}`}>
-                <div
-                  className={`max-w-xs px-4 py-2 rounded-2xl ${bubbleClass}`}
-                >
-                  {item.type === 'message' ? (
-                    <span>{item.message}</span>
-                  ) : (
-                    <span>
-                      📞 Call — <strong>{item.duration}s</strong>
-                    </span>
-                  )}
-                </div>
-                <span className="text-[10px] text-muted-foreground mt-1">
-                  {new Date(item.createdAt).toLocaleTimeString()}
-                </span>
+          <div className="px-4 py-2 space-y-2 justify-end flex flex-col">
+            {isFetchingNextPage && (
+              <div className="flex justify-center w-full items-center">
+                <Loader2 />
               </div>
-            );
-          })}
-
-          {isFetchingNextPage && (
-            <div className="text-center text-muted-foreground text-xs py-2">
-              Loading more...
-            </div>
-          )}
+            )}
+            {items.map((item) => (
+              <ChatBubble item={item} key={item.id} />
+            ))}
+            {isPending && (
+              <div className="flex justify-center">
+                <span className="font-semibold text-xs">sending...</span>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      <div>
-        <Input className="border rounded w-full" />
-      </div>
+      <Form {...form}>
+        <form
+          className="flex gap-2 px-5"
+          onSubmit={form.handleSubmit(onSubmitMessage)}
+        >
+          <Button size={'icon'} variant={'outline'}>
+            <Paperclip />
+          </Button>
+          <FormField
+            control={form.control}
+            name="message"
+            render={({ field }) => (
+              <FormControl>
+                <Input className="border rounded w-full" {...field} />
+              </FormControl>
+            )}
+          />
+          <Button size={'icon'} variant={'outline'} type="submit">
+            <Send />
+          </Button>
+        </form>
+      </Form>
     </div>
   );
 }

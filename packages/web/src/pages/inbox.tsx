@@ -5,16 +5,14 @@ import {
   SidebarContent,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
-  SidebarInput,
-  SidebarSeparator,
 } from '@/components/ui/sidebar';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
-import { useQuery } from '@tanstack/react-query';
+import { cn } from '@/lib/utils';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { formatDistance } from 'date-fns';
-import { LoaderCircle } from 'lucide-react';
+import { Circle, LoaderCircle } from 'lucide-react';
 import { useState } from 'react';
 
 function Inbox() {
@@ -24,51 +22,81 @@ function Inbox() {
     string | null
   >(null);
 
-  const { data: inboxes, isLoading } = useQuery(
+  const { mutateAsync: markInboxViewed } = useMutation(
+    trpc.inboxes.markAsViewed.mutationOptions()
+  );
+
+  const {
+    data: inboxes,
+    isLoading,
+    refetch,
+  } = useQuery(
     trpc.inboxes.getNumberInboxes.queryOptions({
       numberId: activeNumber?.id as string,
     })
   );
   return (
-    <div className="h-full flex">
-      <Sidebar collapsible="none" className="h-full w-64">
-        <SidebarHeader>
-          <Label>Inbox</Label>
-          <SidebarInput placeholder="Type to search inbox..." />
-          <SidebarSeparator />
+    <div className="h-[91vh] flex">
+      <Sidebar collapsible="none" className="h-full w-80">
+        <SidebarHeader className="px-0">
+          <Label>Messages</Label>
         </SidebarHeader>
         <SidebarContent>
-          <SidebarGroup className="flex flex-col gap-2">
-            <SidebarGroupLabel>Messages</SidebarGroupLabel>
-            <SidebarGroupContent className="flex flex-col gap-4">
-              {inboxes?.map((inbox) => (
-                <div
-                  key={inbox.id}
-                  className="flex flex-col gap-2 border-t pt-2"
-                  onClick={() => setSelectedInboxContactId(inbox.contactId)}
-                >
-                  <div className="flex space-between w-full">
-                    <span className="font-medium">{inbox.contact.label}</span>
-                  </div>
-                  {inbox.lastCall && !inbox.lastMessage ? (
-                    <span>call</span>
-                  ) : null}
-                  {inbox.lastMessage && !inbox.lastCall ? (
-                    <span className="text-sm text-muted-foreground truncate overflow-hidden whitespace-nowrap max-w-48">
-                      {inbox.lastMessage.message}
-                    </span>
-                  ) : null}
-                  {inbox.lastMessage && (
-                    <span className="text-xs text-muted-foreground text-right">
-                      {formatDistance(
-                        new Date(inbox.lastMessage?.created_at as string),
-                        new Date(),
-                        { addSuffix: true }
+          <SidebarGroup className="flex flex-col gap-2 p-0">
+            <SidebarGroupContent className="flex flex-col">
+              {inboxes?.map((inbox) => {
+                const isUnread =
+                  inbox.lastMessage &&
+                  new Date(
+                    inbox?.lastMessage?.created_at as string
+                  ).toISOString() >
+                    new Date(inbox.lastViewedAt || 0).toISOString();
+
+                return (
+                  <div
+                    key={inbox.id}
+                    className={cn(
+                      'flex flex-col gap-2 border-t pt-2 py-1 px-2 cursor-pointer',
+                      selectedInboxContactId === inbox.contactId &&
+                        'font-medium bg-accent',
+                      isUnread && 'bg-muted font-semibold'
+                    )}
+                    onClick={async () => {
+                      setSelectedInboxContactId(inbox.contactId);
+                      await markInboxViewed({ inboxId: inbox.id });
+                      refetch();
+                    }}
+                  >
+                    <div className="flex justify-between w-full items-center">
+                      <span className="font-medium">{inbox.contact.label}</span>
+                      {isUnread && (
+                        <Circle
+                          fill="white"
+                          className=" animate-pulse"
+                          size={8}
+                        />
                       )}
-                    </span>
-                  )}
-                </div>
-              ))}
+                    </div>
+                    {inbox.lastCall && !inbox.lastMessage ? (
+                      <span>call</span>
+                    ) : null}
+                    {inbox.lastMessage && !inbox.lastCall ? (
+                      <span className="text-sm text-muted-foreground truncate overflow-hidden whitespace-nowrap max-w-48">
+                        {inbox.lastMessage.message}
+                      </span>
+                    ) : null}
+                    {inbox.lastMessage && (
+                      <span className="text-xs text-muted-foreground text-right">
+                        {formatDistance(
+                          new Date(inbox.lastMessage?.created_at as string),
+                          new Date(),
+                          { addSuffix: true }
+                        )}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </SidebarGroupContent>
           </SidebarGroup>
           {isLoading && (

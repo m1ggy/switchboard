@@ -35,4 +35,9 @@ export const inboxesRouter = t.router({
         nextCursor,
       };
     }),
+  markAsViewed: protectedProcedure
+    .input(z.object({ inboxId: z.string() }))
+    .mutation(async ({ input }) => {
+      await InboxesRepository.markInboxAsViewed(input.inboxId);
+    }),
 });
