@@ -91,7 +91,24 @@ async function routes(app: FastifyInstance) {
         companyId: numberRecord.company_id,
       });
 
-      await sendCallAlertToSlack({ from: callerId, to: To });
+      let slackMessageToFormatted = To;
+
+      const number = await NumbersRepository.findByNumber(callerId);
+
+      if (number) {
+        const company = await UserCompaniesRepository.findCompanyById(
+          number.company_id
+        );
+
+        if (company) {
+          slackMessageToFormatted = `${To} (${company.name})`;
+        }
+      }
+
+      await sendCallAlertToSlack({
+        from: callerId,
+        to: slackMessageToFormatted,
+      });
 
       response.say('All agents are currently busy. Please hold.');
       response.dial().conference(
