@@ -95,25 +95,49 @@ async function routes(app: FastifyInstance) {
       let slackMessageToFormatted = To;
       let slackMessageFromFormatted = From;
 
-      const number = await NumbersRepository.findByNumber(agentIdentity);
+      console.log('[Slack Alert] Incoming call:', { From, To, agentIdentity });
 
-      if (number) {
+      const number = await NumbersRepository.findByNumber(agentIdentity);
+      if (!number) {
+        console.warn(
+          '[Slack Alert] No number found for agentIdentity:',
+          agentIdentity
+        );
+      } else {
+        console.log('[Slack Alert] Found number:', number);
+
         const company = await UserCompaniesRepository.findCompanyById(
           number.company_id
         );
-
-        if (company) {
+        if (!company) {
+          console.warn(
+            '[Slack Alert] No company found for number.company_id:',
+            number.company_id
+          );
+        } else {
+          console.log('[Slack Alert] Found company:', company.name);
           slackMessageToFormatted = `${To} (${company.name})`;
+
           const contact = await ContactsRepository.findByNumber(
             From,
             company.id
           );
+          if (!contact) {
+            console.log('[Slack Alert] No contact found for:', From);
+          } else {
+            console.log('[Slack Alert] Found contact:', contact);
 
-          if (contact && contact.label !== From) {
-            slackMessageFromFormatted = `${From} (${contact.label})`;
+            if (contact.label !== From) {
+              slackMessageFromFormatted = `${From} (${contact.label})`;
+            }
           }
         }
       }
+
+      console.log('[Slack Alert] Final Slack message formatting:', {
+        from: slackMessageFromFormatted,
+        to: slackMessageToFormatted,
+      });
 
       await sendCallAlertToSlack({
         from: slackMessageFromFormatted,
