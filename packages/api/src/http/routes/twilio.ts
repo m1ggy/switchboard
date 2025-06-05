@@ -1,4 +1,5 @@
 import { UserCompaniesRepository } from '@/db/repositories/companies';
+import { ContactsRepository } from '@/db/repositories/contacts';
 import { NumbersRepository } from '@/db/repositories/numbers';
 import { notifyIncomingCall } from '@/lib/helpers';
 import { callQueueManager } from '@/lib/queue';
@@ -92,6 +93,7 @@ async function routes(app: FastifyInstance) {
       });
 
       let slackMessageToFormatted = To;
+      let slackMessageFromFormatted = From;
 
       const number = await NumbersRepository.findByNumber(callerId);
 
@@ -102,6 +104,14 @@ async function routes(app: FastifyInstance) {
 
         if (company) {
           slackMessageToFormatted = `${To} (${company.name})`;
+          const contact = await ContactsRepository.findByNumber(
+            From,
+            company.id
+          );
+
+          if (contact && contact.label !== From) {
+            slackMessageFromFormatted = `${From} (${contact.label})`;
+          }
         }
       }
 
