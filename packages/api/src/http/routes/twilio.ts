@@ -95,7 +95,7 @@ async function routes(app: FastifyInstance) {
       let slackMessageToFormatted = To;
       let slackMessageFromFormatted = From;
 
-      const number = await NumbersRepository.findByNumber(callerId);
+      const number = await NumbersRepository.findByNumber(agentIdentity);
 
       if (number) {
         const company = await UserCompaniesRepository.findCompanyById(
@@ -116,7 +116,7 @@ async function routes(app: FastifyInstance) {
       }
 
       await sendCallAlertToSlack({
-        from: callerId,
+        from: slackMessageFromFormatted,
         to: slackMessageToFormatted,
       });
 
