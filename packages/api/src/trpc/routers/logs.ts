@@ -1,4 +1,9 @@
 import { CallsRepository } from '@/db/repositories/calls';
+import { ContactsRepository } from '@/db/repositories/contacts';
+import { InboxesRepository } from '@/db/repositories/inboxes';
+import { NumbersRepository } from '@/db/repositories/numbers';
+import { app } from '@/index';
+import { notifyUser } from '@/lib/helpers';
 import { Call, Contact } from '@/types/db';
 import crypto from 'crypto';
 import { z } from 'zod';
@@ -27,7 +32,7 @@ export const logsRouter = t.router({
         callSid: z.string(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const existingCallLog = await CallsRepository.findBySID(input.callSid);
 
       if (existingCallLog) {
@@ -45,6 +50,25 @@ export const logsRouter = t.router({
         call_sid: input.callSid,
       });
 
+      const inbox = await InboxesRepository.findOrCreate({
+        numberId: input.numberId,
+        contactId: input.contactId,
+      });
+
+      InboxesRepository.updateLastCall(inbox.id, callLog.id);
+      const number = await NumbersRepository.findById(input.numberId);
+      const contact = await ContactsRepository.findById(input.contactId);
+
+      notifyUser({
+        userId: ctx.user.uid,
+        app: app,
+        message: `Call with ${contact?.label} ended.`,
+        meta: {
+          companyId: number?.company_id,
+          event: 'refresh',
+          target: { contactId: input.contactId },
+        },
+      });
       return callLog;
     }),
   getNumberCallLogs: protectedProcedure

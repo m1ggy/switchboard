@@ -4,12 +4,12 @@ import fastifySocketIO from 'fastify-socket.io';
 
 import fastifyCors from '@fastify/cors';
 import formBody from '@fastify/formbody';
+import dotenv from 'dotenv';
+import path from 'path';
 import twilioRoutes from './http/routes/twilio';
 import { auth } from './lib/firebase';
 import { appRouter } from './trpc';
 import { createContext } from './trpc/context';
-import dotenv from 'dotenv';
-import path from 'path';
 
 dotenv.config();
 
@@ -99,3 +99,5 @@ app.listen({ port: 3000 }, () => {
     });
   });
 });
+
+export { app };

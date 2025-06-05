@@ -23,21 +23,21 @@ export const inboxesRouter = t.router({
 
       const results = await InboxesRepository.findActivityByContactPaginated(
         contactId,
-        { limit: limit + 1, cursor }
+        { limit: 50 }
       );
 
-      const items = results.slice(0, limit);
-      const nextCursor =
-        results.length > limit ? items[items.length - 1].createdAt : null;
-
-      return {
-        items,
-        nextCursor,
-      };
+      return results.reverse();
     }),
   markAsViewed: protectedProcedure
     .input(z.object({ inboxId: z.string() }))
     .mutation(async ({ input }) => {
       await InboxesRepository.markInboxAsViewed(input.inboxId);
+    }),
+  getUnreadInboxesCount: protectedProcedure
+    .input(z.object({ numberId: z.string() }))
+    .query(async ({ input }) => {
+      return await InboxesRepository.findInboxesWithUnreadMessageCounts(
+        input.numberId
+      );
     }),
 });

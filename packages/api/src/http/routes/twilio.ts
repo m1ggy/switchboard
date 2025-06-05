@@ -230,7 +230,17 @@ async function routes(app: FastifyInstance) {
 
     await InboxesRepository.updateLastMessage(inbox.id, newMessage.id);
 
-    notifyNewMessage({ from: From, toNumber: To, message: Body, app });
+    notifyNewMessage({
+      from: From,
+      toNumber: To,
+      message: Body,
+      app,
+      meta: {
+        companyId: matchingNumber?.company_id,
+        event: 'refresh',
+        target: { contactId: contact.id },
+      },
+    });
 
     return reply.status(204).send();
   });

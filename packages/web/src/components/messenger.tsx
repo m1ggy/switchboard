@@ -49,7 +49,7 @@ function Messenger({ contactId }: MessengerProps) {
       },
       {
         enabled: !!contactId && !!activeNumber?.id,
-        getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+        getNextPageParam: () => undefined, //!TODO: add pagination
       }
     )
   );
@@ -103,14 +103,17 @@ function Messenger({ contactId }: MessengerProps) {
     return () => container.removeEventListener('scroll', handleScroll);
   }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
-  const items = data?.pages.flatMap((page) => page.items) ?? [];
+  const items = data?.pages.flatMap((page) => page) ?? [];
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
 
-    el.scrollTop = el.scrollHeight;
-  }, [items.length]);
+    // Only scroll if no previous height (i.e. not loading more messages)
+    if (prevHeight === null && !isMessagesLoading) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [items.length, isMessagesLoading]);
 
   const { makeCall } = useTwilioVoice();
   if (!contactId) {
@@ -129,9 +132,12 @@ function Messenger({ contactId }: MessengerProps) {
         {isContactLoading ? (
           <Skeleton className="w-full h-6" />
         ) : (
-          <div className="flex justify-between w-full">
-            <span className="w-full">
-              {contact?.label} ({contact?.number})
+          <div className="flex justify-between w-full items-center">
+            <span className="h-fit">
+              {contact?.label}{' '}
+              <span className="text-xs text-muted-foreground">
+                ({contact?.number})
+              </span>
             </span>
             <Button
               variant={'outline'}
@@ -167,9 +173,34 @@ function Messenger({ contactId }: MessengerProps) {
                 <Loader2 />
               </div>
             )}
-            {items.map((item) => (
-              <ChatBubble item={item} key={item.id} />
-            ))}
+            {(() => {
+              let lastDate: string | null = null;
+
+              return items.map((item) => {
+                const dateObj = new Date(item.createdAt);
+                const currentDate = dateObj.toDateString(); // e.g., "Wed Jun 05 2025"
+                const shouldShowSeparator = currentDate !== lastDate;
+                lastDate = currentDate;
+
+                return (
+                  <div key={item.id}>
+                    {shouldShowSeparator && (
+                      <div className="flex justify-center py-2">
+                        <span className="text-xs text-muted-foreground bg-muted px-3 py-1 rounded-full">
+                          {dateObj.toLocaleDateString(undefined, {
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric',
+                          })}
+                        </span>
+                      </div>
+                    )}
+                    <ChatBubble item={item} />
+                  </div>
+                );
+              });
+            })()}
+
             {isPending && (
               <div className="flex justify-center">
                 <span className="font-semibold text-xs">sending...</span>
@@ -181,7 +212,7 @@ function Messenger({ contactId }: MessengerProps) {
 
       <Form {...form}>
         <form
-          className="flex gap-2 px-5"
+          className="flex gap-2 px-5 py-5"
           onSubmit={form.handleSubmit(onSubmitMessage)}
         >
           <Button size={'icon'} variant={'outline'}>

@@ -79,7 +79,7 @@ export const InboxesRepository = {
 
   async findActivityByContactPaginated(
     contactId: string,
-    { limit = 50, cursor }: { limit?: number; cursor?: string | null }
+    { limit = 50 }: { limit?: number }
   ): Promise<
     {
       type: 'message' | 'call';
@@ -102,9 +102,9 @@ export const InboxesRepository = {
         m.id,
         m.number_id AS "numberId",
         m.created_at AS "createdAt",
-        m.direction,
+        m.direction::text AS direction,
         m.message,
-        m.status,
+        m.status::text AS status,
         NULL::integer AS duration,
         m.meta
       FROM messages m
@@ -117,28 +117,83 @@ export const InboxesRepository = {
         c.id,
         c.number_id AS "numberId",
         c.initiated_at AS "createdAt",
-        NULL::message_direction AS direction,
+        NULL::text AS direction,
         NULL::text AS message,
-        NULL::message_statuses AS status,
+        NULL::text AS status,
         c.duration,
         c.meta
       FROM calls c
       WHERE c.contact_id = $1
     ) AS combined
-    ${cursor ? `WHERE "createdAt" < $2` : ''}
-    ORDER BY "createdAt" ASC
-    LIMIT $${cursor ? 3 : 2}
+    ORDER BY "createdAt" DESC
+    LIMIT $2
     `,
-      cursor ? [contactId, cursor, limit] : [contactId, limit]
+      [contactId, limit]
     );
 
     return result.rows;
   },
-
   async markInboxAsViewed(inboxId: string): Promise<void> {
-    await pool.query(
-      `UPDATE inboxes SET last_viewed_at = NOW() WHERE id = $1`,
-      [inboxId]
+    await pool.query(`UPDATE inboxes SET last_viewed_at = $1 WHERE id = $2`, [
+      new Date(),
+      inboxId,
+    ]);
+  },
+  async findInboxesWithUnreadMessageCounts(
+    numberId: string
+  ): Promise<(InboxWithDetails & { unreadCount: number })[]> {
+    const result = await pool.query(
+      `
+    WITH unread_counts AS (
+      SELECT 
+        i.id AS inbox_id,
+        COUNT(m.id) AS unread_count
+      FROM inboxes i
+      JOIN messages m ON
+        m.contact_id = i.contact_id
+        AND m.number_id = i.number_id
+        AND (
+          i.last_viewed_at IS NULL
+          OR m.created_at > i.last_viewed_at
+        )
+      WHERE i.number_id = $1
+      GROUP BY i.id
+      HAVING COUNT(m.id) > 0
+    )
+    SELECT 
+      i.id,
+      i.number_id,
+      i.contact_id,
+      i.last_message_id,
+      i.last_call_id,
+      i.last_viewed_at,
+
+      to_jsonb(c) AS contact,
+      to_jsonb(lm) AS "lastMessage",
+      to_jsonb(lc) AS "lastCall",
+
+      uc.unread_count AS "unreadCount"
+    FROM unread_counts uc
+    JOIN inboxes i ON i.id = uc.inbox_id
+    JOIN contacts c ON i.contact_id = c.id
+    LEFT JOIN messages lm ON i.last_message_id = lm.id
+    LEFT JOIN calls lc ON i.last_call_id = lc.id
+    ORDER BY uc.unread_count DESC
+    `,
+      [numberId]
     );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      numberId: row.number_id,
+      contactId: row.contact_id,
+      lastMessageId: row.last_message_id,
+      lastCallId: row.last_call_id,
+      contact: row.contact,
+      lastMessage: row.lastMessage,
+      lastCall: row.lastCall,
+      lastViewedAt: row.last_viewed_at,
+      unreadCount: Number(row.unreadCount),
+    }));
   },
 };

@@ -1,4 +1,6 @@
+import { getQueryClient } from '@/App';
 import { auth } from '@/lib/firebase';
+import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
 import { useQuery } from '@tanstack/react-query';
 import type { Notification } from 'api/types/db';
@@ -30,26 +32,31 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
   const user = auth.currentUser;
   const trpc = useTRPC();
 
+  const { activeNumber } = useMainStore();
+
   const { refetch: refetchNotifications } = useQuery(
     trpc.notifications.getNotifications.queryOptions()
   );
   const { refetch: refetchCount } = useQuery(
     trpc.notifications.getUnreadNotificationsCount.queryOptions()
   );
+  const { refetch: refetchInboxes } = useQuery(
+    trpc.inboxes.getNumberInboxes.queryOptions({
+      numberId: activeNumber?.id as string,
+    })
+  );
 
   const { data: companies } = useQuery(
     trpc.companies.getUserCompanies.queryOptions()
   );
 
+  const client = getQueryClient();
   useEffect(() => {
     if (!user || !socket) return;
 
     const channel = `${user.uid}-notif`;
 
     const handler = async (notif: Notification) => {
-      await refetchNotifications();
-      await refetchCount();
-
       let title = 'New Notification';
 
       if (notif.meta.companyId) {
@@ -61,7 +68,35 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
         }
       }
 
+      if (
+        notif.meta.event &&
+        notif.meta.event === 'refresh' &&
+        notif.meta.target
+      ) {
+        const targets = notif.meta.target as Record<string, string>;
+        if (targets['contactId']) {
+          client.invalidateQueries({
+            queryKey: trpc.inboxes.getActivityByContact.infiniteQueryKey({
+              contactId: targets.contactId,
+            }),
+          });
+        }
+      }
+
       toast.info(title, { description: notif.message });
+
+      await client.invalidateQueries({
+        queryKey: trpc.inboxes.getNumberInboxes.queryKey({
+          numberId: activeNumber?.number as string,
+        }),
+      });
+
+      await client.invalidateQueries({
+        queryKey: trpc.notifications.getNotifications.queryKey({ page: 1 }),
+      });
+      await refetchNotifications();
+      await refetchCount();
+      await refetchInboxes();
     };
 
     socket.on(channel, handler);
@@ -69,7 +104,7 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
     return () => {
       socket.off(channel, handler);
     };
-  }, [user, socket, refetchCount, refetchNotifications, companies]);
+  }, [user, socket, refetchCount, refetchNotifications, companies, client]);
 
   if (!socket) return children;
 

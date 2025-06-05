@@ -115,3 +115,15 @@ export type InboxWithDetails = {
 
   lastViewedAt: string | null;
 };
+
+export type CombinedActivity = {
+  type: 'message' | 'call';
+  id: string;
+  numberId: string;
+  createdAt: string;
+  direction?: 'inbound' | 'outbound' | null;
+  message?: string | null;
+  status?: 'sent' | 'draft' | null;
+  duration?: number | null;
+  meta: any;
+};

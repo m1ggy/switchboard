@@ -2,6 +2,7 @@ import { UserCompaniesRepository } from '@/db/repositories/companies';
 import { NotificationsRepository } from '@/db/repositories/notifications';
 import { NumbersRepository } from '@/db/repositories/numbers';
 import crypto from 'crypto';
+import { intervalToDuration } from 'date-fns';
 import { type FastifyInstance } from 'fastify';
 
 async function notifyIncomingCall({
@@ -67,11 +68,13 @@ async function notifyNewMessage({
   toNumber,
   message,
   app,
+  meta = {},
 }: {
   from: string;
   toNumber: string;
   message: string;
   app: FastifyInstance;
+  meta?: Record<string, unknown>;
 }) {
   try {
     const existingNumber = await NumbersRepository.findByNumber(toNumber);
@@ -104,6 +107,7 @@ async function notifyNewMessage({
         companyId: existingCompany.id,
         from,
         preview: message.slice(0, 100),
+        ...meta,
       },
       userId: userCompany.user_id,
     });
@@ -116,4 +120,50 @@ async function notifyNewMessage({
   }
 }
 
-export { notifyIncomingCall, notifyNewMessage };
+async function notifyUser({
+  userId,
+  message,
+  meta = {},
+  app,
+  type = 'user',
+}: {
+  userId: string;
+  message: string;
+  meta?: Record<string, any>;
+  app: FastifyInstance;
+  type?: 'user' | 'global' | 'system';
+}) {
+  try {
+    const notif = await NotificationsRepository.create({
+      id: crypto.randomUUID(),
+      message,
+      createdAt: new Date(),
+      meta,
+      userId,
+      type,
+    });
+
+    const channel = `${userId}-notif`;
+    app.io.emit(channel, notif);
+    console.log(`📢 Notification emitted to channel: ${channel}`);
+  } catch (error) {
+    console.error(`❗ Error notifying user ${userId}:`, error);
+  }
+}
+
+export function formatDurationWithDateFns(seconds: number) {
+  const duration = intervalToDuration({
+    start: 0,
+    end: seconds * 1000, // convert to ms
+  });
+
+  const { hours, minutes, seconds: secs } = duration;
+
+  const hrStr = hours ? `${hours}h ` : '';
+  const minStr = minutes ? `${minutes}m ` : '';
+  const secStr = `${secs}s`;
+
+  return `${hrStr}${minStr}${secStr}`.trim();
+}
+
+export { notifyIncomingCall, notifyNewMessage, notifyUser };

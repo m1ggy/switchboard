@@ -32,6 +32,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { Link, useLocation } from 'react-router';
 import { NumberSwitcher } from './number-switcher';
+import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Skeleton } from './ui/skeleton';
 const smsItems = [
@@ -122,6 +123,18 @@ function BaseSidebar() {
     }
   }, [setActiveNumber, numbers, activeNumber]);
 
+  const { data: inboxUnreadCount } = useQuery(
+    trpc.inboxes.getUnreadInboxesCount.queryOptions({
+      numberId: activeNumber?.id as string,
+    })
+  );
+
+  const unreadCount = inboxUnreadCount?.length
+    ? inboxUnreadCount.reduce((prev, curr) => prev + curr.unreadCount, 0)
+    : null;
+
+  console.log({ unreadCount, smsItems });
+
   return (
     <Sidebar>
       <SidebarContent className="overflow-x-hidden p-2">
@@ -175,9 +188,32 @@ function BaseSidebar() {
                       isActive={location.pathname === item.url}
                     >
                       {item.url ? (
-                        <Link to={item.url}>
-                          <item.icon />
-                          <span>{item.title}</span>
+                        <Link
+                          to={item.url}
+                          className={
+                            item.title === 'Inbox' &&
+                            unreadCount &&
+                            unreadCount > 0
+                              ? 'flex justify-center'
+                              : ''
+                          }
+                        >
+                          {item.title === 'Inbox' &&
+                          unreadCount &&
+                          unreadCount > 0 ? (
+                            <>
+                              <div className="flex">
+                                <item.icon />
+                                <span>{item.title}</span>
+                              </div>
+                              <Badge>{unreadCount}</Badge>
+                            </>
+                          ) : (
+                            <>
+                              <item.icon />
+                              <span>{item.title}</span>
+                            </>
+                          )}
                         </Link>
                       ) : item.onClick ? (
                         <Button
