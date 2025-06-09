@@ -19,8 +19,17 @@ interface MessengerProps {
 
 function Messenger({ contactId }: MessengerProps) {
   const trpc = useTRPC();
-
   const { activeNumber } = useMainStore();
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  const [prevHeight, setPrevHeight] = useState<number | null>(null);
+  const [readyToPaginate, setReadyToPaginate] = useState(false);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [hasReachedBottomOnce, setHasReachedBottomOnce] = useState(false);
+  const [initialScrollDone, setInitialScrollDone] = useState(false);
+  const [items, setItems] = useState<any[]>([]);
 
   const { mutateAsync: sendMessage, isPending } = useMutation(
     trpc.twilio.sendSMS.mutationOptions()
@@ -32,6 +41,13 @@ function Messenger({ contactId }: MessengerProps) {
       { enabled: !!contactId }
     )
   );
+
+  useEffect(() => {
+    setReadyToPaginate(false);
+    setHasReachedBottomOnce(false);
+    setInitialScrollDone(false);
+    setPrevHeight(null);
+  }, [contactId]);
 
   const {
     data,
@@ -45,25 +61,64 @@ function Messenger({ contactId }: MessengerProps) {
       {
         contactId: contactId as string,
         limit: 20,
-        cursor: undefined,
       },
       {
         enabled: !!contactId && !!activeNumber?.id,
-        getNextPageParam: () => undefined, //!TODO: add pagination
+        getNextPageParam: (lastPage) => lastPage?.nextCursor,
       }
     )
   );
-
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [prevHeight, setPrevHeight] = useState<number | null>(null);
 
   const form = useForm({
     resolver: zodResolver(z.object({ message: z.string().min(1).max(500) })),
   });
 
+  useEffect(() => {
+    if (!data?.pages) return;
+    const ordered = data.pages
+      .flatMap((page) => page.items)
+      .slice()
+      .reverse();
+    setItems(ordered);
+  }, [data]);
+
+  useEffect(() => {
+    if (
+      initialScrollDone ||
+      !scrollRef.current ||
+      !bottomRef.current ||
+      isMessagesLoading
+    )
+      return;
+
+    if (isAtBottom) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          bottomRef.current?.scrollIntoView({ behavior: 'auto' });
+          setInitialScrollDone(true);
+          setReadyToPaginate(true);
+        });
+      });
+    }
+  }, [items.length, isMessagesLoading, initialScrollDone, contactId]);
+
   function onSubmitMessage(data: { message: string }) {
-    console.log({ data });
     if (!contactId) return;
+
+    const tempMessage = {
+      id: `temp-${Date.now()}`,
+      body: data.message,
+      createdAt: new Date().toISOString(),
+      direction: 'outbound',
+    };
+
+    setItems((prev) => [...prev, tempMessage]);
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      });
+    });
 
     sendMessage(
       {
@@ -81,41 +136,88 @@ function Messenger({ contactId }: MessengerProps) {
     form.reset({ message: '' });
   }
 
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || hasReachedBottomOnce) return;
+
+    const timeout = setTimeout(() => {
+      const isAtBottomInitially =
+        el.scrollTop + el.clientHeight >= el.scrollHeight - 10;
+
+      if (isAtBottomInitially) {
+        setHasReachedBottomOnce(true);
+      }
+    }, 100);
+
+    return () => clearTimeout(timeout);
+  }, [contactId, items.length, hasReachedBottomOnce]);
+
+  useEffect(() => {
+    const scrollEl = scrollRef.current;
+    const bottomEl = bottomRef.current;
+    if (!scrollEl || !bottomEl) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setIsAtBottom(entry.isIntersecting);
+        if (entry.isIntersecting && !hasReachedBottomOnce) {
+          setHasReachedBottomOnce(true);
+        }
+      },
+      { root: scrollEl, threshold: 0.9 }
+    );
+
+    observer.observe(bottomEl);
+    return () => observer.disconnect();
+  }, [hasReachedBottomOnce]);
+
   useLayoutEffect(() => {
     if (!scrollRef.current || prevHeight === null) return;
     const el = scrollRef.current;
     const diff = el.scrollHeight - prevHeight;
     el.scrollTop = diff;
+    setPrevHeight(null);
   }, [data]);
 
   useEffect(() => {
     const container = scrollRef.current;
     if (!container) return;
 
+    let timeout: NodeJS.Timeout | null = null;
     const handleScroll = () => {
-      if (container.scrollTop < 50 && hasNextPage && !isFetchingNextPage) {
-        setPrevHeight(container.scrollHeight);
-        fetchNextPage();
-      }
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        if (
+          readyToPaginate &&
+          hasReachedBottomOnce &&
+          initialScrollDone &&
+          container.scrollTop < 50 &&
+          container.scrollHeight > container.clientHeight + 100 &&
+          hasNextPage &&
+          !isFetchingNextPage
+        ) {
+          setPrevHeight(container.scrollHeight);
+          fetchNextPage();
+        }
+      }, 50);
     };
 
     container.addEventListener('scroll', handleScroll);
-    return () => container.removeEventListener('scroll', handleScroll);
-  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
-
-  const items = data?.pages.flatMap((page) => page) ?? [];
-
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-
-    // Only scroll if no previous height (i.e. not loading more messages)
-    if (prevHeight === null && !isMessagesLoading) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [items.length, isMessagesLoading]);
+    return () => {
+      container.removeEventListener('scroll', handleScroll);
+      if (timeout) clearTimeout(timeout);
+    };
+  }, [
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    readyToPaginate,
+    hasReachedBottomOnce,
+    initialScrollDone,
+  ]);
 
   const { makeCall } = useTwilioVoice();
+
   if (!contactId) {
     return (
       <div className="flex justify-center items-center w-full h-full">
@@ -163,22 +265,21 @@ function Messenger({ contactId }: MessengerProps) {
         </div>
       ) : (
         <div
-          className="flex-1 overflow-scroll scroll-smooth"
+          className="flex-1 overflow-y-auto scroll-smooth"
           ref={scrollRef}
           style={{ transform: 'translateZ(0)' }}
         >
           <div className="px-4 py-2 space-y-2 justify-end flex flex-col">
             {isFetchingNextPage && (
               <div className="flex justify-center w-full items-center">
-                <Loader2 />
+                <Loader2 className="animate-spin" />
               </div>
             )}
             {(() => {
               let lastDate: string | null = null;
-
               return items.map((item) => {
                 const dateObj = new Date(item.createdAt);
-                const currentDate = dateObj.toDateString(); // e.g., "Wed Jun 05 2025"
+                const currentDate = dateObj.toDateString();
                 const shouldShowSeparator = currentDate !== lastDate;
                 lastDate = currentDate;
 
@@ -200,12 +301,12 @@ function Messenger({ contactId }: MessengerProps) {
                 );
               });
             })()}
-
             {isPending && (
               <div className="flex justify-center">
                 <span className="font-semibold text-xs">sending...</span>
               </div>
             )}
+            <div ref={bottomRef} />
           </div>
         </div>
       )}

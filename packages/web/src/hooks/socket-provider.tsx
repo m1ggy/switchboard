@@ -8,10 +8,12 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   type PropsWithChildren,
 } from 'react';
 import type { Socket } from 'socket.io-client';
 import { toast } from 'sonner';
+import { useNotification } from './browser-notification-provider';
 
 interface SocketContextValue {
   socket: Socket;
@@ -29,6 +31,9 @@ interface SocketProviderProps extends PropsWithChildren {
 }
 
 export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
+  const cleanupRef = useRef<() => void>(null);
+  const { enableVisibilityNotification, showSystemNotification } =
+    useNotification();
   const user = auth.currentUser;
   const trpc = useTRPC();
 
@@ -37,7 +42,7 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
   const { refetch: refetchNotifications } = useQuery(
     trpc.notifications.getNotifications.queryOptions()
   );
-  const { refetch: refetchCount } = useQuery(
+  const { refetch: refetchCount, data: notifCount } = useQuery(
     trpc.notifications.getUnreadNotificationsCount.queryOptions()
   );
   const { refetch: refetchInboxes } = useQuery(
@@ -45,6 +50,13 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
       numberId: activeNumber?.id as string,
     })
   );
+
+  const { refetch: refetchInboxesUnreadCount, data: inboxsWithUnreadCount } =
+    useQuery(
+      trpc.inboxes.getUnreadInboxesCount.queryOptions({
+        numberId: activeNumber?.id as string,
+      })
+    );
 
   const { data: companies } = useQuery(
     trpc.companies.getUserCompanies.queryOptions()
@@ -94,9 +106,12 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
       await client.invalidateQueries({
         queryKey: trpc.notifications.getNotifications.queryKey({ page: 1 }),
       });
+      showSystemNotification(title, { body: notif.message });
+
       await refetchNotifications();
       await refetchCount();
       await refetchInboxes();
+      await refetchInboxesUnreadCount();
     };
 
     socket.on(channel, handler);
@@ -105,6 +120,31 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
       socket.off(channel, handler);
     };
   }, [user, socket, refetchCount, refetchNotifications, companies, client]);
+
+  useEffect(() => {
+    if (cleanupRef.current) {
+      cleanupRef.current();
+      cleanupRef.current = null;
+    }
+
+    const totalUnreadCount = inboxsWithUnreadCount?.reduce(
+      (prev, curr) => prev + curr.unreadCount,
+      0
+    );
+
+    if (totalUnreadCount && totalUnreadCount > 0) {
+      cleanupRef.current = enableVisibilityNotification(
+        `(${totalUnreadCount}) Notifications`
+      );
+    }
+
+    return () => {
+      if (cleanupRef.current) {
+        cleanupRef.current();
+        cleanupRef.current = null;
+      }
+    };
+  }, [inboxsWithUnreadCount, enableVisibilityNotification]);
 
   if (!socket) return children;
 

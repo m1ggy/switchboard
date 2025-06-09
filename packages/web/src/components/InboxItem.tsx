@@ -1,15 +1,20 @@
+import useMainStore from '@/lib/store';
+import { useTRPC } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 import type { InboxWithDetails } from 'api/types/db';
 import { formatDistance } from 'date-fns';
-import { Circle } from 'lucide-react';
+import { Badge } from './ui/badge';
 
 interface InboxItemProps {
-  inbox: InboxWithDetails;
+  inbox: InboxWithDetails & { unreadCount: number };
   isSelected: boolean;
   onSelect: () => void;
 }
 
 export function InboxItem({ inbox, isSelected, onSelect }: InboxItemProps) {
+  const trpc = useTRPC();
+  const { activeNumber } = useMainStore();
+  console.log({ inbox });
   const lastMessageDate = inbox.lastMessage
     ? new Date(inbox.lastMessage.created_at as string)
     : null;
@@ -29,15 +34,12 @@ export function InboxItem({ inbox, isSelected, onSelect }: InboxItemProps) {
     latestDate = lastCallDate;
   }
 
-  const isUnread =
-    inbox.lastMessage &&
-    new Date(inbox.lastMessage.created_at as string).toISOString() >
-      new Date(inbox.lastViewedAt || 0).toISOString();
+  const isUnread = inbox.unreadCount > 0;
 
   return (
     <div
       className={cn(
-        'flex flex-col gap-2 pt-2 py-1 px-2 cursor-pointer',
+        'flex flex-col gap-2 pt-2 py-4 px-4 cursor-pointer rounded-md mt-1 mx-2',
         isSelected && 'font-medium bg-accent',
         isUnread && 'bg-muted font-semibold'
       )}
@@ -45,7 +47,7 @@ export function InboxItem({ inbox, isSelected, onSelect }: InboxItemProps) {
     >
       <div className="flex justify-between w-full items-center">
         <span className="font-medium">{inbox.contact.label}</span>
-        {isUnread && <Circle fill="white" className="animate-pulse" size={8} />}
+        {isUnread && <Badge>{inbox.unreadCount}</Badge>}
       </div>
 
       {latestActivity === 'call' && (

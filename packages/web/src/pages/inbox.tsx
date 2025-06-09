@@ -26,6 +26,12 @@ function Inbox() {
     trpc.inboxes.markAsViewed.mutationOptions()
   );
 
+  const { refetch: refetchUnreadCount } = useQuery(
+    trpc.inboxes.getUnreadInboxesCount.queryOptions({
+      numberId: activeNumber?.id as string,
+    })
+  );
+
   const {
     data: inboxes,
     isLoading,
@@ -35,6 +41,8 @@ function Inbox() {
       numberId: activeNumber?.id as string,
     })
   );
+
+  console.log({ inboxes });
   return (
     <div className="h-[91vh] flex">
       <Sidebar collapsible="none" className="h-full w-80">
@@ -51,8 +59,9 @@ function Inbox() {
                     setSelectedInboxContactId(inbox.contactId);
                     await markInboxViewed({ inboxId: inbox.id });
                     await refetchInboxes();
+                    await refetchUnreadCount();
                   }}
-                  inbox={inbox as InboxWithDetails}
+                  inbox={inbox as InboxWithDetails & { unreadCount: number }}
                   key={inbox.id}
                 />
               ))}

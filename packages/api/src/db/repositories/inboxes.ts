@@ -40,27 +40,52 @@ export const InboxesRepository = {
     ]);
   },
 
-  async findByNumberId(numberId: string): Promise<InboxWithDetails[]> {
+  async findByNumberId(
+    numberId: string
+  ): Promise<(InboxWithDetails & { unreadCount: number })[]> {
     const result = await pool.query(
       `
+    WITH unread_counts AS (
       SELECT 
-        i.id,
-        i.number_id,
-        i.contact_id,
-        i.last_message_id,
-        i.last_call_id,
-        i.last_viewed_at,
-
-        to_jsonb(c) AS contact,
-        to_jsonb(lm) AS "lastMessage",
-        to_jsonb(lc) AS "lastCall"
+        i.id AS inbox_id,
+        COUNT(m.id) AS unread_count
       FROM inboxes i
-      JOIN contacts c ON i.contact_id = c.id
-      LEFT JOIN messages lm ON i.last_message_id = lm.id
-      LEFT JOIN calls lc ON i.last_call_id = lc.id
+      JOIN messages m ON
+        m.contact_id = i.contact_id
+        AND m.number_id = i.number_id
+        AND (
+          i.last_viewed_at IS NULL
+          OR m.created_at > i.last_viewed_at
+        )
       WHERE i.number_id = $1
-      ORDER BY lm.created_at DESC NULLS LAST
-      `,
+      GROUP BY i.id
+    )
+    SELECT 
+      i.id,
+      i.number_id,
+      i.contact_id,
+      i.last_message_id,
+      i.last_call_id,
+      i.last_viewed_at,
+
+      to_jsonb(c) AS contact,
+      to_jsonb(lm) AS "lastMessage",
+      to_jsonb(lc) AS "lastCall",
+
+      COALESCE(uc.unread_count, 0) AS "unreadCount",
+
+      GREATEST(
+        COALESCE(lm.created_at, '1970-01-01'::timestamp),
+        COALESCE(lc.initiated_at, '1970-01-01'::timestamp)
+      ) AS latest_activity
+    FROM inboxes i
+    JOIN contacts c ON i.contact_id = c.id
+    LEFT JOIN messages lm ON i.last_message_id = lm.id
+    LEFT JOIN calls lc ON i.last_call_id = lc.id
+    LEFT JOIN unread_counts uc ON i.id = uc.inbox_id
+    WHERE i.number_id = $1
+    ORDER BY latest_activity DESC
+    `,
       [numberId]
     );
 
@@ -74,12 +99,20 @@ export const InboxesRepository = {
       lastMessage: row.lastMessage,
       lastCall: row.lastCall,
       lastViewedAt: row.last_viewed_at,
+      unreadCount: Number(row.unreadCount),
     }));
   },
-
   async findActivityByContactPaginated(
     contactId: string,
-    { limit = 50 }: { limit?: number }
+    {
+      limit = 50,
+      cursorCreatedAt,
+      cursorId,
+    }: {
+      limit?: number;
+      cursorCreatedAt?: string;
+      cursorId?: string;
+    }
   ): Promise<
     {
       type: 'message' | 'call';
@@ -125,10 +158,15 @@ export const InboxesRepository = {
       FROM calls c
       WHERE c.contact_id = $1
     ) AS combined
-    ORDER BY "createdAt" DESC
-    LIMIT $2
+    WHERE 
+      ($2::timestamp IS NULL OR (
+        "createdAt" < $2
+        OR ("createdAt" = $2 AND id < $3)
+      ))
+    ORDER BY "createdAt" DESC, id DESC
+    LIMIT $4
     `,
-      [contactId, limit]
+      [contactId, cursorCreatedAt || null, cursorId || null, limit]
     );
 
     return result.rows;
@@ -195,5 +233,31 @@ export const InboxesRepository = {
       lastViewedAt: row.last_viewed_at,
       unreadCount: Number(row.unreadCount),
     }));
+  },
+
+  async getUnreadCountForInbox(
+    numberId: string,
+    inboxId: string
+  ): Promise<number> {
+    const result = await pool.query(
+      `
+    SELECT COUNT(m.id) AS unread_count
+    FROM inboxes i
+    JOIN messages m ON
+      m.contact_id = i.contact_id
+      AND m.number_id = i.number_id
+      AND (
+        i.last_viewed_at IS NULL
+        OR m.created_at > i.last_viewed_at
+      )
+    WHERE i.number_id = $1 AND i.id = $2
+    GROUP BY i.id
+    `,
+      [numberId, inboxId]
+    );
+
+    return result.rowCount && result?.rowCount > 0
+      ? Number(result.rows[0].unread_count)
+      : 0;
   },
 };

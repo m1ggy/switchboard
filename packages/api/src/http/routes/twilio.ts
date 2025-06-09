@@ -173,9 +173,16 @@ async function routes(app: FastifyInstance) {
     return reply.type('text/xml').send(response.toString());
   });
 
-  // 🔹 Caller Leaves Conference (queue abandonment)
   app.post('/voice/conference-events', async (req, reply) => {
-    const { EventType, CallSid } = req.body as Record<string, string>;
+    const { EventType, CallSid, ConferenceSid } = req.body as Record<
+      string,
+      string
+    >;
+
+    if (EventType === 'participant-join' && CallSid && ConferenceSid) {
+      activeCallStore.updateConferenceSid(CallSid, ConferenceSid);
+      console.log(`✅ Linked ${CallSid} to conference ${ConferenceSid}`);
+    }
 
     if (EventType === 'participant-leave') {
       const wasRemoved = callQueueManager.removeByPredicate(

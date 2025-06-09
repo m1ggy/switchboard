@@ -188,32 +188,20 @@ function BaseSidebar() {
                       isActive={location.pathname === item.url}
                     >
                       {item.url ? (
-                        <Link
-                          to={item.url}
-                          className={
-                            item.title === 'Inbox' &&
-                            unreadCount &&
-                            unreadCount > 0
-                              ? 'flex justify-center'
-                              : ''
-                          }
-                        >
-                          {item.title === 'Inbox' &&
-                          unreadCount &&
-                          unreadCount > 0 ? (
-                            <>
-                              <div className="flex">
-                                <item.icon />
-                                <span>{item.title}</span>
-                              </div>
-                              <Badge>{unreadCount}</Badge>
-                            </>
-                          ) : (
-                            <>
-                              <item.icon />
+                        <Link to={item.url}>
+                          <div className="flex items-center justify-between w-full">
+                            <div className="flex items-center gap-2">
+                              <item.icon className="w-4 h-4" />
                               <span>{item.title}</span>
-                            </>
-                          )}
+                            </div>
+                            {item.title === 'Inbox' &&
+                              unreadCount &&
+                              unreadCount > 0 && (
+                                <Badge variant="secondary" className="ml-auto">
+                                  {unreadCount}
+                                </Badge>
+                              )}
+                          </div>
                         </Link>
                       ) : item.onClick ? (
                         <Button

@@ -50,13 +50,28 @@ export const twilioRouter = router({
           (call) => call.agent === input.identity && call.status === 'held'
         );
 
-      if (heldCall) {
-        const webhookUrl = `${process.env.SERVER_DOMAIN}/twilio/voice/bridge`;
-        await tw.bridgeCallToClient(heldCall.sid, input.identity, webhookUrl);
-        activeCallStore.updateStatus(heldCall.sid, 'bridged', input.identity);
-        console.log(
-          `🔗 Reconnected agent ${input.identity} to held call ${heldCall.sid}`
-        );
+      if (heldCall?.conferenceSid) {
+        try {
+          await tw.client
+            .conferences(heldCall.conferenceSid)
+            .participants(heldCall.sid)
+            .fetch();
+
+          const webhookUrl = `${process.env.SERVER_DOMAIN}/twilio/voice/bridge`;
+          await tw.bridgeCallToClient(heldCall.sid, input.identity, webhookUrl);
+          activeCallStore.updateStatus(heldCall.sid, 'bridged', input.identity);
+          console.log(
+            `🔗 Reconnected agent ${input.identity} to held call ${heldCall.sid}`
+          );
+        } catch (err: any) {
+          if (err.status === 404) {
+            console.warn(
+              `❌ Cannot bridge: Call ${heldCall.sid} is no longer in conference`
+            );
+          } else {
+            throw err;
+          }
+        }
       }
 
       return { ok: true };

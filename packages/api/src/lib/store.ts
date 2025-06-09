@@ -7,6 +7,7 @@ interface ActiveCall {
   status: CallStatus;
   agent?: string;
   startedAt: Date;
+  conferenceSid?: string;
 }
 
 export class ActiveCallStore {
@@ -48,6 +49,13 @@ export class ActiveCallStore {
     return Array.from(this.calls.values()).filter(
       (c) => c.agent === agentId && c.status !== 'completed'
     );
+  }
+
+  updateConferenceSid(callSid: string, conferenceSid: string) {
+    const call = this.calls.get(callSid);
+    if (call) {
+      call.conferenceSid = conferenceSid;
+    }
   }
 }
 

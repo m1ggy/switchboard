@@ -1,3 +1,4 @@
+import { NotificationProvider } from '@/hooks/browser-notification-provider';
 import { SocketProvider } from '@/hooks/socket-provider';
 import { TwilioVoiceProvider } from '@/hooks/twilio-provider';
 import { getSocket } from '@/lib/socket';
@@ -47,26 +48,28 @@ function Layout() {
     }
   }, [rootSocket]);
   return (
-    <SocketProvider socket={socket}>
-      <TwilioVoiceProvider
-        token={token ?? ''}
-        refetchToken={refetchToken as unknown as () => Promise<void>}
-      >
-        <SidebarProvider className="transition-all">
-          <BaseSidebar />
-          <main className="w-full">
-            <Header isLoggedIn />
-            <Outlet />
-          </main>
-          <SendMessageDialog />
-          <CreateContactDialog />
-          <DialerDialog />
-          <IncomingCallDialog />
-          <ActiveCallDialog />
-          <CompanySwitcherDialog />
-        </SidebarProvider>
-      </TwilioVoiceProvider>
-    </SocketProvider>
+    <NotificationProvider>
+      <SocketProvider socket={socket}>
+        <TwilioVoiceProvider
+          token={token ?? ''}
+          refetchToken={refetchToken as unknown as () => Promise<void>}
+        >
+          <SidebarProvider className="transition-all">
+            <BaseSidebar />
+            <main className="w-full">
+              <Header isLoggedIn />
+              <Outlet />
+            </main>
+            <SendMessageDialog />
+            <CreateContactDialog />
+            <DialerDialog />
+            <IncomingCallDialog />
+            <ActiveCallDialog />
+            <CompanySwitcherDialog />
+          </SidebarProvider>
+        </TwilioVoiceProvider>
+      </SocketProvider>
+    </NotificationProvider>
   );
 }
 
