@@ -42,7 +42,7 @@ export const MessagesRepository = {
         meta || null,
         status || null,
         direction,
-        createdAt || new Date(),
+        createdAt?.toUTCString() || new Date()?.toUTCString(),
       ]
     );
 
