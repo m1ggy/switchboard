@@ -32,7 +32,7 @@ export const CallsRepository = {
         id,
         number_id,
         contact_id,
-        initiated_at || new Date(),
+        initiated_at?.toISOString() || new Date().toISOString(),
         duration || null,
         meta || null,
         call_sid,
