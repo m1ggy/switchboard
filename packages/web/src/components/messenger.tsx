@@ -110,6 +110,8 @@ function Messenger({ contactId }: MessengerProps) {
       body: data.message,
       createdAt: new Date().toISOString(),
       direction: 'outbound',
+      type: 'message',
+      message: data.message,
     };
 
     setItems((prev) => [...prev, tempMessage]);

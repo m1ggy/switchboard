@@ -14,7 +14,8 @@ type ChatBubbleProps = {
   };
 };
 function ChatBubble({ item }: ChatBubbleProps) {
-  const isOutbound = item?.meta?.Direction === 'OUTGOING';
+  const isOutbound =
+    item?.meta?.Direction === 'OUTGOING' || item.direction === 'outbound';
   const alignClass = isOutbound ? 'items-end' : 'items-start';
   const bubbleClass = isOutbound
     ? 'bg-blue-500 text-white'

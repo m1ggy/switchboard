@@ -14,7 +14,7 @@ exports.up = (pgm) => {
     id: 'uuid PRIMARY KEY',
     name: { type: 'varchar', notNull: true },
     created_at: {
-      type: 'timestamp',
+      type: 'timestamptz',
       notNull: true,
       default: pgm.func('NOW()'),
     },
@@ -23,7 +23,11 @@ exports.up = (pgm) => {
   pgm.createTable('users', {
     id: 'uuid PRIMARY KEY',
     user_id: { type: 'text', notNull: true },
-    added_at: { type: 'timestamp', notNull: true, default: pgm.func('NOW()') },
+    added_at: {
+      type: 'timestamptz',
+      notNull: true,
+      default: pgm.func('NOW()'),
+    },
     is_active: { type: 'bool', notNull: true, default: true },
   });
 
@@ -39,7 +43,7 @@ exports.up = (pgm) => {
     id: 'uuid PRIMARY KEY',
     company_id: { type: 'uuid', notNull: true, references: 'companies(id)' },
     number: { type: 'text', notNull: true },
-    created_at: { type: 'timestamp', notNull: true },
+    created_at: { type: 'timestamptz', notNull: true },
     label: { type: 'text' },
   });
 
@@ -49,7 +53,7 @@ exports.up = (pgm) => {
   pgm.createTable('contacts', {
     id: 'uuid PRIMARY KEY',
     number: { type: 'text', notNull: true },
-    created_at: { type: 'timestamp' },
+    created_at: { type: 'timestamptz' },
     company_id: { type: 'uuid', notNull: true, references: 'companies(id)' },
     label: { type: 'text', notNull: true },
   });
@@ -64,7 +68,7 @@ exports.up = (pgm) => {
     contact_id: { type: 'uuid', notNull: true, references: 'contacts(id)' },
     last_message_id: { type: 'uuid' },
     last_call_id: { type: 'uuid' },
-    last_viewed_at: { type: 'timestamp' },
+    last_viewed_at: { type: 'timestamptz' },
   });
 
   pgm.addConstraint('inboxes', 'unique_number_contact', {
@@ -78,7 +82,7 @@ exports.up = (pgm) => {
     id: 'uuid PRIMARY KEY',
     number_id: { type: 'uuid', notNull: true, references: 'numbers(id)' },
     message: { type: 'text' },
-    created_at: { type: 'timestamp' },
+    created_at: { type: 'timestamptz' },
     contact_id: { type: 'uuid', notNull: true, references: 'contacts(id)' },
     inbox_id: { type: 'uuid', notNull: true, references: 'inboxes(id)' },
     meta: { type: 'json' },
@@ -97,7 +101,7 @@ exports.up = (pgm) => {
     id: 'uuid PRIMARY KEY',
     number_id: { type: 'uuid', notNull: true, references: 'numbers(id)' },
     contact_id: { type: 'uuid', notNull: true, references: 'contacts(id)' },
-    initiated_at: { type: 'timestamp' },
+    initiated_at: { type: 'timestamptz' },
     duration: { type: 'integer' },
     meta: { type: 'json' },
     from: { type: 'string', notNull: true },
@@ -111,11 +115,11 @@ exports.up = (pgm) => {
   pgm.createTable('notifications', {
     id: 'uuid PRIMARY KEY',
     message: { type: 'text', notNull: true },
-    created_at: { type: 'timestamp', default: pgm.func('current_timestamp') },
+    created_at: { type: 'timestamptz', default: pgm.func('current_timestamp') },
     meta: { type: 'jsonb', default: pgm.func(`'{}'::jsonb`) },
     viewed: { type: 'boolean', default: false },
     user_id: { type: 'text', default: null },
-    viewed_at: { type: 'timestamp', default: null },
+    viewed_at: { type: 'timestamptz', default: null },
     type: { type: 'notification_types', default: 'user' },
     company_id: { type: 'uuid', default: null },
   });
@@ -130,20 +134,17 @@ exports.up = (pgm) => {
       primaryKey: true,
       default: pgm.func('gen_random_uuid()'),
     },
-
     user_id: { type: 'text', notNull: true, unique: true },
     conversation_reference: { type: 'jsonb', notNull: true },
-
     name: { type: 'text' },
     team_id: { type: 'text' },
-
     created_at: {
-      type: 'timestamp',
+      type: 'timestamptz',
       notNull: true,
       default: pgm.func('now()'),
     },
     updated_at: {
-      type: 'timestamp',
+      type: 'timestamptz',
       notNull: true,
       default: pgm.func('now()'),
     },
