@@ -136,4 +136,15 @@ export const NotificationsRepository = {
     );
     return res.rows;
   },
+  /**
+   * Mark all notifications as viewed for a user
+   */
+  async markAllAsViewedByUser(userId: string, viewedAt: Date): Promise<void> {
+    await pool.query(
+      `UPDATE notifications
+     SET viewed = true, viewed_at = $2
+     WHERE user_id = $1 AND viewed = false`,
+      [userId, viewedAt]
+    );
+  },
 };

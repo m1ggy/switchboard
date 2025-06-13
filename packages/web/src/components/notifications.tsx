@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { formatDistance } from 'date-fns';
 import { Circle } from 'lucide-react';
-import { type PropsWithChildren } from 'react';
+import { useEffect, useState, type PropsWithChildren } from 'react';
 import {
   Sheet,
   SheetContent,
@@ -14,6 +14,7 @@ import {
 } from './ui/sheet';
 
 function Notifications({ children }: PropsWithChildren) {
+  const [open, setOpen] = useState(false);
   const trpc = useTRPC();
 
   const { data, refetch } = useQuery(
@@ -33,8 +34,21 @@ function Notifications({ children }: PropsWithChildren) {
   const { mutateAsync: readNotifications } = useMutation(
     trpc.notifications.readNotifications.mutationOptions()
   );
+
+  const { mutateAsync: readAllNotifications } = useMutation(
+    trpc.notifications.markAllAsRead.mutationOptions()
+  );
+
+  useEffect(() => {
+    if (open) {
+      readAllNotifications().then(() => {
+        refetchCount();
+      });
+    }
+  }, [open]);
+
   return (
-    <Sheet>
+    <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild>{children}</SheetTrigger>
       <SheetContent>
         <SheetHeader>

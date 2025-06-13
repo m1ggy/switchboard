@@ -37,4 +37,11 @@ export const notificationsRouter = t.router({
   getUnreadNotificationsCount: protectedProcedure.query(async ({ ctx }) => {
     return await NotificationsRepository.getUnreadCountByUser(ctx.user.uid);
   }),
+
+  markAllAsRead: protectedProcedure.mutation(async ({ ctx }) => {
+    return NotificationsRepository.markAllAsViewedByUser(
+      ctx.user.uid,
+      new Date()
+    );
+  }),
 });
