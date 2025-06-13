@@ -1,3 +1,4 @@
+import { UserCompaniesRepository } from '@/db/repositories/companies';
 import { ContactsRepository } from '@/db/repositories/contacts';
 import { InboxesRepository } from '@/db/repositories/inboxes';
 import { MessagesRepository } from '@/db/repositories/messages';
@@ -112,7 +113,57 @@ async function routes(app: FastifyInstance) {
         companyId: numberRecord.company_id,
       });
 
-      await sendCallAlertToSlack({ from: callerId, to: To });
+      let slackMessageToFormatted = To;
+      let slackMessageFromFormatted = From;
+
+      console.log('[Slack Alert] Incoming call:', { From, To, agentIdentity });
+
+      const number = await NumbersRepository.findByNumber(agentIdentity);
+      if (!number) {
+        console.warn(
+          '[Slack Alert] No number found for agentIdentity:',
+          agentIdentity
+        );
+      } else {
+        console.log('[Slack Alert] Found number:', number);
+
+        const company = await UserCompaniesRepository.findCompanyById(
+          number.company_id
+        );
+        if (!company) {
+          console.warn(
+            '[Slack Alert] No company found for number.company_id:',
+            number.company_id
+          );
+        } else {
+          console.log('[Slack Alert] Found company:', company.name);
+          slackMessageToFormatted = `${To} (${company.name})`;
+
+          const contact = await ContactsRepository.findByNumber(
+            From,
+            company.id
+          );
+          if (!contact) {
+            console.log('[Slack Alert] No contact found for:', From);
+          } else {
+            console.log('[Slack Alert] Found contact:', contact);
+
+            if (contact.label !== From) {
+              slackMessageFromFormatted = `${From} (${contact.label})`;
+            }
+          }
+        }
+      }
+
+      console.log('[Slack Alert] Final Slack message formatting:', {
+        from: slackMessageFromFormatted,
+        to: slackMessageToFormatted,
+      });
+
+      await sendCallAlertToSlack({
+        from: slackMessageFromFormatted,
+        to: slackMessageToFormatted,
+      });
 
       response.say('All agents are currently busy. Please hold.');
       response.dial().conference(
