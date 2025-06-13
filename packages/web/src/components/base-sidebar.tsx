@@ -133,8 +133,6 @@ function BaseSidebar() {
     ? inboxUnreadCount.reduce((prev, curr) => prev + curr.unreadCount, 0)
     : null;
 
-  console.log({ unreadCount, smsItems });
-
   return (
     <Sidebar>
       <SidebarContent className="overflow-x-hidden p-2">

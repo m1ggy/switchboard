@@ -10,7 +10,6 @@ interface InboxItemProps {
 }
 
 export function InboxItem({ inbox, isSelected, onSelect }: InboxItemProps) {
-  console.log({ inbox });
   const lastMessageDate = inbox.lastMessage
     ? new Date(inbox.lastMessage.created_at as string)
     : null;

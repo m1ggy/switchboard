@@ -43,7 +43,6 @@ function Inbox() {
     })
   );
 
-  console.log({ inboxes });
   return (
     <div className="h-[91vh] flex">
       <Sidebar collapsible="none" className="h-full w-80">

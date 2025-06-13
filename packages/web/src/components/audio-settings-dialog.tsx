@@ -46,26 +46,17 @@ function AudioSettingsHoverCard() {
           clientRef.current?.device?.audio?.inputDevice?.deviceId
       );
 
-      console.log({ clientRef, matchingDevice });
-
       if (matchingDevice) setActiveInputDevice(matchingDevice);
 
-      const matchingOutputDevice = devices.find(
+      devices.find(
         (device) =>
           device.deviceId ===
           clientRef.current?.device?.audio?.audioConstraints?.deviceId
       );
-
-      console.log({ matchingOutputDevice });
     }
   }, [clientRef.current, devices]);
 
-  useEffect(() => {
-    console.log({ device: clientRef.current?.device });
-  }, [clientRef.current?.device]);
-
   const setDevice = (device: string, type: 'input' | 'output') => {
-    console.log({ device, clientRef });
     if (clientRef.current) {
       clientRef.current.device?.audio?.setInputDevice(device);
 

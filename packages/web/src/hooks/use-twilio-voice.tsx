@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from 'react';
 export const useTwilioVoice = (token: string) => {
   const clientRef = useRef<TwilioVoiceClient | null>(null);
   const [ready, setReady] = useState(false); // trigger re-renders when needed
-  console.log({ token });
 
   useEffect(() => {
     if (!token) return;
