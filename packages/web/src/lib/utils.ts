@@ -37,7 +37,7 @@ export function formatDurationWithDateFns(seconds: number) {
 
   const hrStr = hours ? `${hours}h ` : '';
   const minStr = minutes ? `${minutes}m ` : '';
-  const secStr = `${secs}s`;
+  const secStr = secs ? `${secs}s` : '0s';
 
   return `${hrStr}${minStr}${secStr}`.trim();
 }

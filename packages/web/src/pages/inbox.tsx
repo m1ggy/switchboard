@@ -21,6 +21,7 @@ function Inbox() {
   const [selectedInboxContactId, setSelectedInboxContactId] = useState<
     string | null
   >(null);
+  const [selectedInboxId, setSelectedInboxId] = useState<string | null>(null);
 
   const { mutateAsync: markInboxViewed } = useMutation(
     trpc.inboxes.markAsViewed.mutationOptions()
@@ -57,6 +58,7 @@ function Inbox() {
                   isSelected={selectedInboxContactId === inbox.contactId}
                   onSelect={async () => {
                     setSelectedInboxContactId(inbox.contactId);
+                    setSelectedInboxId(inbox.id);
                     await markInboxViewed({ inboxId: inbox.id });
                     await refetchInboxes();
                     await refetchUnreadCount();
@@ -84,6 +86,7 @@ function Inbox() {
       <Messenger
         contactId={selectedInboxContactId}
         key={selectedInboxContactId}
+        inboxId={selectedInboxId}
       />
     </div>
   );

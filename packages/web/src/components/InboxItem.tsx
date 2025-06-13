@@ -1,5 +1,3 @@
-import useMainStore from '@/lib/store';
-import { useTRPC } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
 import type { InboxWithDetails } from 'api/types/db';
 import { formatDistance } from 'date-fns';
@@ -12,8 +10,6 @@ interface InboxItemProps {
 }
 
 export function InboxItem({ inbox, isSelected, onSelect }: InboxItemProps) {
-  const trpc = useTRPC();
-  const { activeNumber } = useMainStore();
   console.log({ inbox });
   const lastMessageDate = inbox.lastMessage
     ? new Date(inbox.lastMessage.created_at as string)

@@ -6,6 +6,7 @@ import { logsRouter } from './logs';
 import { notificationsRouter } from './notifications';
 import { numbersRouter } from './numbers';
 import { pingRouter } from './ping';
+import { statisticsRouter } from './statistics';
 import { twilioRouter } from './twilio';
 
 export const appRouter = t.router({
@@ -18,6 +19,7 @@ export const appRouter = t.router({
   logs: logsRouter,
   notifications: notificationsRouter,
   inboxes: inboxesRouter,
+  statistics: statisticsRouter,
 });
 
 export type AppRouter = typeof appRouter;

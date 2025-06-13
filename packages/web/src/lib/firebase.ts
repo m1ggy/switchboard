@@ -7,7 +7,6 @@ import { getAuth } from 'firebase/auth';
 
 // Your web app's Firebase configuration
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
-console.log({ env: import.meta.env });
 const firebaseConfig = import.meta.env.VITE_FIREBASE_CONFIG
   ? JSON.parse(import.meta.env.VITE_FIREBASE_CONFIG)
   : {

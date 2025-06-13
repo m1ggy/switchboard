@@ -151,6 +151,24 @@ exports.up = (pgm) => {
   });
 
   pgm.createIndex('bot_subscribers', 'user_id');
+
+  pgm.createTable('call_conference_logs', {
+    contact_id: { type: 'uuid' },
+    id: {
+      type: 'uuid',
+      primaryKey: true,
+      default: pgm.func('gen_random_uuid()'),
+    },
+    conference_sid: { type: 'text', notNull: true },
+    call_sid: { type: 'text', notNull: true },
+    meta: { type: 'jsonb', default: pgm.func(`'{}'::jsonb`) },
+    number_id: { type: 'uuid', notNull: true },
+  });
+
+  pgm.createIndex('call_conference_logs', 'contact_id');
+  pgm.createIndex('call_conference_logs', 'conference_sid');
+  pgm.createIndex('call_conference_logs', 'call_sid');
+  pgm.createIndex('call_conference_logs', 'number_id');
 };
 
 exports.down = (pgm) => {

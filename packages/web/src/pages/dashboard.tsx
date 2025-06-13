@@ -1,7 +1,6 @@
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Progress } from '@/components/ui/progress';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -10,6 +9,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { useTRPC } from '@/lib/trpc';
+import { formatDurationWithDateFns } from '@/lib/utils';
+import { useQuery } from '@tanstack/react-query';
 
 import {
   CartesianGrid,
@@ -22,49 +24,37 @@ import {
 } from 'recharts';
 
 function Dashboard() {
-  const companies = [
-    {
-      id: 1,
-      name: 'Acme Co.',
-      phone: '(555) 123-0001',
-      calls: 12,
-      sms: 28,
-      active: true,
-    },
-    {
-      id: 2,
-      name: 'Bravo Inc.',
-      phone: '(555) 888-9988',
-      calls: 3,
-      sms: 6,
-      active: false,
-    },
-  ];
+  const trpc = useTRPC();
 
-  const usage = {
-    minutes: 812,
-    minutesLimit: 1000,
-    sms: 1220,
-    smsLimit: 1500,
-  };
+  const { data: weeklyCallCount, isLoading: weeklyCallCountLoading } = useQuery(
+    trpc.statistics.getWeeklyCount.queryOptions()
+  );
 
-  const alerts = [
-    {
-      id: 1,
-      title: 'Slack Integration Error',
-      message: 'Slack webhook for \u201cAcme Co.\u201d failed to deliver.',
-    },
-  ];
+  const { data: weeklyCallDuration, isLoading: weeklyCallDurationLoading } =
+    useQuery(trpc.statistics.getWeeklyCallDuration.queryOptions());
 
-  const chartData = [
-    { date: 'Mon', calls: 30, sms: 100 },
-    { date: 'Tue', calls: 25, sms: 80 },
-    { date: 'Wed', calls: 40, sms: 90 },
-    { date: 'Thu', calls: 35, sms: 110 },
-    { date: 'Fri', calls: 20, sms: 70 },
-    { date: 'Sat', calls: 10, sms: 40 },
-    { date: 'Sun', calls: 15, sms: 50 },
-  ];
+  const { data: longestCallThisWeek, isLoading: longestCallThisWeekLoading } =
+    useQuery(trpc.statistics.getLongestCallThisWeek.queryOptions());
+
+  const {
+    data: avgCallDurationThisWeek,
+    isLoading: avgCallDurationThisWeekLoading,
+  } = useQuery(trpc.statistics.getAvgCallDurationThisWeek.queryOptions());
+
+  const {
+    data: topContactByCallCount,
+    isLoading: topContactByCallCountLoading,
+  } = useQuery(trpc.statistics.getTopContactsByCallCount.queryOptions());
+
+  const { data: chartData, isLoading: chartLoading } = useQuery(
+    trpc.statistics.getWeeklyChartData.queryOptions()
+  );
+
+  const { data: companies, isLoading: companiesLoading } = useQuery(
+    trpc.statistics.getCompanyTableSummary.queryOptions()
+  );
+
+  console.log({ weeklyCallCount });
 
   return (
     <div className="p-6 space-y-6">
@@ -77,128 +67,142 @@ function Dashboard() {
 
       {/* Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Today's Calls</CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-bold">36</CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>SMS Sent</CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-bold">122</CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Active Companies</CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-bold">2</CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Minutes Used</CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-bold">812</CardContent>
-        </Card>
+        {weeklyCallCountLoading ? (
+          <Skeleton />
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle>Week's Call Count</CardTitle>
+            </CardHeader>
+            <CardContent className="text-2xl font-bold">
+              {weeklyCallCount}
+            </CardContent>
+          </Card>
+        )}
+        {weeklyCallDurationLoading ? (
+          <Skeleton />
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle>Week's Call Duration</CardTitle>
+            </CardHeader>
+            <CardContent className="text-2xl font-bold">
+              {formatDurationWithDateFns(weeklyCallDuration as number)}
+            </CardContent>
+          </Card>
+        )}
+        {avgCallDurationThisWeekLoading ? (
+          <Skeleton />
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle>Average call duration this week</CardTitle>
+            </CardHeader>
+            <CardContent className="text-2xl font-bold">
+              {formatDurationWithDateFns(avgCallDurationThisWeek as number)}
+            </CardContent>
+          </Card>
+        )}
+        {longestCallThisWeekLoading ? (
+          <Skeleton />
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle>Longest call this week</CardTitle>
+            </CardHeader>
+            <CardContent className="text-2xl font-bold">
+              {formatDurationWithDateFns(longestCallThisWeek as number)}
+            </CardContent>
+          </Card>
+        )}
+        {topContactByCallCountLoading ? (
+          <Skeleton />
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle>Contact with most calls</CardTitle>
+            </CardHeader>
+            <CardContent className="text-2xl font-bold">
+              {topContactByCallCount?.[0].label} (
+              {topContactByCallCount?.[0].call_count})
+            </CardContent>
+          </Card>
+        )}
       </div>
 
-      {/* Alerts */}
-      {alerts.map((alert) => (
-        <Alert key={alert.id} variant="destructive">
-          <AlertTitle>{alert.title}</AlertTitle>
-          <AlertDescription>{alert.message}</AlertDescription>
-        </Alert>
-      ))}
-
-      {/* Usage Tracking */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Usage This Month</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <div className="flex justify-between text-sm mb-1">
-              <span>Voice Minutes</span>
-              <span>
-                {usage.minutes} / {usage.minutesLimit}
-              </span>
-            </div>
-            <Progress value={(usage.minutes / usage.minutesLimit) * 100} />
-          </div>
-          <div>
-            <div className="flex justify-between text-sm mb-1">
-              <span>SMS Sent</span>
-              <span>
-                {usage.sms} / {usage.smsLimit}
-              </span>
-            </div>
-            <Progress value={(usage.sms / usage.smsLimit) * 100} />
-          </div>
-        </CardContent>
-      </Card>
-
       {/* Chart Section */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Weekly Call & SMS Trends</CardTitle>
-        </CardHeader>
-        <CardContent className="h-[300px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart
-              data={chartData}
-              margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" />
-              <YAxis />
-              <Tooltip />
-              <Line
-                type="monotone"
-                dataKey="calls"
-                stroke="#3b82f6"
-                name="Calls"
-              />
-              <Line type="monotone" dataKey="sms" stroke="#10b981" name="SMS" />
-            </LineChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
+      {chartLoading ? (
+        <Skeleton className="h-[300px]" />
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle>Weekly Call & SMS Trends</CardTitle>
+          </CardHeader>
+          <CardContent className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart
+                data={chartData}
+                margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" />
+                <YAxis />
+                <Tooltip />
+                <Line
+                  type="monotone"
+                  dataKey="calls"
+                  stroke="#3b82f6"
+                  name="Calls"
+                />
+                <Line
+                  type="monotone"
+                  dataKey="sms"
+                  stroke="#10b981"
+                  name="SMS"
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Company Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Companies</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Company</TableHead>
-                <TableHead>Number</TableHead>
-                <TableHead>Calls Today</TableHead>
-                <TableHead>SMS</TableHead>
-                <TableHead>Status</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {companies.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell>{c.name}</TableCell>
-                  <TableCell>{c.phone}</TableCell>
-                  <TableCell>{c.calls}</TableCell>
-                  <TableCell>{c.sms}</TableCell>
-                  <TableCell>
-                    <Badge variant={c.active ? 'default' : 'destructive'}>
-                      {c.active ? 'Active' : 'Paused'}
-                    </Badge>
-                  </TableCell>
+      {companiesLoading ? (
+        <Skeleton className="h-[200px]" />
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle>Companies</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Company</TableHead>
+                  <TableHead>Number</TableHead>
+                  <TableHead>Calls Today</TableHead>
+                  <TableHead>SMS</TableHead>
+                  <TableHead>Status</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+              </TableHeader>
+              <TableBody>
+                {companies?.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell>{c.name}</TableCell>
+                    <TableCell>{c.phone}</TableCell>
+                    <TableCell>{c.calls}</TableCell>
+                    <TableCell>{c.sms}</TableCell>
+                    <TableCell>
+                      <Badge variant={c.active ? 'default' : 'destructive'}>
+                        {c.active ? 'Active' : 'Paused'}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

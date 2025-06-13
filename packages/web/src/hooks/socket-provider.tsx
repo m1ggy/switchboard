@@ -42,7 +42,7 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
   const { refetch: refetchNotifications } = useQuery(
     trpc.notifications.getNotifications.queryOptions()
   );
-  const { refetch: refetchCount, data: notifCount } = useQuery(
+  const { refetch: refetchCount } = useQuery(
     trpc.notifications.getUnreadNotificationsCount.queryOptions()
   );
   const { refetch: refetchInboxes } = useQuery(
@@ -112,6 +112,9 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
       await refetchCount();
       await refetchInboxes();
       await refetchInboxesUnreadCount();
+
+      // scroll to bottom
+      window.dispatchEvent(new Event('new-message-scroll'));
     };
 
     socket.on(channel, handler);

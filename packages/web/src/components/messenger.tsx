@@ -15,9 +15,10 @@ import { Input } from './ui/input';
 
 interface MessengerProps {
   contactId?: string | null;
+  inboxId?: string | null;
 }
 
-function Messenger({ contactId }: MessengerProps) {
+function Messenger({ contactId, inboxId }: MessengerProps) {
   const trpc = useTRPC();
   const { activeNumber } = useMainStore();
 
@@ -31,6 +32,10 @@ function Messenger({ contactId }: MessengerProps) {
   const [initialScrollDone, setInitialScrollDone] = useState(false);
   const [items, setItems] = useState<any[]>([]);
 
+  const { mutateAsync: markInboxViewed } = useMutation(
+    trpc.inboxes.markAsViewed.mutationOptions()
+  );
+
   const { mutateAsync: sendMessage, isPending } = useMutation(
     trpc.twilio.sendSMS.mutationOptions()
   );
@@ -40,6 +45,18 @@ function Messenger({ contactId }: MessengerProps) {
       { contactId: contactId as string },
       { enabled: !!contactId }
     )
+  );
+
+  const { refetch: refetchUnreadCount } = useQuery(
+    trpc.inboxes.getUnreadInboxesCount.queryOptions({
+      numberId: activeNumber?.id as string,
+    })
+  );
+
+  const { refetch: refetchInboxes } = useQuery(
+    trpc.inboxes.getNumberInboxes.queryOptions({
+      numberId: activeNumber?.id as string,
+    })
   );
 
   useEffect(() => {
@@ -81,6 +98,26 @@ function Messenger({ contactId }: MessengerProps) {
       .reverse();
     setItems(ordered);
   }, [data]);
+
+  useEffect(() => {
+    const scrollToBottom = () => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+        });
+      });
+
+      if (inboxId) {
+        markInboxViewed({ inboxId });
+        refetchInboxes();
+        refetchUnreadCount();
+      }
+    };
+
+    window.addEventListener('new-message-scroll', scrollToBottom);
+    return () =>
+      window.removeEventListener('new-message-scroll', scrollToBottom);
+  }, [inboxId]);
 
   useEffect(() => {
     if (
