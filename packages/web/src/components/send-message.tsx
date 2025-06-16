@@ -1,9 +1,15 @@
 import useMainStore from '@/lib/store';
+import { useTRPC } from '@/lib/trpc';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
+import parsePhoneNumberFromString from 'libphonenumber-js';
 import { useState } from 'react';
 import { useForm, type SubmitHandler } from 'react-hook-form';
+import { toast } from 'sonner';
 import { z } from 'zod';
+
+import { X } from 'lucide-react';
 import { Button } from './ui/button';
 import {
   Command,
@@ -33,19 +39,35 @@ import { Textarea } from './ui/textarea';
 
 const schema = z.object({
   recipient: z.string().min(1, 'Phone number is required'),
-  message: z.string().min(1, 'Required'),
+  message: z.string().min(1, 'Message is required'),
 });
 
 type Schema = z.infer<typeof schema>;
 
-const contacts = [
-  { name: 'Alice Johnson', phone: '+14155550101' },
-  { name: 'Bob Smith', phone: '+14155550102' },
-  { name: 'Charlie Wu', phone: '+14155550103' },
-];
-
 function SendMessageDialog() {
   const [mode, setMode] = useState<'phone' | 'contact'>('phone');
+  const trpc = useTRPC();
+  const { activeCompany, activeNumber, setSendMessageModalShown } =
+    useMainStore();
+
+  const { data: contacts } = useQuery(
+    trpc.contacts.getCompanyContacts.queryOptions({
+      companyId: activeCompany?.id as string,
+    })
+  );
+
+  const { mutateAsync: sendMessage, isPending: sendingMessage } = useMutation(
+    trpc.twilio.sendSMS.mutationOptions()
+  );
+
+  const { mutateAsync: createContact } = useMutation(
+    trpc.contacts.createContact.mutationOptions()
+  );
+
+  const [selectedContactId, setSelectedContactId] = useState<string | null>(
+    null
+  );
+  const selectedContact = contacts?.find((c) => c.id === selectedContactId);
 
   const shown = useMainStore((state) => state.sendMessageModalShown);
   const setShown = useMainStore((state) => state.setSendMessageModalShown);
@@ -58,12 +80,51 @@ function SendMessageDialog() {
     },
   });
 
-  const onSendMessage: SubmitHandler<Schema> = (data) => {
-    console.log({ data });
+  const onSendMessage: SubmitHandler<Schema> = async (data) => {
+    try {
+      let rawNumber = data.recipient;
+
+      if (selectedContactId) {
+        const selected = contacts?.find((c) => c.id === selectedContactId);
+        rawNumber = selected?.number || '';
+      }
+
+      const cleaned = rawNumber.replace(/[^\d+]/g, '');
+      const assumed = cleaned.startsWith('+') ? cleaned : `+1${cleaned}`;
+      const parsed = parsePhoneNumberFromString(assumed);
+
+      if (!parsed || !parsed.isValid()) {
+        alert('Invalid phone number');
+        return;
+      }
+
+      let contact = contacts?.find(
+        (contact) => contact.number === parsed.number
+      );
+
+      if (!contact) {
+        contact = await createContact({
+          number: parsed.number,
+          companyId: activeCompany?.id as string,
+          label: parsed.number,
+        });
+      }
+
+      await sendMessage({
+        numberId: activeNumber?.id as string,
+        contactId: contact.id,
+        body: data.message,
+      });
+
+      toast.success('Message sent');
+      setSendMessageModalShown(false);
+    } catch (error) {
+      toast.error('Failed to send message');
+    }
   };
 
   return (
-    <Dialog open={shown} onOpenChange={(open) => setShown(open)}>
+    <Dialog open={shown} onOpenChange={setShown}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Send new message</DialogTitle>
@@ -74,7 +135,10 @@ function SendMessageDialog() {
           <Button
             type="button"
             variant={mode === 'phone' ? 'default' : 'outline'}
-            onClick={() => setMode('phone')}
+            onClick={() => {
+              setMode('phone');
+              setSelectedContactId(null);
+            }}
           >
             Phone Number
           </Button>
@@ -87,11 +151,31 @@ function SendMessageDialog() {
           </Button>
         </div>
 
+        {selectedContactId && selectedContact && (
+          <div className="flex items-center justify-between text-sm text-green-600 font-medium px-1 mb-2">
+            <span>
+              {selectedContact.label} — {selectedContact.number}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setSelectedContactId(null);
+                form.setValue('recipient', '');
+              }}
+              className="text-red-500 hover:text-red-700"
+            >
+              <X className="w-4 h-4 mr-1" />
+              Clear
+            </Button>
+          </div>
+        )}
+
         <Form {...form}>
           <form
             onSubmit={form.handleSubmit(onSendMessage)}
             id="send-message"
-            className="space-y-8"
+            className="space-y-6"
           >
             <FormField
               control={form.control}
@@ -102,31 +186,36 @@ function SendMessageDialog() {
                   <FormControl>
                     {mode === 'phone' ? (
                       <PhoneInput
-                        onChange={field.onChange}
+                        onChange={(value) => {
+                          field.onChange(value);
+                          setSelectedContactId(null);
+                        }}
                         value={field.value}
+                        placeholder="Enter phone number"
                       />
                     ) : (
                       <Command className="border rounded-md shadow-sm">
                         <CommandInput placeholder="Search contacts..." />
                         <CommandList>
                           <CommandEmpty>No contacts found.</CommandEmpty>
-                          {contacts.map((contact) => (
+                          {contacts?.map((contact) => (
                             <CommandItem
-                              key={contact.phone}
-                              value={contact.phone}
+                              key={contact.number}
+                              value={contact.number}
                               onSelect={() => {
-                                field.onChange(contact.phone);
+                                field.onChange(contact.number);
+                                setSelectedContactId(contact.id);
                               }}
                               className={clsx(
                                 'cursor-pointer',
-                                field.value == contact.phone &&
-                                  ' bg-accent text-accent-foreground'
+                                selectedContactId === contact.id &&
+                                  'bg-accent text-accent-foreground'
                               )}
                             >
                               <div>
-                                <p className="font-medium">{contact.name}</p>
+                                <p className="font-medium">{contact.label}</p>
                                 <p className="text-muted-foreground text-sm">
-                                  {contact.phone}
+                                  {contact.number}
                                 </p>
                               </div>
                             </CommandItem>
@@ -147,7 +236,7 @@ function SendMessageDialog() {
                 <FormItem>
                   <FormLabel>Message</FormLabel>
                   <FormControl>
-                    <Textarea {...field} rows={5} className=" resize-none" />
+                    <Textarea {...field} rows={5} className="resize-none" />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -155,9 +244,14 @@ function SendMessageDialog() {
             />
           </form>
         </Form>
+
         <DialogFooter>
-          <Button form="send-message" disabled={!form.formState.isValid}>
-            Send
+          <Button
+            form="send-message"
+            type="submit"
+            disabled={!form.formState.isValid || sendingMessage}
+          >
+            {sendingMessage ? 'Sending' : 'Send'}
           </Button>
         </DialogFooter>
       </DialogContent>

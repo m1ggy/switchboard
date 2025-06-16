@@ -4,6 +4,7 @@ import {
   History,
   Home,
   Inbox,
+  MessageCirclePlus,
   PhoneIcon,
   Settings,
   UserPlus,
@@ -48,6 +49,12 @@ type SidebarNavItem = {
 };
 
 const smsItems: SidebarNavItem[] = [
+  {
+    title: 'Send Message',
+    onClick: () => useMainStore.getState().setSendMessageModalShown(true),
+    icon: MessageCirclePlus,
+    url: null,
+  },
   {
     title: 'Inbox',
     url: '/dashboard/inbox',
