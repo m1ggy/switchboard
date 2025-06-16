@@ -14,14 +14,43 @@ import { formatDurationWithDateFns } from '@/lib/utils';
 import { useQuery } from '@tanstack/react-query';
 
 import {
+  Area,
+  AreaChart,
   CartesianGrid,
-  Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
+  type TooltipProps,
 } from 'recharts';
+
+function CustomChartTooltip({
+  active,
+  payload,
+  label,
+}: TooltipProps<string, string>) {
+  if (!active || !payload || payload.length === 0) return null;
+
+  return (
+    <div className="rounded-md border bg-background p-3 shadow-md text-sm">
+      <div className="mb-1 font-medium text-muted-foreground">{label}</div>
+      <div className="space-y-1">
+        {payload.map((entry, index) => (
+          <div key={index} className="flex items-center justify-between gap-4">
+            <span className="flex items-center gap-2">
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{ backgroundColor: entry.color }}
+              />
+              {entry.name}
+            </span>
+            <span className="font-medium text-foreground">{entry.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function Dashboard() {
   const trpc = useTRPC();
@@ -64,13 +93,14 @@ function Dashboard() {
       </div>
 
       {/* Stat Cards */}
+      <h2 className="font-bold">This Week</h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {weeklyCallCountLoading ? (
           <Skeleton />
         ) : (
           <Card>
             <CardHeader>
-              <CardTitle>Week's Call Count</CardTitle>
+              <CardTitle>Call count</CardTitle>
             </CardHeader>
             <CardContent className="text-2xl font-bold">
               {weeklyCallCount}
@@ -82,7 +112,7 @@ function Dashboard() {
         ) : (
           <Card>
             <CardHeader>
-              <CardTitle>Week's Call Duration</CardTitle>
+              <CardTitle>Call duration</CardTitle>
             </CardHeader>
             <CardContent className="text-2xl font-bold">
               {formatDurationWithDateFns(weeklyCallDuration as number)}
@@ -138,27 +168,45 @@ function Dashboard() {
           </CardHeader>
           <CardContent className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={chartData}
+              <AreaChart
+                data={chartData ?? []}
                 margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
               >
+                <defs>
+                  <linearGradient
+                    id="callsGradient"
+                    x1="0"
+                    y1="0"
+                    x2="0"
+                    y2="1"
+                  >
+                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8} />
+                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.1} />
+                  </linearGradient>
+                  <linearGradient id="smsGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.8} />
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.1} />
+                  </linearGradient>
+                </defs>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" />
                 <YAxis />
-                <Tooltip />
-                <Line
+                <Tooltip content={<CustomChartTooltip />} />
+                <Area
                   type="monotone"
                   dataKey="calls"
                   stroke="#3b82f6"
+                  fill="url(#callsGradient)"
                   name="Calls"
                 />
-                <Line
+                <Area
                   type="monotone"
                   dataKey="sms"
                   stroke="#10b981"
+                  fill="url(#smsGradient)"
                   name="SMS"
                 />
-              </LineChart>
+              </AreaChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
