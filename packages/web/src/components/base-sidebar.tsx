@@ -4,12 +4,10 @@ import {
   History,
   Home,
   Inbox,
-  MessageCirclePlus,
-  MessageSquareDashed,
-  MessageSquareShare,
   PhoneIcon,
   Settings,
   UserPlus,
+  type LucideProps,
 } from 'lucide-react';
 
 import {
@@ -29,35 +27,31 @@ import {
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
 import { useQuery } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import {
+  useEffect,
+  type ForwardRefExoticComponent,
+  type RefAttributes,
+} from 'react';
 import { Link, useLocation } from 'react-router';
 import { NumberSwitcher } from './number-switcher';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Skeleton } from './ui/skeleton';
-const smsItems = [
-  {
-    title: 'New Message',
-    url: null,
-    icon: MessageCirclePlus,
-    onClick: () => {
-      useMainStore.getState().setSendMessageModalShown(true);
-    },
-  },
+
+type SidebarNavItem = {
+  title: string;
+  url: string | null;
+  icon: ForwardRefExoticComponent<
+    Omit<LucideProps, 'ref'> & RefAttributes<SVGSVGElement>
+  >;
+  onClick?: () => void;
+};
+
+const smsItems: SidebarNavItem[] = [
   {
     title: 'Inbox',
     url: '/dashboard/inbox',
     icon: Inbox,
-  },
-  {
-    title: 'Drafts',
-    url: '/dashboard/drafts',
-    icon: MessageSquareDashed,
-  },
-  {
-    title: 'Sent',
-    url: '/dashboard/sent',
-    icon: MessageSquareShare,
   },
 ];
 
