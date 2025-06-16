@@ -99,5 +99,6 @@ app.listen({ port: 3000 }, () => {
     });
   });
 });
+console.log(app.printRoutes());
 
 export { app };
