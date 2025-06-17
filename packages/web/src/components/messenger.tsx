@@ -31,6 +31,7 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
   const [hasReachedBottomOnce, setHasReachedBottomOnce] = useState(false);
   const [initialScrollDone, setInitialScrollDone] = useState(false);
   const [items, setItems] = useState<any[]>([]);
+  const firstLoadRef = useRef(true);
 
   const { mutateAsync: markInboxViewed } = useMutation(
     trpc.inboxes.markAsViewed.mutationOptions()
@@ -134,6 +135,7 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
           bottomRef.current?.scrollIntoView({ behavior: 'auto' });
           setInitialScrollDone(true);
           setReadyToPaginate(true);
+          setHasReachedBottomOnce(true);
         });
       });
     }
@@ -179,16 +181,21 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
     const el = scrollRef.current;
     if (!el || hasReachedBottomOnce) return;
 
-    const timeout = setTimeout(() => {
+    const checkScroll = () => {
       const isAtBottomInitially =
         el.scrollTop + el.clientHeight >= el.scrollHeight - 10;
+
+      console.log({ isAtBottomInitially, hasReachedBottomOnce });
 
       if (isAtBottomInitially) {
         setHasReachedBottomOnce(true);
       }
-    }, 100);
+    };
 
-    return () => clearTimeout(timeout);
+    // Two frames to ensure layout is fully applied
+    requestAnimationFrame(() => {
+      requestAnimationFrame(checkScroll);
+    });
   }, [contactId, items.length, hasReachedBottomOnce]);
 
   useEffect(() => {
@@ -214,7 +221,8 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
     if (!scrollRef.current || prevHeight === null) return;
     const el = scrollRef.current;
     const diff = el.scrollHeight - prevHeight;
-    el.scrollTop = diff;
+    el.scrollTop = diff + 60;
+
     setPrevHeight(null);
   }, [data]);
 
@@ -222,19 +230,31 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
     const container = scrollRef.current;
     if (!container) return;
 
-    let timeout: NodeJS.Timeout | null = null;
+    let debounce: NodeJS.Timeout | null = null;
+    let delayedInitial: NodeJS.Timeout | null = null;
+
     const handleScroll = () => {
-      if (timeout) clearTimeout(timeout);
-      timeout = setTimeout(() => {
+      if (debounce) clearTimeout(debounce);
+      console.log({
+        readyToPaginate,
+        hasReachedBottomOnce,
+        initialScrollDone,
+        scrollTop: container.scrollTop,
+        scrollHeight: container.scrollHeight,
+        clientHeight: container.clientHeight,
+      });
+      debounce = setTimeout(() => {
         if (
           readyToPaginate &&
           hasReachedBottomOnce &&
           initialScrollDone &&
           container.scrollTop < 50 &&
-          container.scrollHeight > container.clientHeight + 100 &&
+          (container.scrollHeight > container.clientHeight + 100 ||
+            firstLoadRef.current) &&
           hasNextPage &&
           !isFetchingNextPage
         ) {
+          firstLoadRef.current = false;
           setPrevHeight(container.scrollHeight);
           fetchNextPage();
         }
@@ -242,9 +262,15 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
     };
 
     container.addEventListener('scroll', handleScroll);
+
+    delayedInitial = setTimeout(() => {
+      handleScroll();
+    }, 250);
+
     return () => {
       container.removeEventListener('scroll', handleScroll);
-      if (timeout) clearTimeout(timeout);
+      if (debounce) clearTimeout(debounce);
+      if (delayedInitial) clearTimeout(delayedInitial);
     };
   }, [
     fetchNextPage,
