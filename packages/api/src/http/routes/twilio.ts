@@ -97,7 +97,7 @@ async function routes(app: FastifyInstance) {
       await twilioClient.bridgeCallToClient(
         CallSid,
         agentIdentity,
-        `${SERVER_DOMAIN}/twilio/voice/bridge?client=${agentIdentity}`
+        `${SERVER_DOMAIN}/twilio/voice/bridge`
       );
 
       response.say('Connecting you to an agent now.');
