@@ -1,6 +1,7 @@
 import { NotificationProvider } from '@/hooks/browser-notification-provider';
 import { SocketProvider } from '@/hooks/socket-provider';
 import { TwilioVoiceProvider } from '@/hooks/twilio-provider';
+import JitsiMeetJS from '@/lib/jitsi';
 import { getSocket } from '@/lib/socket';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
@@ -47,6 +48,8 @@ function Layout() {
       setSocket(rootSocket);
     }
   }, [rootSocket]);
+
+  console.log({ meet: JitsiMeetJS });
   return (
     <NotificationProvider>
       <SocketProvider socket={socket}>

@@ -58,6 +58,7 @@
     "tailwind-merge": "^3.2.0",
     "tailwindcss": "^4.1.5",
     "zod": "^3.24.4",
-    "zustand": "^5.0.4"
+    "zustand": "^5.0.4",
+    "lib-jitsi-meet": "https://github.com/jitsi/lib-jitsi-meet/releases/download/v2012.0.0+86b76227/lib-jitsi-meet.tgz"
   }
 }
