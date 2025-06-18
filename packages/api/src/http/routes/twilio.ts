@@ -171,7 +171,7 @@ async function routes(app: FastifyInstance) {
           startConferenceOnEnter: false,
           endConferenceOnExit: false,
           statusCallback: `${SERVER_DOMAIN}/twilio/voice/conference-events`,
-          statusCallbackEvent: ['leave'],
+          statusCallbackEvent: ['leave', 'join'],
           statusCallbackMethod: 'POST',
         },
         queueRoom
