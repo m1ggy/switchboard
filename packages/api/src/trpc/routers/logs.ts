@@ -40,7 +40,7 @@ export const logsRouter = t.router({
           duration: input.duration,
         });
       }
-      const callLog = await CallsRepository.create({
+      let callLog = await CallsRepository.create({
         id: crypto.randomUUID() as string,
         number_id: input.numberId,
         contact_id: input.contactId,
@@ -49,6 +49,18 @@ export const logsRouter = t.router({
         meta: input.meta,
         call_sid: input.callSid,
       });
+
+      if (!callLog) {
+        callLog = await CallsRepository.create({
+          id: crypto.randomUUID() as string,
+          number_id: input.numberId,
+          contact_id: input.contactId,
+          initiated_at: input.initiatedAt,
+          duration: input.duration,
+          meta: { ...input.meta, status: 'ENDED' },
+          call_sid: input.callSid,
+        });
+      }
 
       const inbox = await InboxesRepository.findOrCreate({
         numberId: input.numberId,
