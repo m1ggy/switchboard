@@ -228,7 +228,7 @@ async function routes(app: FastifyInstance) {
     console.log('[Webhook] /voice/conference-events received:', req.body);
 
     const {
-      EventType,
+      StatusCallbackEvent,
       CallSid,
       ConferenceSid: UpperCaseSid,
       conferenceSid: LowerCaseSid, // fallback in case it's lowercase
@@ -236,7 +236,7 @@ async function routes(app: FastifyInstance) {
 
     const ConferenceSid = UpperCaseSid || LowerCaseSid;
 
-    if (EventType === 'participant-join') {
+    if (StatusCallbackEvent === 'participant-join') {
       if (!CallSid) {
         console.warn('⚠️ Missing CallSid in participant-join event');
       }
@@ -258,7 +258,7 @@ async function routes(app: FastifyInstance) {
       }
     }
 
-    if (EventType === 'participant-leave') {
+    if (StatusCallbackEvent === 'participant-leave') {
       console.log(`👋 Participant left conference: ${CallSid}`);
 
       const wasRemoved = callQueueManager.removeByPredicate(
