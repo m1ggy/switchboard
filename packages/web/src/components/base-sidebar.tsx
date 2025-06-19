@@ -35,6 +35,7 @@ import {
 } from 'react';
 import { Link, useLocation } from 'react-router';
 import { NumberSwitcher } from './number-switcher';
+import { useTheme } from './theme-provider';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Skeleton } from './ui/skeleton';
@@ -134,11 +135,19 @@ function BaseSidebar() {
     ? inboxUnreadCount.reduce((prev, curr) => prev + curr.unreadCount, 0)
     : null;
 
+  const theme = useTheme();
+
   return (
     <Sidebar>
       <SidebarContent className="overflow-x-hidden p-2">
-        <SidebarHeader className="font-branding font-bold text-2xl">
-          Switchboard
+        <SidebarHeader className="my-2 px-2">
+          <div className="flex justify-center">
+            <img
+              src={`/calliya-${theme.theme}.png`}
+              alt="Calliya"
+              className="w-[160px] h-auto object-contain"
+            />
+          </div>
         </SidebarHeader>
         <SidebarSeparator />
         {companiesLoading ? (
