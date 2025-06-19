@@ -34,7 +34,7 @@ export const twilioRouter = router({
         outgoingApplicationSid: process.env.TWILIO_TWIMIL_APP_SID as string,
         apiKeySecret: process.env.TWILIO_API_KEY_SECRET as string,
         identity: input.identity ?? 'client',
-        ttl: 86400, // 24 hours
+        ttl: 86400,
       });
 
       return jwt as string;
