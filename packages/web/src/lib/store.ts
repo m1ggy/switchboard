@@ -37,7 +37,7 @@ type MainStore = {
 const useMainStore = create<MainStore>()(
   persist(
     (set) => ({
-      title: 'Switchboard',
+      title: 'Calliya',
       user: null,
       _rehydrated: false,
       setUser: (user) => set({ user }),
@@ -62,7 +62,7 @@ const useMainStore = create<MainStore>()(
         set({ companySwitcherDialogShown }),
     }),
     {
-      name: 'switchboard',
+      name: 'Calliya',
       partialize: (state) => ({
         user: state.user,
         activeCompany: state.activeCompany,
