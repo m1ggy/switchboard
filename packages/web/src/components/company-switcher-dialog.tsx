@@ -60,46 +60,48 @@ function CompanySwitcherDialog() {
           <DialogDescription>Switch from the current company</DialogDescription>
         </DialogHeader>
 
-        {isFetching ? (
-          <div className="flex justify-center items-center">
-            <Loader />
-          </div>
-        ) : companies && companies.length ? (
-          companies?.map((company) => (
-            <Card
-              key={company.id}
-              onClick={() => onSelectCompany(company)}
-              className={clsx(
-                'transition-colors select-none',
-                company.numbers.length === 0
-                  ? 'bg-muted text-muted-foreground opacity-50 cursor-not-allowed pointer-events-none'
-                  : 'hover:bg-accent cursor-pointer',
-                activeCompany?.id === company.id && 'bg-accent'
-              )}
-            >
-              <CardContent>
-                <CardTitle>{company.name}</CardTitle>
-                <CardDescription>
-                  {company.created_at &&
-                    formatDate(company.created_at, 'd MMM yyyy')}
-                </CardDescription>
-                {company.numbers.length == 0 ? (
-                  <span className=" text-muted-foreground text-sm font-bold">
-                    No active numbers
-                  </span>
-                ) : (
-                  <span className=" text-muted-foreground text-sm font-bold">
-                    {company.numbers.length} number
-                    {company.numbers.length > 1 && 's'}
-                  </span>
+        <div className="overflow-y-scroll max-h-[30vh]">
+          {isFetching ? (
+            <div className="flex justify-center items-center">
+              <Loader />
+            </div>
+          ) : companies && companies.length ? (
+            companies?.map((company) => (
+              <Card
+                key={company.id}
+                onClick={() => onSelectCompany(company)}
+                className={clsx(
+                  'transition-colors select-none',
+                  company.numbers.length === 0
+                    ? 'bg-muted text-muted-foreground opacity-50 cursor-not-allowed pointer-events-none'
+                    : 'hover:bg-accent cursor-pointer',
+                  activeCompany?.id === company.id && 'bg-accent'
                 )}
-                {company.id === activeCompany?.id && <Check />}
-              </CardContent>
-            </Card>
-          ))
-        ) : (
-          <span className="text-center">Found no companies.</span>
-        )}
+              >
+                <CardContent>
+                  <CardTitle>{company.name}</CardTitle>
+                  <CardDescription>
+                    {company.created_at &&
+                      formatDate(company.created_at, 'd MMM yyyy')}
+                  </CardDescription>
+                  {company.numbers.length == 0 ? (
+                    <span className=" text-muted-foreground text-sm font-bold">
+                      No active numbers
+                    </span>
+                  ) : (
+                    <span className=" text-muted-foreground text-sm font-bold">
+                      {company.numbers.length} number
+                      {company.numbers.length > 1 && 's'}
+                    </span>
+                  )}
+                  {company.id === activeCompany?.id && <Check />}
+                </CardContent>
+              </Card>
+            ))
+          ) : (
+            <span className="text-center">Found no companies.</span>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

@@ -1,4 +1,3 @@
-import Header from '@/components/header';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -88,7 +87,7 @@ function SignIn() {
       <div className="flex-1 justify-center items-center w-full flex">
         <Card className="p-5 w-md">
           <CardTitle className="text-md text-center">
-            Sign in to Switchboard
+            Sign in to Calliya
           </CardTitle>
 
           <CardContent>

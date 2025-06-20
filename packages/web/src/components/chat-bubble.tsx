@@ -18,7 +18,7 @@ function ChatBubble({ item }: ChatBubbleProps) {
     item?.meta?.Direction === 'OUTGOING' || item.direction === 'outbound';
   const alignClass = isOutbound ? 'items-end' : 'items-start';
   const bubbleClass = isOutbound
-    ? 'bg-blue-500 text-white'
+    ? 'bg-[#61355A] text-white'
     : 'bg-gray-200 text-gray-900';
 
   return (

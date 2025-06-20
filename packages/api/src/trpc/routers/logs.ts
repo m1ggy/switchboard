@@ -40,7 +40,7 @@ export const logsRouter = t.router({
           duration: input.duration,
         });
       }
-      let callLog = await CallsRepository.update(input.callSid, {
+      let callLog = await CallsRepository.create({
         id: crypto.randomUUID() as string,
         number_id: input.numberId,
         contact_id: input.contactId,
@@ -57,7 +57,7 @@ export const logsRouter = t.router({
           contact_id: input.contactId,
           initiated_at: input.initiatedAt,
           duration: input.duration,
-          meta: input.meta,
+          meta: { ...input.meta, status: 'ENDED' },
           call_sid: input.callSid,
         });
       }

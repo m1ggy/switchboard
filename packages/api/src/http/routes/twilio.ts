@@ -106,7 +106,7 @@ async function routes(app: FastifyInstance) {
       await twilioClient.bridgeCallToClient(
         CallSid,
         agentIdentity,
-        `${SERVER_DOMAIN}/twilio/voice/bridge?client=${agentIdentity}`
+        `${SERVER_DOMAIN}/twilio/voice/bridge`
       );
 
       response.say('Connecting you to an agent now.');
@@ -180,7 +180,7 @@ async function routes(app: FastifyInstance) {
           startConferenceOnEnter: false,
           endConferenceOnExit: false,
           statusCallback: `${SERVER_DOMAIN}/twilio/voice/conference-events`,
-          statusCallbackEvent: ['leave'],
+          statusCallbackEvent: ['leave', 'join'],
           statusCallbackMethod: 'POST',
         },
         queueRoom
@@ -234,27 +234,52 @@ async function routes(app: FastifyInstance) {
   });
 
   app.post('/voice/conference-events', async (req, reply) => {
-    const { EventType, CallSid, ConferenceSid } = req.body as Record<
-      string,
-      string
-    >;
+    console.log('[Webhook] /voice/conference-events received:', req.body);
 
-    if (EventType === 'participant-join' && CallSid && ConferenceSid) {
-      activeCallStore.updateConferenceSid(CallSid, ConferenceSid);
-      console.log(`✅ Linked ${CallSid} to conference ${ConferenceSid}`);
+    const {
+      StatusCallbackEvent,
+      CallSid,
+      ConferenceSid: UpperCaseSid,
+      conferenceSid: LowerCaseSid, // fallback in case it's lowercase
+    } = req.body as Record<string, string>;
+
+    const ConferenceSid = UpperCaseSid || LowerCaseSid;
+
+    if (StatusCallbackEvent === 'participant-join') {
+      if (!CallSid) {
+        console.warn('⚠️ Missing CallSid in participant-join event');
+      }
+      if (!ConferenceSid) {
+        console.warn('⚠️ Missing ConferenceSid in participant-join event');
+      }
+
+      if (CallSid && ConferenceSid) {
+        activeCallStore.updateConferenceSid(CallSid, ConferenceSid);
+        console.log(`✅ Linked ${CallSid} to conference ${ConferenceSid}`);
+      } else {
+        console.log(
+          '❌ Could not link call to conference due to missing data:',
+          {
+            CallSid,
+            ConferenceSid,
+          }
+        );
+      }
     }
 
-    if (EventType === 'participant-leave') {
+    if (StatusCallbackEvent === 'participant-leave') {
+      console.log(`👋 Participant left conference: ${CallSid}`);
+
       const wasRemoved = callQueueManager.removeByPredicate(
         (item) => item.callSid === CallSid
       );
 
       if (wasRemoved) {
         console.log(
-          `🗑️ Caller ${CallSid} left the queue. Removed from queueManager.`
+          `🗑️ Caller ${CallSid} left the queue. Removed from callQueueManager.`
         );
       } else {
-        console.log(`ℹ️ Caller ${CallSid} left, but was not in queue.`);
+        console.log(`ℹ️ Caller ${CallSid} left, but was not found in queue.`);
       }
 
       activeCallStore.remove(CallSid);
