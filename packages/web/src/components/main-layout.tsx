@@ -1,7 +1,7 @@
 import { NotificationProvider } from '@/hooks/browser-notification-provider';
+import { JitsiProvider } from '@/hooks/jitsi-provider';
 import { SocketProvider } from '@/hooks/socket-provider';
 import { TwilioVoiceProvider } from '@/hooks/twilio-provider';
-import JitsiMeetJS from '@/lib/jitsi';
 import { getSocket } from '@/lib/socket';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
 import { Outlet } from 'react-router';
 import type { Socket } from 'socket.io-client';
 import ActiveCallDialog from './active-call-dialog';
+import ActiveVideoCallDialog from './active-video-call-dialog';
 import BaseSidebar from './base-sidebar';
 import CompanySwitcherDialog from './company-switcher-dialog';
 import CreateContactDialog from './create-contact-dialog';
@@ -49,7 +50,6 @@ function Layout() {
     }
   }, [rootSocket]);
 
-  console.log({ meet: JitsiMeetJS });
   return (
     <NotificationProvider>
       <SocketProvider socket={socket}>
@@ -57,19 +57,22 @@ function Layout() {
           token={token ?? ''}
           refetchToken={refetchToken as unknown as () => Promise<void>}
         >
-          <SidebarProvider className="transition-all">
-            <BaseSidebar />
-            <main className="w-full">
-              <Header isLoggedIn />
-              <Outlet />
-            </main>
-            <SendMessageDialog />
-            <CreateContactDialog />
-            <DialerDialog />
-            <IncomingCallDialog />
-            <ActiveCallDialog />
-            <CompanySwitcherDialog />
-          </SidebarProvider>
+          <JitsiProvider>
+            <SidebarProvider className="transition-all">
+              <BaseSidebar />
+              <main className="w-full">
+                <Header isLoggedIn />
+                <Outlet />
+              </main>
+              <SendMessageDialog />
+              <CreateContactDialog />
+              <DialerDialog />
+              <IncomingCallDialog />
+              <ActiveCallDialog />
+              <CompanySwitcherDialog />
+              <ActiveVideoCallDialog />
+            </SidebarProvider>
+          </JitsiProvider>
         </TwilioVoiceProvider>
       </SocketProvider>
     </NotificationProvider>

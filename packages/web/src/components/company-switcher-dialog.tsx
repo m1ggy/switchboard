@@ -60,7 +60,7 @@ function CompanySwitcherDialog() {
           <DialogDescription>Switch from the current company</DialogDescription>
         </DialogHeader>
 
-        <div className="overflow-y-scroll max-h-[30vh]">
+        <div className="overflow-y-scroll max-h-[30vh] flex flex-col gap-4">
           {isFetching ? (
             <div className="flex justify-center items-center">
               <Loader />

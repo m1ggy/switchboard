@@ -127,3 +127,13 @@ export type CombinedActivity = {
   duration?: number | null;
   meta: any;
 };
+
+export type CallNote = {
+  id: string;
+  call_sid: string | null;
+  room_id: string | null;
+  note: string;
+  contact_id: string;
+  number_id: string;
+  company_id: string;
+};

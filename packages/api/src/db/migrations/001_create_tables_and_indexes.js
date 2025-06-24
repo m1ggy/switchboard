@@ -169,6 +169,28 @@ exports.up = (pgm) => {
   pgm.createIndex('call_conference_logs', 'conference_sid');
   pgm.createIndex('call_conference_logs', 'call_sid');
   pgm.createIndex('call_conference_logs', 'number_id');
+
+  pgm.createTable('call_notes', {
+    id: {
+      type: 'uuid',
+      primaryKey: true,
+      default: pgm.func('gen_random_uuid()'),
+    },
+    call_sid: { type: 'text' },
+    note: { type: 'text', notNull: true },
+    contact_id: { type: 'uuid', notNull: true },
+    number_id: { type: 'uuid', notNull: true },
+    company_id: { type: 'uuid', notNull: true },
+    room_id: { type: 'text' },
+  });
+
+  pgm.createIndex('call_notes', 'call_sid');
+  pgm.createIndex('call_notes', 'contact_id');
+  pgm.createIndex('call_notes', 'number_id');
+  pgm.createIndex('call_notes', 'company_id');
+  pgm.createIndex('call_notes', 'room_id');
+
+  pgm.createTable('contact_tags', {});
 };
 
 exports.down = (pgm) => {

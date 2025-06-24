@@ -32,6 +32,8 @@ type MainStore = {
   setActiveCompany: (company: ActiveCompany | null) => void;
   companySwitcherDialogShown: boolean;
   setCompanySwitcherDialogShown: (flag: boolean) => void;
+  activeVideoCallDialogShown: boolean;
+  setActiveVideoCallDialogShown: (flag: boolean) => void;
 };
 
 const useMainStore = create<MainStore>()(
@@ -60,6 +62,9 @@ const useMainStore = create<MainStore>()(
       companySwitcherDialogShown: false,
       setCompanySwitcherDialogShown: (companySwitcherDialogShown) =>
         set({ companySwitcherDialogShown }),
+      activeVideoCallDialogShown: false,
+      setActiveVideoCallDialogShown: (activeVideoCallDialogShown) =>
+        set({ activeVideoCallDialogShown }),
     }),
     {
       name: 'Calliya',

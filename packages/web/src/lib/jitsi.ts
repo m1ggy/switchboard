@@ -1,4 +1,4 @@
-declare namespace JitsiMeetJS {
+export declare namespace JitsiMeetJS {
   const version: string;
   function init(): void;
 
@@ -79,4 +79,7 @@ declare namespace JitsiMeetJS {
   };
 }
 
-export default JitsiMeetJS;
+//@ts-ignore
+const jitsi = window.JitsiMeetJS as JitsiMeetJS;
+
+export default jitsi;

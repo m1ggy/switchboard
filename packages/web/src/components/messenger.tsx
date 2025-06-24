@@ -1,10 +1,12 @@
 import { Skeleton } from '@/components/ui/skeleton';
+import { useJitsi } from '@/hooks/jitsi-provider';
 import { useTwilioVoice } from '@/hooks/twilio-provider';
 import useMainStore from '@/lib/store';
+import { useVideoCallStore } from '@/lib/stores/videocall';
 import { useTRPC } from '@/lib/trpc';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
-import { Loader2, Paperclip, Phone, Send } from 'lucide-react';
+import { Loader2, Paperclip, Phone, Send, Video } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -20,7 +22,7 @@ interface MessengerProps {
 
 function Messenger({ contactId, inboxId }: MessengerProps) {
   const trpc = useTRPC();
-  const { activeNumber } = useMainStore();
+  const { activeNumber, setActiveVideoCallDialogShown } = useMainStore();
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -282,6 +284,8 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
   ]);
 
   const { makeCall } = useTwilioVoice();
+  const { createRoom } = useJitsi();
+  const { setVideoStream } = useVideoCallStore();
 
   if (!contactId) {
     return (
@@ -306,18 +310,39 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
                 ({contact?.number})
               </span>
             </span>
-            <Button
-              variant={'outline'}
-              size={'icon'}
-              onClick={() =>
-                makeCall({
-                  To: contact?.number as string,
-                  CallerId: activeNumber?.number as string,
-                })
-              }
-            >
-              <Phone />
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant={'outline'}
+                size={'icon'}
+                onClick={async () => {
+                  await createRoom(contactId, {
+                    onRemoteTrack: (track) =>
+                      console.log('REMOTE TRACK: ', track),
+                    onLocalTrack: (track) =>
+                      track.isVideoTrack() &&
+                      setVideoStream(
+                        new MediaStream([track.getTrack()]),
+                        'local'
+                      ),
+                  });
+                  setActiveVideoCallDialogShown(true);
+                }}
+              >
+                <Video />
+              </Button>
+              <Button
+                variant={'outline'}
+                size={'icon'}
+                onClick={() =>
+                  makeCall({
+                    To: contact?.number as string,
+                    CallerId: activeNumber?.number as string,
+                  })
+                }
+              >
+                <Phone />
+              </Button>
+            </div>
           </div>
         )}
       </div>
