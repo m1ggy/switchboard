@@ -2,7 +2,7 @@ import { getQueryClient } from '@/App';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useForm, type SubmitHandler } from 'react-hook-form';
 import { toast } from 'sonner';
 import { z } from 'zod';
@@ -38,9 +38,21 @@ function CreateContactDialog() {
   const trpc = useTRPC();
   const queryClient = getQueryClient();
 
-  const { activeCompany } = useMainStore();
+  const { activeCompany, activeNumber } = useMainStore();
   const { mutateAsync: createContact, isPending: contactCreationLoading } =
     useMutation(trpc.contacts.createContact.mutationOptions());
+
+  const { refetch: refetchContacts } = useQuery(
+    trpc.contacts.getCompanyContacts.queryOptions({
+      companyId: activeCompany?.id as string,
+    })
+  );
+
+  const { refetch: refetchInboxes } = useQuery(
+    trpc.inboxes.getNumberInboxes.queryOptions({
+      numberId: activeNumber?.id as string,
+    })
+  );
   const form = useForm<Schema>({
     resolver: zodResolver(schema),
   });
@@ -60,6 +72,8 @@ function CreateContactDialog() {
             companyId: activeCompany.id as string,
           }).queryKey,
         });
+        await refetchContacts();
+        await refetchInboxes();
         setCreateContactModalShown(false);
         toast.success('Contact created');
       }

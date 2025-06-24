@@ -14,6 +14,18 @@ export const contactsRouter = t.router({
       })
     )
     .mutation(async ({ input }) => {
+      const existing = await ContactsRepository.findByNumber(input.number);
+
+      if (
+        existing &&
+        existing.number === existing.label &&
+        input.label !== existing.number
+      ) {
+        return await ContactsRepository.update(existing.id, {
+          label: input.label,
+        });
+      }
+
       const contact = await ContactsRepository.create({
         id: randomUUID(),
         company_id: input.companyId,
