@@ -38,6 +38,9 @@ export declare namespace JitsiMeetJS {
     dispose(): void;
     getType(): 'audio' | 'video';
     getTrack(): MediaStreamTrack;
+    attach(element: HTMLElement): void;
+    detach(element: HTMLElement): void;
+    getId(): string;
   }
 
   const mediaDevices: {

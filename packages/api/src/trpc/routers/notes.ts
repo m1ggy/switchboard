@@ -21,10 +21,14 @@ export const notesRouter = t.router({
       })
     )
     .mutation(async ({ input }) => {
-      return CallNotesRepository.create({
-        id: randomUUID() as string,
-        ...input,
-      });
+      try {
+        return CallNotesRepository.create({
+          id: randomUUID() as string,
+          ...input,
+        });
+      } catch (error) {
+        console.error('FAiled to create note: ', error);
+      }
     }),
   editNote: protectedProcedure
     .input(

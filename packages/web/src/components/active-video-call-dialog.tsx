@@ -1,7 +1,13 @@
+import { useJitsi } from '@/hooks/jitsi-provider';
 import useMainStore from '@/lib/store';
-import { useVideoCallStore } from '@/lib/stores/videocall';
-import { NotebookPen } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import {
+  useVideoCallStore,
+  useVideoCallStreamStore,
+} from '@/lib/stores/videocall';
+import { useTRPC } from '@/lib/trpc';
+import { useQuery } from '@tanstack/react-query';
+import { Mic, MicOff, Video, VideoOff } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import {
@@ -11,115 +17,229 @@ import {
   DialogHeader,
   DialogTitle,
 } from './ui/dialog';
-import { Textarea } from './ui/textarea';
+import { VideoTrackPreview } from './video-preview';
+import VideoCallNotes from './videocall-notes';
 
 function ActiveVideoCallDialog() {
-  const { activeVideoCallDialogShown, setActiveVideoCallDialogShown } =
-    useMainStore();
+  const trpc = useTRPC();
+  const { currentCallContactId } = useVideoCallStore();
+  const {
+    activeVideoCallDialogShown,
+    setActiveVideoCallDialogShown,
+    activeCompany,
+    activeNumber,
+  } = useMainStore();
+  const { remote, local, localAudio } = useVideoCallStreamStore();
+  const { conference } = useJitsi();
+  const [muted, setMuted] = useState(false);
+  const [videoMuted, setVideoMuted] = useState(false);
 
-  const { videoStreams } = useVideoCallStore();
+  const { data: contact } = useQuery({
+    ...trpc.contacts.findContactById.queryOptions({
+      contactId: currentCallContactId as string,
+    }),
+    enabled: !!currentCallContactId,
+  });
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
-  const remoteRefs = useRef<HTMLVideoElement[]>([]);
+  const remoteVideoRefs = useRef<HTMLVideoElement[]>([]);
+  const remoteAudioRefs = useRef<HTMLAudioElement[]>([]);
+
+  const [speakingMap, setSpeakingMap] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    if (!videoStreams.local || !localVideoRef.current) return;
+    let frameId: number;
+
+    const pollAudioLevels = () => {
+      const newSpeakingMap: Record<string, boolean> = {};
+
+      remote
+        .filter((track) => track.isAudioTrack())
+        .forEach((track) => {
+          //@ts-ignore
+          const id = track.getId?.() ?? track.track?.id; // Fallback to raw ID if needed
+          //@ts-ignore
+          const level = track.getAudioLevel?.();
+          newSpeakingMap[id] = level > 0.1; // Adjust threshold as needed
+        });
+
+      setSpeakingMap(newSpeakingMap);
+      frameId = requestAnimationFrame(pollAudioLevels);
+    };
+
+    if (remote?.length) {
+      frameId = requestAnimationFrame(pollAudioLevels);
+    }
+
+    return () => cancelAnimationFrame(frameId);
+  }, [remote]);
+
+  // Attach local track
+  useEffect(() => {
+    if (!local || !localVideoRef.current) return;
+
+    const el = localVideoRef.current;
+
+    console.log('SETTING LOCAL: ', local, el);
 
     requestAnimationFrame(() => {
-      console.log('SETTING VIDEO FEED');
-      const videoEl = localVideoRef.current!;
-      videoEl.srcObject = videoStreams.local!;
-      videoEl.muted = true; // important for autoplay
-      videoEl.play().catch((err) => {
-        console.error('[Video] local play() failed:', err);
-      });
-    });
-  }, [videoStreams.local, localVideoRef.current]);
-
-  useEffect(() => {
-    videoStreams.remote?.forEach((stream, index) => {
-      const el = remoteRefs.current[index];
-      if (el && stream) {
-        el.srcObject = stream;
-        el.play().catch(console.error);
+      try {
+        local.attach(el);
+        el.muted = true;
+      } catch (err) {
+        console.error('[Local Track] Failed to attach:', err);
       }
     });
-  }, [videoStreams.remote]);
 
+    return () => {
+      try {
+        local.detach(el);
+      } catch (err) {
+        console.warn('[Local Track] Failed to detach or already detached.');
+      }
+    };
+  }, [local, localVideoRef.current]);
+
+  // Attach remote tracks
   useEffect(() => {
-    console.log('[video] Refs check:', {
-      hasLocalRef: !!localVideoRef.current,
-      hasLocalStream: !!videoStreams.local,
-      tracks: videoStreams.local?.getTracks(),
-    });
-  }, [localVideoRef.current, videoStreams.local]);
+    if (!remote?.length) return;
 
-  console.log({ videoStreams });
+    // Attach video
+    remote
+      .filter((track) => track.isVideoTrack())
+      .forEach((track, i) => {
+        const el = remoteVideoRefs.current[i];
+        if (track && el) {
+          track.attach(el);
+        }
+      });
+
+    // Attach audio
+    remote
+      .filter((track) => track.isAudioTrack())
+      .forEach((track, i) => {
+        const el = remoteAudioRefs.current[i];
+        if (track && el) {
+          track.attach(el);
+        }
+      });
+  }, [remote]);
 
   return (
     <Dialog
       open={activeVideoCallDialogShown}
-      onOpenChange={setActiveVideoCallDialogShown}
+      onOpenChange={(open) => {
+        if (!open) conference?.leave();
+        setActiveVideoCallDialogShown(open);
+      }}
     >
       <DialogClose />
       <DialogContent className="[&>button:last-child]:hidden !w-[90vw] !max-w-none">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Badge>🔴 LIVE</Badge> Miguel Buising (+9509881210)
+            <Badge>🔴 LIVE</Badge> {contact?.label} ({contact?.number})
           </DialogTitle>
         </DialogHeader>
 
         <div className="flex flex-col lg:flex-row gap-4">
-          {/* Video Panel */}
-          <div className="flex-1 grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-2">
-            {videoStreams.remote.map((_, i) => (
-              <video
-                key={i}
-                ref={(el) => {
-                  if (el) remoteRefs.current[i] = el;
-                }}
-                autoPlay
-                playsInline
-                className="w-full aspect-video rounded-lg bg-black"
+          <div className="flex gap-1 flex-1">
+            {/* Video Panel */}
+            <div className="flex-1">
+              {/* Remote Videos */}
+              {remote
+                .filter((track) => track.isVideoTrack())
+                .map((_, i) => (
+                  <VideoTrackPreview
+                    track={_}
+                    label={contact?.label}
+                    isSpeaking={speakingMap[_.getId?.() ?? '']}
+                  />
+                ))}
+            </div>
+            {/* Remote Audios */}
+            {remote
+              .filter((track) => track.isAudioTrack())
+              .map((_, i) => (
+                <audio
+                  key={`audio-${i}`}
+                  ref={(el) => {
+                    if (el) remoteAudioRefs.current[i] = el;
+                  }}
+                  autoPlay
+                  playsInline
+                />
+              ))}
+            {/* Local Video */}
+            {local && (
+              <VideoTrackPreview
+                track={local}
+                label="ME"
+                muted
+                className="w-1/4 h-fit"
               />
-            ))}
-
-            <video
-              ref={localVideoRef}
-              autoPlay
-              muted
-              playsInline
-              className="w-full aspect-video rounded-lg bg-black"
-            />
+            )}
           </div>
 
-          {/* Sidebar Panel */}
+          {/* Sidebar */}
           <div className="w-full lg:w-[320px] flex flex-col gap-4">
             <div>
               <h3 className="font-semibold text-lg mb-2">Contact Info</h3>
               <p className="text-sm text-muted-foreground">
-                Miguel Buising
-                <br />
-                (+9509881210)
+                {contact?.label}
+                <br />({contact?.number})
               </p>
             </div>
 
-            <div className="space-y-2">
-              <h3 className="font-semibold text-lg">Notes</h3>
-              <Textarea placeholder="Write notes here..." />
-              <Button size="sm" className="mt-1 w-full">
-                Add Note
-              </Button>
-            </div>
+            <VideoCallNotes
+              contactId={contact?.id as string}
+              roomId={`${activeCompany?.id}-${contact?.id}`}
+            />
           </div>
         </div>
 
         {/* Footer Controls */}
         <div className="flex justify-end gap-2 mt-6">
-          <Button size="icon" variant="outline">
-            <NotebookPen />
+          <Button
+            variant={'outline'}
+            onClick={() => {
+              setVideoMuted((prev) => {
+                const isMuted = !prev;
+
+                if (isMuted) {
+                  local?.mute();
+                } else local?.unmute();
+
+                return isMuted;
+              });
+            }}
+          >
+            {videoMuted ? <VideoOff /> : <Video />}
           </Button>
-          <Button variant="destructive">END</Button>
+          <Button
+            variant={'outline'}
+            onClick={() => {
+              setMuted((prev) => {
+                const isMuted = !prev;
+
+                if (isMuted) {
+                  localAudio?.mute();
+                } else localAudio?.unmute();
+
+                return isMuted;
+              });
+            }}
+          >
+            {muted ? <MicOff /> : <Mic />}
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => {
+              conference?.leave();
+              setActiveVideoCallDialogShown(false);
+            }}
+          >
+            END
+          </Button>
         </div>
       </DialogContent>
     </Dialog>

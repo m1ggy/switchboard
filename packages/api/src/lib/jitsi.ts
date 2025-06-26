@@ -15,7 +15,7 @@ export function createJitsiToken(user: DecodedIdToken, roomName = '*') {
     aud: 'jitsi',
     iss: JITSI_APP_ID,
     sub: JITSI_DOMAIN,
-    room: '*',
+    room: roomName,
     exp: now + 60 * 60, // token valid for 1 hour
     context: {
       user: {

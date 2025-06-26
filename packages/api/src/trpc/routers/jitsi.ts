@@ -8,4 +8,8 @@ export const jitsiRouter = t.router({
     .query(async ({ ctx, input }) => {
       return createJitsiToken(ctx.user, input.roomName);
     }),
+
+  getClientCallURL: protectedProcedure
+    .input(z.object({ contactId: z.string(), companyId: z.string() }))
+    .mutation(async ({ input, ctx }) => {}),
 });

@@ -23,6 +23,7 @@ interface MessengerProps {
 function Messenger({ contactId, inboxId }: MessengerProps) {
   const trpc = useTRPC();
   const { activeNumber, setActiveVideoCallDialogShown } = useMainStore();
+  const { setCurrentCallContactId } = useVideoCallStore();
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -237,14 +238,6 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
 
     const handleScroll = () => {
       if (debounce) clearTimeout(debounce);
-      console.log({
-        readyToPaginate,
-        hasReachedBottomOnce,
-        initialScrollDone,
-        scrollTop: container.scrollTop,
-        scrollHeight: container.scrollHeight,
-        clientHeight: container.clientHeight,
-      });
       debounce = setTimeout(() => {
         if (
           readyToPaginate &&
@@ -285,7 +278,6 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
 
   const { makeCall } = useTwilioVoice();
   const { createRoom } = useJitsi();
-  const { setVideoStream } = useVideoCallStore();
 
   if (!contactId) {
     return (
@@ -315,16 +307,8 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
                 variant={'outline'}
                 size={'icon'}
                 onClick={async () => {
-                  await createRoom(contactId, {
-                    onRemoteTrack: (track) =>
-                      console.log('REMOTE TRACK: ', track),
-                    onLocalTrack: (track) =>
-                      track.isVideoTrack() &&
-                      setVideoStream(
-                        new MediaStream([track.getTrack()]),
-                        'local'
-                      ),
-                  });
+                  setCurrentCallContactId(contact?.id as string);
+                  await createRoom(contactId);
                   setActiveVideoCallDialogShown(true);
                 }}
               >

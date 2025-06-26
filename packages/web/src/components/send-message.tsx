@@ -9,6 +9,7 @@ import { useForm, type SubmitHandler } from 'react-hook-form';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
+import { getQueryClient } from '@/App';
 import { X } from 'lucide-react';
 import { Button } from './ui/button';
 import {
@@ -114,6 +115,19 @@ function SendMessageDialog() {
         numberId: activeNumber?.id as string,
         contactId: contact.id,
         body: data.message,
+      });
+
+      const queryClient = getQueryClient();
+
+      queryClient.invalidateQueries({
+        queryKey: trpc.inboxes.getActivityByContact.infiniteQueryKey({
+          contactId: contact.id,
+        }),
+      });
+      queryClient.invalidateQueries({
+        queryKey: trpc.inboxes.getNumberInboxes.queryKey({
+          numberId: activeNumber?.id as string,
+        }),
       });
 
       toast.success('Message sent');

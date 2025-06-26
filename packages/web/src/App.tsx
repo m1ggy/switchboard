@@ -18,6 +18,7 @@ import Draft from './pages/draft';
 import Inbox from './pages/inbox';
 import Sent from './pages/sent';
 import SignIn from './pages/sign-in';
+import VideoCall from './pages/video-call';
 import AuthRoute from './routes/auth-route';
 import PrivateRoute from './routes/private-route';
 function makeQueryClient() {
@@ -26,7 +27,7 @@ function makeQueryClient() {
       queries: {
         // With SSR, we usually want to set some default staleTime
         // above 0 to avoid refetching immediately on the client
-        staleTime: 60 * 1000,
+        staleTime: 0,
       },
     },
   });
@@ -76,6 +77,7 @@ function App() {
                     </AuthRoute>
                   }
                 />
+                <Route path="/call" element={<VideoCall />} />
                 <Route
                   path="/dashboard"
                   element={

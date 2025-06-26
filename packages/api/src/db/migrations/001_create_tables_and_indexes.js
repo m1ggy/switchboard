@@ -191,6 +191,30 @@ exports.up = (pgm) => {
   pgm.createIndex('call_notes', 'room_id');
 
   pgm.createTable('contact_tags', {});
+
+  pgm.createTable('video_calls', {
+    id: {
+      type: 'uuid',
+      primaryKey: true,
+      default: pgm.func('gen_random_uuid()'),
+    },
+    room_id: { type: 'text', notNull: true },
+    contact_id: { type: 'uuid', notNull: true },
+    number_id: { type: 'uuid', notNull: true },
+    company_id: { type: 'uuid', notNull: true },
+    started_at: {
+      type: 'timestamp',
+      notNull: true,
+      default: pgm.func('now()'),
+    },
+    ended_at: { type: 'timestamp' },
+    duration: { type: 'integer' },
+  });
+
+  pgm.createIndex('video_calls', 'room_id');
+  pgm.createIndex('video_calls', 'contact_id');
+  pgm.createIndex('video_calls', 'number_id');
+  pgm.createIndex('video_calls', 'company_id');
 };
 
 exports.down = (pgm) => {
