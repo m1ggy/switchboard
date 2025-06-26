@@ -13,6 +13,7 @@ type ChatBubbleProps = {
     meta?: any;
   };
 };
+
 function ChatBubble({ item }: ChatBubbleProps) {
   const isOutbound =
     item?.meta?.Direction === 'OUTGOING' || item.direction === 'outbound';
@@ -23,11 +24,13 @@ function ChatBubble({ item }: ChatBubbleProps) {
 
   return (
     <div key={item.id} className={`flex flex-col ${alignClass}`}>
-      <div className={`max-w-xs px-4 py-2 rounded-2xl ${bubbleClass}`}>
+      <div className={`max-w-xs px-4 py-3 rounded-2xl ${bubbleClass}`}>
         {item?.type === 'message' ? (
-          <span>{item.message}</span>
+          <span className="break-words whitespace-pre-wrap">
+            {item.message}
+          </span>
         ) : (
-          <span>
+          <span className="break-words whitespace-pre-wrap">
             📞 Call —{' '}
             <strong>
               {formatDurationWithDateFns(item?.duration as number)}

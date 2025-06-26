@@ -81,7 +81,7 @@ export const twilioRouter = router({
       z.object({
         numberId: z.string(),
         contactId: z.string(),
-        body: z.string().min(1).max(500),
+        body: z.string().min(1).max(2000),
       })
     )
     .mutation(async ({ input }) => {

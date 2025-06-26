@@ -70,6 +70,12 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
     setPrevHeight(null);
   }, [contactId]);
 
+  useEffect(() => {
+    if (contactId && inboxId) {
+      refetchMessages();
+    }
+  }, [contactId, inboxId]);
+
   const {
     data,
     fetchNextPage,
