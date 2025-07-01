@@ -26,6 +26,7 @@ export declare namespace JitsiMeetJS {
     getParticipantId(): string;
     sendMessage(message: string): void;
     sendCommand(command: string, values: any): void;
+    getParticipantCount: () => number;
   }
 
   class JitsiTrack {

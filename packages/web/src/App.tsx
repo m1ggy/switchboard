@@ -17,6 +17,7 @@ import Dashboard from './pages/dashboard';
 import Draft from './pages/draft';
 import Inbox from './pages/inbox';
 import Sent from './pages/sent';
+import ShortUrl from './pages/short-url';
 import SignIn from './pages/sign-in';
 import VideoCall from './pages/video-call';
 import AuthRoute from './routes/auth-route';
@@ -77,7 +78,8 @@ function App() {
                     </AuthRoute>
                   }
                 />
-                <Route path="/call" element={<VideoCall />} />
+                <Route path="/call/:callId" element={<VideoCall />} />
+                <Route path="/s/:shortUrlId" element={<ShortUrl />} />
                 <Route
                   path="/dashboard"
                   element={

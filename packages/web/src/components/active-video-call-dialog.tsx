@@ -8,7 +8,6 @@ import { useTRPC } from '@/lib/trpc';
 import { useQuery } from '@tanstack/react-query';
 import { Mic, MicOff, Video, VideoOff } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import {
   Dialog,
@@ -27,13 +26,11 @@ function ActiveVideoCallDialog() {
     activeVideoCallDialogShown,
     setActiveVideoCallDialogShown,
     activeCompany,
-    activeNumber,
   } = useMainStore();
   const { remote, local, localAudio } = useVideoCallStreamStore();
   const { conference } = useJitsi();
   const [muted, setMuted] = useState(false);
   const [videoMuted, setVideoMuted] = useState(false);
-
   const { data: contact } = useQuery({
     ...trpc.contacts.findContactById.queryOptions({
       contactId: currentCallContactId as string,
@@ -137,7 +134,7 @@ function ActiveVideoCallDialog() {
       <DialogContent className="[&>button:last-child]:hidden !w-[90vw] !max-w-none">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Badge>🔴 LIVE</Badge> {contact?.label} ({contact?.number})
+            {contact?.label} ({contact?.number})
           </DialogTitle>
         </DialogHeader>
 
@@ -145,7 +142,6 @@ function ActiveVideoCallDialog() {
           <div className="flex gap-1 flex-1">
             {/* Video Panel */}
             <div className="flex-1">
-              {/* Remote Videos */}
               {remote
                 .filter((track) => track.isVideoTrack())
                 .map((_, i) => (
@@ -156,7 +152,6 @@ function ActiveVideoCallDialog() {
                   />
                 ))}
             </div>
-            {/* Remote Audios */}
             {remote
               .filter((track) => track.isAudioTrack())
               .map((_, i) => (
@@ -169,7 +164,6 @@ function ActiveVideoCallDialog() {
                   playsInline
                 />
               ))}
-            {/* Local Video */}
             {local && (
               <VideoTrackPreview
                 track={local}
@@ -234,6 +228,8 @@ function ActiveVideoCallDialog() {
           <Button
             variant="destructive"
             onClick={() => {
+              local?.dispose();
+              localAudio?.dispose();
               conference?.leave();
               setActiveVideoCallDialogShown(false);
             }}

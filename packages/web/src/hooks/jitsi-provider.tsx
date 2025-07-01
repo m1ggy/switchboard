@@ -2,6 +2,8 @@ import { app } from '@/lib/firebase';
 import jitsi, { type JitsiMeetJS } from '@/lib/jitsi';
 import useMainStore from '@/lib/store';
 import { useVideoCallStreamStore } from '@/lib/stores/videocall';
+import { useTRPC } from '@/lib/trpc';
+import { useMutation } from '@tanstack/react-query';
 import { getAuth } from 'firebase/auth';
 import {
   createContext,
@@ -42,6 +44,7 @@ export const useJitsi = () => {
 };
 
 export const JitsiProvider = ({ children }: Props) => {
+  const trpc = useTRPC();
   const { addRemote, removeRemote, setLocal, setLocalAudio } =
     useVideoCallStreamStore();
   const activeNumber = useMainStore((state) => state.activeNumber);
@@ -51,6 +54,9 @@ export const JitsiProvider = ({ children }: Props) => {
     useState<JitsiMeetJS.JitsiConnection | null>(null);
   const [conference, setConference] =
     useState<JitsiMeetJS.JitsiConference | null>(null);
+  const { mutateAsync: getCallUrl } = useMutation(
+    trpc.jitsi.getClientCallURL.mutationOptions()
+  );
 
   const connectionRef = useRef<JitsiMeetJS.JitsiConnection | null>(null);
 
@@ -142,6 +148,7 @@ export const JitsiProvider = ({ children }: Props) => {
           async () => {
             console.log('[Jitsi] Connection established');
             toast.success('Connection created');
+            console.log({ conferenceName });
 
             const conf: JitsiMeetJS.JitsiConference = conn.initJitsiConference(
               conferenceName,
@@ -152,10 +159,21 @@ export const JitsiProvider = ({ children }: Props) => {
 
             setConference(conf);
 
-            conf.on(jitsi.events.conference.CONFERENCE_JOINED, () => {
+            conf.on(jitsi.events.conference.CONFERENCE_JOINED, async () => {
               toast.info('Joined room, please wait for the client!');
               toast.dismiss(connectionToast);
               console.log('[Jitsi] Joined conference:', conferenceName);
+              const smsToastLoading = toast.loading(
+                'Sending invite to contact via SMS...'
+              );
+
+              await getCallUrl({
+                numberId: activeNumber?.id as string,
+                contactId: roomName,
+                companyId: activeCompany?.id as string,
+              });
+              toast.dismiss(smsToastLoading);
+              toast.success('URL sent to contact!');
             });
 
             conf.on(jitsi.events.conference.CONFERENCE_LEFT, () => {
@@ -220,7 +238,7 @@ export const JitsiProvider = ({ children }: Props) => {
         conn.connect();
       });
     },
-    []
+    [getCallUrl]
   );
 
   return (

@@ -215,6 +215,30 @@ exports.up = (pgm) => {
   pgm.createIndex('video_calls', 'contact_id');
   pgm.createIndex('video_calls', 'number_id');
   pgm.createIndex('video_calls', 'company_id');
+
+  pgm.createTable('shorten_urls', {
+    id: {
+      type: 'text',
+      primaryKey: true,
+    },
+    full_url: {
+      type: 'text',
+      notNull: false,
+    },
+    create_at: {
+      type: 'timestamp',
+      notNull: true,
+      default: pgm.func('now()'),
+    },
+    created_by: {
+      type: 'text',
+      notNull: true,
+    },
+    company_id: {
+      type: 'UUID',
+      notNull: true,
+    },
+  });
 };
 
 exports.down = (pgm) => {

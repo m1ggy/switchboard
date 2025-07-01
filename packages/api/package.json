@@ -27,6 +27,7 @@
     "fastify-socket.io": "^5.1.0",
     "firebase-admin": "^13.3.0",
     "jsonwebtoken": "^9.0.2",
+    "nanoid": "^5.1.5",
     "pg": "^8.15.6",
     "socket.io": "^4.8.1",
     "twilio": "^5.6.0",

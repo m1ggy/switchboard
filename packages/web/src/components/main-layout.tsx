@@ -28,7 +28,7 @@ function Layout() {
 
   const { data: token, refetch: refetchToken } = useQuery({
     ...trpc.twilio.token.queryOptions({ identity: activeNumber?.number }),
-    refetchInterval: 4 * 60 * 60 * 1000,
+    refetchInterval: 4 * 60 * 10 * 1000,
     refetchOnMount: true,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
