@@ -121,7 +121,7 @@ function VideoCall() {
           setIsInitializing(false);
         });
 
-        conf.on(jitsi.event.conference.CONFERENCE_LEFT, () => {
+        conf.on(jitsi.events.conference.CONFERENCE_LEFT, () => {
           audioTrack.dispose();
           videoTrack.dispose();
           setIsCallDone(true);

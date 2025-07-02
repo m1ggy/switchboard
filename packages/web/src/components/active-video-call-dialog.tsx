@@ -150,7 +150,7 @@ function ActiveVideoCallDialog() {
             <div className="flex-1">
               {remote
                 .filter((track) => track.isVideoTrack())
-                .map((_, i) => (
+                .map((_) => (
                   <VideoTrackPreview
                     track={_}
                     label={contact?.label}
