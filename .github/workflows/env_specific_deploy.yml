@@ -98,7 +98,7 @@ jobs:
 
           echo "📦 Installing dependencies..."
           cd "\$APP_DIR"
-          pnpm install
+          pnpm install --frozen-lockfile
 
           # === BUILD WEB ===
           echo "🛠️ Building Web..."

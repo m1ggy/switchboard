@@ -59,7 +59,7 @@ jobs:
 
           # === INSTALL MONOREPO ===
           cd $APP_DIR
-          pnpm install
+          pnpm install --frozen-lockfile
 
           # === BUILD FRONTEND ===
           cd $APP_DIR/packages/web
