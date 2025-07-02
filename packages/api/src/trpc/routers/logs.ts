@@ -46,7 +46,7 @@ export const logsRouter = t.router({
         contact_id: input.contactId,
         initiated_at: input.initiatedAt,
         duration: input.duration,
-        meta: input.meta,
+        meta: { ...input.meta, status: 'ENDED' },
         call_sid: input.callSid,
       });
 

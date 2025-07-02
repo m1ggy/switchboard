@@ -1,3 +1,4 @@
+import { CallsRepository } from '@/db/repositories/calls';
 import { UserCompaniesRepository } from '@/db/repositories/companies';
 import { ContactsRepository } from '@/db/repositories/contacts';
 import { InboxesRepository } from '@/db/repositories/inboxes';
@@ -69,12 +70,20 @@ async function routes(app: FastifyInstance) {
         companyId: numberRecord.company_id,
       });
 
-      await InboxesRepository.findOrCreate({
+      const inbox = await InboxesRepository.findOrCreate({
         numberId: numberRecord.id,
         contactId: contact.id,
       });
 
-      // Optionally: log or update last_call_id later
+      const call = await CallsRepository.create({
+        id: crypto.randomUUID() as string,
+        contact_id: contact.id,
+        call_sid: CallSid,
+        number_id: numberRecord.id,
+        meta: { status: 'ONGOING' },
+      });
+
+      await InboxesRepository.updateLastCall(inbox.id, call.id);
     }
 
     // Track active call

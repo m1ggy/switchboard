@@ -6,6 +6,7 @@ import fastifyCors from '@fastify/cors';
 import formBody from '@fastify/formbody';
 import dotenv from 'dotenv';
 import path from 'path';
+import jitsiRoutes from './http/routes/jitsi';
 import twilioRoutes from './http/routes/twilio';
 import { auth } from './lib/firebase';
 import { appRouter } from './trpc';
@@ -67,6 +68,7 @@ app.get('/health', () => {
 });
 
 app.register(twilioRoutes, { prefix: '/twilio' });
+app.register(jitsiRoutes, { prefix: '/jitsi' });
 
 app.listen({ port: 3000 }, () => {
   console.log('API listening on http://localhost:3000');

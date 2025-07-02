@@ -57,7 +57,7 @@ function Header({ isLoggedIn }: HeaderProps) {
             ) : null}
           </div>
         ) : (
-          <p className="font-branding text-3xl font-bold">Switchboard</p>
+          <p className="font-branding text-3xl font-bold">Calliya</p>
         )}
       </div>
       <div className="flex gap-4 items-center">
