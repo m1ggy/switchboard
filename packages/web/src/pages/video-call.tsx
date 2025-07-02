@@ -9,6 +9,7 @@ import {
   LucideVideo,
   Mic,
   MicOff,
+  Signal,
   Video,
   VideoOff,
 } from 'lucide-react';
@@ -37,6 +38,10 @@ function VideoCall() {
   const [conference, setConference] =
     useState<JitsiMeetJS.JitsiConference | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
+  const [connectionQuality, setConnectionQuality] = useState<number | null>(
+    null
+  );
+  const [callDuration, setCallDuration] = useState(0); // in seconds
 
   const remoteAudioRefs = useRef<HTMLAudioElement[]>([]);
   const hasInitialized = useRef(false);
@@ -44,14 +49,28 @@ function VideoCall() {
 
   const jwt = searchParams.get('jwt');
 
-  console.log({ events: jitsi.events });
+  const companyName = searchParams.get('companyName') ?? 'Agent';
+
+  // Call timer
+  useEffect(() => {
+    if (!conference) return;
+    const interval = setInterval(() => {
+      setCallDuration((d) => d + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [conference]);
+
+  const formatDuration = (s: number) => {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  };
 
   useEffect(() => {
     if (hasInitialized.current) return;
     hasInitialized.current = true;
 
     jitsi.init();
-
     const loadingToast = toast.loading('Initializing connection');
 
     const conn = new jitsi.JitsiConnection(null, jwt, {
@@ -68,6 +87,7 @@ function VideoCall() {
     connRef.current = conn;
 
     let conf: JitsiMeetJS.JitsiConference;
+    let statusInterval: NodeJS.Timeout;
 
     conn.addEventListener(
       jitsi.events.connection.CONNECTION_ESTABLISHED,
@@ -101,23 +121,23 @@ function VideoCall() {
           setIsInitializing(false);
         });
 
-        conf.on(jitsi.events.conference.USER_LEFT, (user) => {
-          console.log('USER LEFT: ', user);
-          const participantCount = conf.getParticipantCount();
-          if (participantCount === 0 && !isCallDone) {
-            conf.leave();
-            setIsCallDone(true);
-          }
+        conf.on(jitsi.event.conference.CONFERENCE_LEFT, () => {
+          audioTrack.dispose();
+          videoTrack.dispose();
+          setIsCallDone(true);
+        });
+
+        conf.on(jitsi.events.conference.USER_JOINED, (user) => {
+          console.log('USER JOINED: ', user);
         });
 
         conf.on(
           jitsi.events.conference.TRACK_ADDED,
           (track: JitsiMeetJS.JitsiTrack) => {
+            console.log('TRACK ADDED: ', track);
             if (!track.isLocal()) {
               setRemoteStreams((prev) => {
-                const exists = prev.find(
-                  (stream) => stream.getId() === track.getId()
-                );
+                const exists = prev.find((t) => t.getId() === track.getId());
                 return exists ? prev : [...prev, track];
               });
             }
@@ -128,24 +148,36 @@ function VideoCall() {
           jitsi.events.conference.TRACK_REMOVED,
           (track: JitsiMeetJS.JitsiTrack) => {
             if (!track.isLocal()) {
-              setRemoteStreams((prev) => {
-                const updated = prev.filter((t) => t.getId() !== track.getId());
-
-                if (updated.length === 0 && !isCallDone) {
-                  console.log(
-                    '[Jitsi] All remote tracks removed — assuming call ended.'
-                  );
-                  conf.leave();
-                  setIsCallDone(true);
-                }
-
-                return updated;
-              });
+              setRemoteStreams((prev) =>
+                prev.filter((t) => t.getId() !== track.getId())
+              );
             }
           }
         );
 
         conf.join();
+
+        // Poll connection status from remote track
+        statusInterval = setInterval(() => {
+          const remoteTrack = remoteStreams.find(
+            (track) => track.isVideoTrack() && !track.isLocal()
+          );
+
+          if (!remoteTrack || !remoteTrack.getTrackStreamingStatus) {
+            setConnectionQuality(null);
+            return;
+          }
+
+          const status = remoteTrack.getTrackStreamingStatus();
+
+          if (status === 'active') {
+            setConnectionQuality(2); // Excellent
+          } else if (status === 'interrupted') {
+            setConnectionQuality(1); // Good
+          } else {
+            setConnectionQuality(0); // Poor
+          }
+        }, 5000);
       }
     );
 
@@ -163,7 +195,6 @@ function VideoCall() {
     conn.addEventListener(
       jitsi.events.connection.CONNECTION_DISCONNECTED,
       () => {
-        console.log('[Jitsi] Connection disconnected');
         toast('Disconnected');
         toast.dismiss(loadingToast);
         setIsInitializing(false);
@@ -176,12 +207,13 @@ function VideoCall() {
       hasInitialized.current = false;
       conference?.leave?.();
       connRef.current?.disconnect?.();
+      clearInterval(statusInterval);
     };
   }, [jwt]);
 
   if (isInitializing) {
     return (
-      <div className="justify-center flex items-center h-[100vh]">
+      <div className="h-[100vh] flex justify-center items-center">
         <div className="flex gap-2 items-center">
           <Loader className="animate-spin" />
           <span className="font-semibold text-sm">
@@ -214,6 +246,10 @@ function VideoCall() {
     );
   }
 
+  const remoteVideoTrack = remoteStreams.find(
+    (stream) => stream.isVideoTrack() && !stream.isLocal()
+  );
+
   return (
     <div>
       <div className="flex justify-center mt-10">
@@ -231,8 +267,7 @@ function VideoCall() {
             <AlertTitle>Connection Failed</AlertTitle>
             <AlertDescription>
               We couldn’t connect to the video call server. Please check your
-              internet connection and try again. If the issue persists, contact
-              support.
+              internet connection and try again.
             </AlertDescription>
           </Alert>
         </div>
@@ -242,18 +277,35 @@ function VideoCall() {
         <div className="flex justify-center">
           <Card className="w-[90vw]">
             <CardContent>
-              <div>
-                {remoteStreams
-                  .filter(
-                    (stream) => stream.isVideoTrack() && !stream.isLocal()
-                  )
-                  .map((stream) => (
-                    <VideoTrackPreview
-                      key={stream.getId()}
-                      track={stream}
-                      label=""
-                    />
-                  ))}
+              <div className="top-4 right-4 flex items-center gap-4 text-sm">
+                <div className="flex items-center gap-1">
+                  <Signal className="w-4 h-4" />
+                  {connectionQuality !== null ? (
+                    <span>
+                      {['Poor', 'Good', 'Excellent'][connectionQuality] ||
+                        'Unknown'}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="font-mono text-xs bg-black/20 px-2 py-1 rounded">
+                  {formatDuration(callDuration)}
+                </div>
+              </div>
+
+              {/* Remote Video */}
+              <div className="flex">
+                {remoteVideoTrack ? (
+                  <VideoTrackPreview
+                    track={remoteVideoTrack}
+                    label={companyName}
+                    className="h-fit"
+                  />
+                ) : (
+                  <div className="flex items-center justify-center w-full h-[40vh]">
+                    <Loader className="animate-spin w-6 h-6 mr-2" />
+                    <span className="text-sm">Waiting for participant...</span>
+                  </div>
+                )}
               </div>
 
               {remoteStreams
@@ -269,15 +321,21 @@ function VideoCall() {
                   />
                 ))}
 
-              {localVideo && (
-                <div className="flex justify-end mt-2">
+              {/* Local Video */}
+              <div className="flex justify-end mt-2">
+                {localVideo ? (
                   <VideoTrackPreview
                     track={localVideo}
                     className="w-1/3"
-                    label="YOU"
+                    label="You"
                   />
-                </div>
-              )}
+                ) : (
+                  <div className="w-1/3 h-[100px] flex items-center justify-center border rounded-md">
+                    <Loader className="animate-spin mr-2 w-4 h-4" />
+                    <span className="text-sm">Setting up camera...</span>
+                  </div>
+                )}
+              </div>
             </CardContent>
 
             <CardFooter>
@@ -293,7 +351,7 @@ function VideoCall() {
                     });
                   }}
                 >
-                  {videoOff ? <Video /> : <VideoOff />}
+                  {videoOff ? <VideoOff /> : <Video />}
                 </Button>
                 <Button
                   size="icon"
@@ -306,7 +364,7 @@ function VideoCall() {
                     });
                   }}
                 >
-                  {muted ? <Mic /> : <MicOff />}
+                  {muted ? <MicOff /> : <Mic />}
                 </Button>
               </div>
             </CardFooter>

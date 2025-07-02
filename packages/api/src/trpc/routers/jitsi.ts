@@ -1,3 +1,4 @@
+import { UserCompaniesRepository } from '@/db/repositories/companies';
 import { ShortenUrlRepository } from '@/db/repositories/shorten_urls';
 import { createJitsiToken } from '@/lib/jitsi';
 import { z } from 'zod';
@@ -23,8 +24,11 @@ export const jitsiRouter = t.router({
       const roomName = `${input.numberId}-${input.contactId}`;
 
       const jwt = createJitsiToken(ctx.user, roomName);
+      const company = await UserCompaniesRepository.findCompanyById(
+        input.companyId
+      );
 
-      const url = `${process.env.WEB_DOMAIN}/call/${roomName}?jwt=${jwt}`;
+      const url = `${process.env.WEB_DOMAIN}/call/${roomName}?jwt=${jwt}&companyName=${company?.name}`;
 
       const shortenUrl = await ShortenUrlRepository.findOrCreate({
         full_url: url,

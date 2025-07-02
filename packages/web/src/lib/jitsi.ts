@@ -27,6 +27,7 @@ export declare namespace JitsiMeetJS {
     sendMessage(message: string): void;
     sendCommand(command: string, values: any): void;
     getParticipantCount: () => number;
+    end: () => void;
   }
 
   class JitsiTrack {
@@ -42,6 +43,7 @@ export declare namespace JitsiMeetJS {
     attach(element: HTMLElement): void;
     detach(element: HTMLElement): void;
     getId(): string;
+    getTrackStreamingStatus(): string;
   }
 
   const mediaDevices: {

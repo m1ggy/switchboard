@@ -122,11 +122,17 @@ function ActiveVideoCallDialog() {
       });
   }, [remote]);
 
+  function endCall() {
+    conference?.end();
+    local?.dispose();
+    localAudio?.dispose();
+  }
+
   return (
     <Dialog
       open={activeVideoCallDialogShown}
       onOpenChange={(open) => {
-        if (!open) conference?.leave();
+        if (!open) endCall();
         setActiveVideoCallDialogShown(open);
       }}
     >
@@ -227,12 +233,7 @@ function ActiveVideoCallDialog() {
           </Button>
           <Button
             variant="destructive"
-            onClick={() => {
-              local?.dispose();
-              localAudio?.dispose();
-              conference?.leave();
-              setActiveVideoCallDialogShown(false);
-            }}
+            onClick={() => setActiveVideoCallDialogShown(false)}
           >
             END
           </Button>
