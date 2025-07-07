@@ -23,21 +23,28 @@ import { cn } from '@/lib/utils';
 
 type PhoneInputProps = Omit<
   React.ComponentProps<'input'>,
-  'onChange' | 'value' | 'ref'
+  'onChange' | 'value' | 'ref' | 'disablePortal'
 > &
   Omit<RPNInput.Props<typeof RPNInput.default>, 'onChange'> & {
     onChange?: (value: RPNInput.Value) => void;
+    disablePortal?: boolean;
   };
 
 const PhoneInput: React.ForwardRefExoticComponent<PhoneInputProps> =
   React.forwardRef<React.ElementRef<typeof RPNInput.default>, PhoneInputProps>(
-    ({ className, onChange, value, ...props }, ref) => {
+    ({ className, onChange, value, disablePortal, ...props }, ref) => {
+      const CustomCountrySelect = React.useCallback(
+        (selectProps: Omit<CountrySelectProps, 'disablePortal'>) => (
+          <CountrySelect {...selectProps} disablePortal={disablePortal} />
+        ),
+        [disablePortal]
+      );
       return (
         <RPNInput.default
           ref={ref}
           className={cn('flex', className)}
           flagComponent={FlagComponent}
-          countrySelectComponent={CountrySelect}
+          countrySelectComponent={CustomCountrySelect}
           inputComponent={InputComponent}
           smartCaret={false}
           value={value || undefined}
@@ -60,8 +67,8 @@ PhoneInput.displayName = 'PhoneInput';
 
 const InputComponent = React.forwardRef<
   HTMLInputElement,
-  React.ComponentProps<'input'>
->(({ className, ...props }, ref) => (
+  React.ComponentProps<'input'> & { disablePortal?: boolean }
+>(({ className, disablePortal, ...props }, ref) => (
   <Input
     className={cn('rounded-e-lg rounded-s-none', className)}
     {...props}
@@ -77,6 +84,7 @@ type CountrySelectProps = {
   value: RPNInput.Country;
   options: CountryEntry[];
   onChange: (country: RPNInput.Country) => void;
+  disablePortal?: boolean;
 };
 
 const CountrySelect = ({
@@ -84,6 +92,7 @@ const CountrySelect = ({
   value: selectedCountry,
   options: countryList,
   onChange,
+  disablePortal,
 }: CountrySelectProps) => {
   const scrollAreaRef = React.useRef<HTMLDivElement>(null);
   const [searchValue, setSearchValue] = React.useState('');
@@ -110,7 +119,7 @@ const CountrySelect = ({
           />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[300px] p-0">
+      <PopoverContent className="w-[300px] p-0" disablePortal={disablePortal}>
         <Command>
           <CommandInput
             value={searchValue}

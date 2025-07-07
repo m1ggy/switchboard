@@ -1,4 +1,6 @@
 import { Call, Device } from '@twilio/voice-sdk';
+import { getAuth } from 'firebase/auth';
+import { app } from './firebase';
 
 type TwilioConnection = ReturnType<Device['connect']>;
 
@@ -26,7 +28,10 @@ export class TwilioVoiceClient {
 
   async initialize(): Promise<void> {
     try {
-      this.device = new Device(this.token, { closeProtection: true });
+      this.device = new Device(this.token, {
+        closeProtection: true,
+        tokenRefreshMs: 60000,
+      });
 
       this.registerEvents();
 
@@ -52,6 +57,31 @@ export class TwilioVoiceClient {
     });
     this.device.on('cancel', () => {
       this.onDisconnect?.();
+    });
+
+    this.device.on('tokenWillExpire', async () => {
+      const user = getAuth(app).currentUser;
+
+      if (!user)
+        throw new Error(
+          'cannot refetch voice token as there is no user logged in'
+        );
+
+      const token = await user.getIdToken(true);
+
+      const response = await fetch(
+        `${import.meta.env.VITE_WEBSOCKET_URL}/twilio/token`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}` as string,
+          },
+          method: 'GET',
+        }
+      );
+
+      const json = (await response.json()) as { token: string };
+
+      this.device?.updateToken(json.token);
     });
   }
 

@@ -206,6 +206,7 @@ function SendMessageDialog() {
                         }}
                         value={field.value}
                         placeholder="Enter phone number"
+                        disablePortal
                       />
                     ) : (
                       <Command className="border rounded-md shadow-sm">

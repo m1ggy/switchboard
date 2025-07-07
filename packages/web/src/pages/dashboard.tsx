@@ -151,8 +151,8 @@ function Dashboard() {
               <CardTitle>Contact with most calls</CardTitle>
             </CardHeader>
             <CardContent className="text-2xl font-bold">
-              {topContactByCallCount?.[0].label} (
-              {topContactByCallCount?.[0].call_count})
+              {topContactByCallCount?.[0]?.label} (
+              {topContactByCallCount?.[0]?.call_count})
             </CardContent>
           </Card>
         )}

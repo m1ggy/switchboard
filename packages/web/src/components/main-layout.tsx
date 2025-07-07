@@ -56,6 +56,7 @@ function Layout() {
         <TwilioVoiceProvider
           token={token ?? ''}
           refetchToken={refetchToken as unknown as () => Promise<void>}
+          key={activeNumber?.number}
         >
           <JitsiProvider>
             <SidebarProvider className="transition-all">

@@ -163,6 +163,7 @@ function Dialer() {
               setSelectedContactId(null);
             }}
             placeholder="Enter phone number"
+            disablePortal
           />
 
           <div className="grid-cols-3 grid gap-2">

@@ -12,6 +12,7 @@ import { TwilioClient } from '@/lib/twilio';
 import crypto from 'crypto';
 import { type FastifyInstance } from 'fastify';
 import twilio from 'twilio';
+import { authMiddleware } from '../middlewares/auth';
 
 const { twiml } = twilio;
 
@@ -336,6 +337,29 @@ async function routes(app: FastifyInstance) {
 
     return reply.status(204).send();
   });
+
+  app.get(
+    '/twilio/token',
+    { preHandler: authMiddleware },
+    async (req, reply) => {
+      try {
+        const { identity } = req.query as { identity?: string };
+
+        const jwt = twilioClient.generateVoiceToken({
+          apiKeySid: process.env.TWILIO_API_KEY_SID as string,
+          apiKeySecret: process.env.TWILIO_API_KEY_SECRET as string,
+          outgoingApplicationSid: process.env.TWILIO_TWIMIL_APP_SID as string,
+          identity: identity ?? 'client',
+          ttl: 86400, // Optional: 24 hours
+        });
+
+        return reply.send({ token: jwt });
+      } catch (error) {
+        console.error('Failed to generate Twilio token:', error);
+        return reply.status(500).send({ error: 'Failed to generate token' });
+      }
+    }
+  );
 }
 
 export default routes;

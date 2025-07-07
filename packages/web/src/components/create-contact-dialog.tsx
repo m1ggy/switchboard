@@ -123,7 +123,7 @@ function CreateContactDialog() {
                 <FormItem>
                   <FormLabel>Phone Number</FormLabel>
                   <FormControl>
-                    <PhoneInput {...field} />
+                    <PhoneInput {...field} disablePortal />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
