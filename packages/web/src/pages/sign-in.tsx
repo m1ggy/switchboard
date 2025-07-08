@@ -81,13 +81,21 @@ function SignIn() {
       setLoading(false);
     }
   };
+
   return (
     <div className="min-h-screen flex flex-col">
       {/* <Header /> */}
       <div className="flex-1 justify-center items-center w-full flex">
         <Card className="p-5 w-md">
           <CardTitle className="text-md text-center">
-            Sign in to Calliya
+            <div className="flex justify-center">
+              <img
+                src={`/calliya-logo.png`}
+                alt="Calliya"
+                className="w-[160px] h-auto object-contain"
+              />
+            </div>
+            <span>Sign in to Calliya</span>
           </CardTitle>
 
           <CardContent>
