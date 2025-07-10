@@ -54,8 +54,9 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
     enabled:
+      Boolean(activeNumber) &&
       //@ts-ignore
-      Boolean(activeNumber) && !Boolean(clientRef.current?.activeConnection()),
+      !Boolean(clientRef.current?.activeConnection?.()),
   });
 
   useEffect(() => {
