@@ -5,7 +5,7 @@ import { TwilioVoiceProvider } from '@/hooks/twilio-provider';
 import { getSocket } from '@/lib/socket';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { Outlet } from 'react-router';
 import type { Socket } from 'socket.io-client';
@@ -26,15 +26,6 @@ function Layout() {
   const trpc = useTRPC();
   const { activeNumber } = useMainStore();
 
-  const { data: token, refetch: refetchToken } = useQuery({
-    ...trpc.twilio.token.queryOptions({ identity: activeNumber?.number }),
-    refetchInterval: 4 * 60 * 10 * 1000,
-    refetchOnMount: true,
-    refetchOnReconnect: false,
-    refetchOnWindowFocus: false,
-    enabled: Boolean(activeNumber),
-  });
-
   const { mutate } = useMutation(trpc.twilio.presence.mutationOptions());
 
   useEffect(() => {
@@ -53,11 +44,7 @@ function Layout() {
   return (
     <NotificationProvider>
       <SocketProvider socket={socket}>
-        <TwilioVoiceProvider
-          token={token ?? ''}
-          refetchToken={refetchToken as unknown as () => Promise<void>}
-          key={activeNumber?.number}
-        >
+        <TwilioVoiceProvider key={activeNumber?.number}>
           <JitsiProvider>
             <SidebarProvider className="transition-all">
               <BaseSidebar />

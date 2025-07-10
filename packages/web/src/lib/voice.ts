@@ -9,6 +9,7 @@ interface TwilioVoiceOptions {
   onIncomingCall?: (connection: Call) => void;
   onDisconnect?: () => void;
   onError?: (error: Error) => void;
+  identity: string | null;
 }
 
 export class TwilioVoiceClient {
@@ -18,12 +19,14 @@ export class TwilioVoiceClient {
   private onDisconnect?: () => void;
   private onError?: (error: Error) => void;
   connection: TwilioConnection | null = null;
+  identity: string | null = null;
 
   constructor(options: TwilioVoiceOptions) {
     this.token = options.token;
     this.onIncomingCall = options.onIncomingCall;
     this.onDisconnect = options.onDisconnect;
     this.onError = options.onError;
+    this.identity = options.identity;
   }
 
   async initialize(): Promise<void> {
@@ -67,6 +70,12 @@ export class TwilioVoiceClient {
           'cannot refetch voice token as there is no user logged in'
         );
 
+      // return early if there is an active connection
+      //@ts-ignore
+      if (this.device?.activeConnection()) return;
+
+      if (!this.identity) return;
+
       const token = await user.getIdToken(true);
 
       const response = await fetch(
@@ -76,6 +85,7 @@ export class TwilioVoiceClient {
             Authorization: `Bearer ${token}` as string,
           },
           method: 'GET',
+          body: JSON.stringify({ identity: this.identity }),
         }
       );
 

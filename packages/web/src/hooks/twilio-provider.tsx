@@ -1,9 +1,11 @@
 import useMainStore from '@/lib/store';
+import { useTRPC } from '@/lib/trpc';
 import { TwilioVoiceClient } from '@/lib/voice';
+import { useQuery } from '@tanstack/react-query';
 import type { Call } from '@twilio/voice-sdk';
 import {
   createContext,
-  type ReactNode,
+  type PropsWithChildren,
   useContext,
   useEffect,
   useRef,
@@ -35,23 +37,26 @@ export function useTwilioVoice() {
   return context;
 }
 
-interface Props {
-  token: string;
-  children: ReactNode;
-  refetchToken: () => Promise<void>;
-}
-
-export const TwilioVoiceProvider = ({
-  token,
-  children,
-  refetchToken,
-}: Props) => {
+export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
   const { setDialerModalShown } = useMainStore();
   const clientRef = useRef<TwilioVoiceClient | null>(null);
   const [ready, setReady] = useState(false);
   const [callState, setCallState] = useState<CallState>('idle');
   const [incomingCall, setIncomingCall] = useState<Call | null>(null);
   const [activeCall, setActiveCall] = useState<Call | null>(null);
+  const { activeNumber } = useMainStore();
+  const trpc = useTRPC();
+
+  const { data: token, refetch: refetchToken } = useQuery({
+    ...trpc.twilio.token.queryOptions({ identity: activeNumber?.number }),
+    refetchInterval: 4 * 60 * 10 * 1000,
+    refetchOnMount: true,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
+    enabled:
+      //@ts-ignore
+      Boolean(activeNumber) && !Boolean(clientRef.current?.activeConnection()),
+  });
 
   useEffect(() => {
     if (!token) return;
@@ -92,21 +97,14 @@ export const TwilioVoiceProvider = ({
         setIncomingCall(null);
         refetchToken();
       },
+      identity: activeNumber?.number as string,
     });
 
     client.initialize().then(() => {
       clientRef.current = client;
       setReady(true);
     });
-
-    return () => {
-      client.destroy();
-      clientRef.current = null;
-      setReady(false);
-      setCallState('idle');
-      setIncomingCall(null);
-    };
-  }, [token, refetchToken]);
+  }, [token, refetchToken, activeNumber]);
 
   const makeCall = (params: Record<string, string>) => {
     if (clientRef.current) {

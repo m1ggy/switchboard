@@ -29,7 +29,9 @@ function CompanySwitcherDialog() {
   const { data: companies, isFetching } = useQuery(
     trpc.companies.getUserCompanies.queryOptions()
   );
-  const { mutate } = useMutation(trpc.twilio.presence.mutationOptions());
+  const { mutateAsync: mutate } = useMutation(
+    trpc.twilio.presence.mutationOptions()
+  );
   const { refetch: refetchToken } = useQuery(
     trpc.twilio.token.queryOptions({
       identity: activeNumber?.number as string,
@@ -40,10 +42,10 @@ function CompanySwitcherDialog() {
     setActiveCompany(baseCompany);
 
     if (numbers.length) {
-      await refetchToken();
       const mainNumber = numbers[0];
       setActiveNumber(mainNumber);
-      mutate({ identity: mainNumber.number });
+      await mutate({ identity: mainNumber.number });
+      await refetchToken();
     }
     setCompanySwitcherDialogShown(false);
   };
