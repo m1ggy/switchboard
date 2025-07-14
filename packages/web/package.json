@@ -32,6 +32,7 @@
     "@radix-ui/react-select": "^2.2.5",
     "@radix-ui/react-separator": "^1.1.6",
     "@radix-ui/react-slot": "^1.2.3",
+    "@radix-ui/react-switch": "^1.2.5",
     "@radix-ui/react-tooltip": "^1.2.6",
     "@tailwindcss/vite": "^4.1.5",
     "@tanstack/react-query": "^5.75.5",
@@ -44,8 +45,10 @@
     "cmdk": "^1.1.1",
     "date-fns": "^4.1.0",
     "firebase": "^11.7.1",
+    "lib-jitsi-meet": "https://github.com/jitsi/lib-jitsi-meet/releases/download/v2012.0.0+86b76227/lib-jitsi-meet.tgz",
     "libphonenumber-js": "^1.12.8",
     "lucide-react": "^0.508.0",
+    "nanoid": "^5.1.5",
     "next-themes": "^0.4.6",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -58,7 +61,6 @@
     "tailwind-merge": "^3.2.0",
     "tailwindcss": "^4.1.5",
     "zod": "^3.24.4",
-    "zustand": "^5.0.4",
-    "lib-jitsi-meet": "https://github.com/jitsi/lib-jitsi-meet/releases/download/v2012.0.0+86b76227/lib-jitsi-meet.tgz"
+    "zustand": "^5.0.4"
   }
 }

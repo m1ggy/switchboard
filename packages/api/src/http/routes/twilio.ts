@@ -2,13 +2,16 @@ import { CallsRepository } from '@/db/repositories/calls';
 import { UserCompaniesRepository } from '@/db/repositories/companies';
 import { ContactsRepository } from '@/db/repositories/contacts';
 import { InboxesRepository } from '@/db/repositories/inboxes';
+import { MediaAttachmentsRepository } from '@/db/repositories/message_attachments';
 import { MessagesRepository } from '@/db/repositories/messages';
 import { NumbersRepository } from '@/db/repositories/numbers';
+import { uploadAttachmentBuffer } from '@/lib/google/storage';
 import { notifyIncomingCall, notifyNewMessage } from '@/lib/helpers';
 import { callQueueManager } from '@/lib/queue';
 import { sendCallAlertToSlack } from '@/lib/slack';
 import { activeCallStore, presenceStore } from '@/lib/store';
 import { TwilioClient } from '@/lib/twilio';
+import axios from 'axios';
 import crypto from 'crypto';
 import { type FastifyInstance } from 'fastify';
 import twilio from 'twilio';
@@ -290,28 +293,33 @@ async function routes(app: FastifyInstance) {
   });
 
   app.post('/sms', async (req, reply) => {
-    const { From, To, Body, MessageSid } = req.body as Record<string, string>;
+    const { From, To, Body, MessageSid, NumMedia, ...mediaFields } =
+      req.body as Record<string, string>;
 
     const matchingNumber = await NumbersRepository.findByNumber(To);
     if (!matchingNumber) return reply.status(204).send();
+
     let contact = await ContactsRepository.findByNumber(
       From,
       matchingNumber.company_id
     );
 
-    if (!contact)
+    if (!contact) {
       contact = await ContactsRepository.create({
-        id: crypto.randomUUID() as string,
+        id: crypto.randomUUID(),
         number: From,
         company_id: matchingNumber.company_id,
         label: From,
       });
+    }
+
     const inbox = await InboxesRepository.findOrCreate({
       numberId: matchingNumber.id,
       contactId: contact.id,
     });
-    const newMessage = await MessagesRepository.create({
-      id: crypto.randomUUID() as string,
+
+    const dbMessage = await MessagesRepository.create({
+      id: crypto.randomUUID(),
       numberId: matchingNumber.id,
       createdAt: new Date(),
       message: Body,
@@ -321,7 +329,46 @@ async function routes(app: FastifyInstance) {
       meta: { MessageSid },
     });
 
-    await InboxesRepository.updateLastMessage(inbox.id, newMessage.id);
+    await InboxesRepository.updateLastMessage(inbox.id, dbMessage.id);
+
+    const mediaCount = parseInt(NumMedia ?? '0', 10);
+
+    if (mediaCount > 0) {
+      const uploads = [];
+
+      for (let i = 0; i < mediaCount; i++) {
+        const mediaUrl = mediaFields[`MediaUrl${i}`];
+        const contentType = mediaFields[`MediaContentType${i}`];
+
+        if (!mediaUrl || !contentType) continue;
+
+        const mediaResp = await axios.get(mediaUrl, {
+          responseType: 'arraybuffer',
+          auth: {
+            username: process.env.TWILIO_ACCOUNT_SID as string,
+            password: process.env.TWILIO_AUTH_TOKEN as string,
+          },
+        });
+
+        const buffer = Buffer.from(mediaResp.data);
+        const extension = contentType.split('/')[1]; // crude fallback
+        const gcsFilename = `${crypto.randomUUID()}.${extension}`;
+
+        const gcsUrl = await uploadAttachmentBuffer(buffer, gcsFilename);
+
+        uploads.push(
+          MediaAttachmentsRepository.create({
+            id: crypto.randomUUID(),
+            message_id: dbMessage.id,
+            media_url: gcsUrl,
+            content_type: contentType,
+            file_name: gcsFilename,
+          })
+        );
+      }
+
+      await Promise.all(uploads);
+    }
 
     notifyNewMessage({
       from: From,
@@ -329,7 +376,7 @@ async function routes(app: FastifyInstance) {
       message: Body,
       app,
       meta: {
-        companyId: matchingNumber?.company_id,
+        companyId: matchingNumber.company_id,
         event: 'refresh',
         target: { contactId: contact.id },
       },

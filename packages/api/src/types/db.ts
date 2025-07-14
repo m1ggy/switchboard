@@ -137,3 +137,21 @@ export type CallNote = {
   number_id: string;
   company_id: string;
 };
+
+export type UserOnboardingProgress = {
+  user_id: string;
+  company_setup_complete: boolean;
+  number_added: boolean;
+  onboarding_completed: boolean;
+  last_step: string | null;
+  updated_at: Date;
+};
+
+export type MediaAttachment = {
+  id: string;
+  message_id: string;
+  media_url: string;
+  content_type: string;
+  file_name?: string | null;
+  created_at: string;
+};

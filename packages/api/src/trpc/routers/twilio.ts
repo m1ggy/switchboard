@@ -1,9 +1,12 @@
 import { ContactsRepository } from '@/db/repositories/contacts';
 import { InboxesRepository } from '@/db/repositories/inboxes';
+import { MediaAttachmentsRepository } from '@/db/repositories/message_attachments';
 import { MessagesRepository } from '@/db/repositories/messages';
 import { NumbersRepository } from '@/db/repositories/numbers';
+import { uploadAttachmentBuffer } from '@/lib/google/storage';
 import { activeCallStore, presenceStore } from '@/lib/store';
-import { TwilioClient } from '@/lib/twilio';
+import { TWILIO_ALLOWED_MIME_TYPES, TwilioClient } from '@/lib/twilio';
+import { getMimeType } from '@/lib/utils';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -82,16 +85,54 @@ export const twilioRouter = router({
         numberId: z.string(),
         contactId: z.string(),
         body: z.string().min(1).max(2000),
+        attachments: z
+          .array(
+            z.object({
+              base64: z.string(),
+              filename: z.string(),
+            })
+          )
+          .optional(),
       })
     )
     .mutation(async ({ input }) => {
       try {
         const number = await NumbersRepository.findById(input.numberId);
-
         if (!number) throw new Error('No matching number was found');
-        const contact = await ContactsRepository.findById(input.contactId);
 
+        const contact = await ContactsRepository.findById(input.contactId);
         if (!contact) throw new Error('No matching contact was found');
+
+        const inbox = await InboxesRepository.findOrCreate({
+          numberId: input.numberId,
+          contactId: input.contactId,
+        });
+
+        // Pre-upload the media and collect URLs and metadata
+        const mediaResults: {
+          url: string;
+          contentType: string;
+          filename: string;
+        }[] = [];
+
+        if (input.attachments?.length) {
+          for (const file of input.attachments) {
+            const contentType = getMimeType(file.filename);
+
+            if (!TWILIO_ALLOWED_MIME_TYPES.includes(contentType)) {
+              throw new Error(`Unsupported file type: ${contentType}`);
+            }
+
+            const buffer = Buffer.from(file.base64, 'base64');
+            const url = await uploadAttachmentBuffer(buffer, file.filename);
+
+            mediaResults.push({
+              url,
+              contentType,
+              filename: file.filename,
+            });
+          }
+        }
 
         const twilz = new TwilioClient(
           process.env.TWILIO_ACCOUNT_SID as string,
@@ -99,15 +140,15 @@ export const twilioRouter = router({
           number.number
         );
 
-        const message = await twilz.sendSms(contact.number, input.body);
+        const message = await twilz.sendSms(
+          contact.number,
+          input.body,
+          mediaResults.map((m) => m.url)
+        );
 
-        const inbox = await InboxesRepository.findOrCreate({
-          numberId: input.numberId,
-          contactId: input.contactId,
-        });
-
+        // Save message in DB
         const dbMessage = await MessagesRepository.create({
-          id: crypto.randomUUID() as string,
+          id: crypto.randomUUID(),
           message: input.body,
           inboxId: inbox.id,
           numberId: input.numberId,
@@ -122,6 +163,19 @@ export const twilioRouter = router({
         });
 
         await InboxesRepository.updateLastMessage(inbox.id, dbMessage.id);
+
+        // Save each attachment in DB
+        await Promise.all(
+          mediaResults.map(({ url, contentType, filename }) =>
+            MediaAttachmentsRepository.create({
+              id: crypto.randomUUID(),
+              message_id: dbMessage.id,
+              media_url: url,
+              content_type: contentType,
+              file_name: filename,
+            })
+          )
+        );
 
         return await MessagesRepository.findById(dbMessage.id);
       } catch (error) {

@@ -38,6 +38,7 @@ const app = Fastify({
       },
     },
   },
+  bodyLimit: 10485760, // 10MB in bytes
 });
 
 app.register(fastifySocketIO, {
