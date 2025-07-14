@@ -239,6 +239,116 @@ exports.up = (pgm) => {
       notNull: true,
     },
   });
+
+  pgm.createTable('subscriptions', {
+    id: {
+      type: 'uuid',
+      primaryKey: true,
+      default: pgm.func('gen_random_uuid()'),
+    },
+
+    user_id: {
+      type: 'text',
+      notNull: true,
+    },
+
+    // Plan information (e.g. "starter", "pro", "enterprise")
+    plan: {
+      type: 'text',
+      notNull: true,
+    },
+
+    status: {
+      type: 'text',
+      notNull: true,
+      default: `'incomplete'`, // Options: active, trialing, past_due, canceled, etc.
+    },
+
+    stripe_customer_id: {
+      type: 'text',
+      unique: true,
+    },
+    stripe_subscription_id: {
+      type: 'text',
+      unique: true,
+    },
+    current_period_start: {
+      type: 'timestamp with time zone',
+    },
+    current_period_end: {
+      type: 'timestamp with time zone',
+    },
+    cancel_at_period_end: {
+      type: 'boolean',
+      default: false,
+    },
+
+    // Timestamps
+    created_at: {
+      type: 'timestamp with time zone',
+      notNull: true,
+      default: pgm.func('now()'),
+    },
+    updated_at: {
+      type: 'timestamp with time zone',
+      notNull: true,
+      default: pgm.func('now()'),
+    },
+  });
+
+  // Optional: index to speed up lookup
+  pgm.createIndex('subscriptions', ['company_id']);
+
+  pgm.createTable('user_onboarding_progress', {
+    user_id: {
+      type: 'text',
+      primaryKey: true,
+    },
+    company_setup_complete: { type: 'boolean', notNull: true, default: false },
+    number_added: { type: 'boolean', notNull: true, default: false },
+    onboarding_completed: { type: 'boolean', notNull: true, default: false },
+    last_step: { type: 'text' },
+    updated_at: {
+      type: 'timestamptz',
+      notNull: true,
+      default: pgm.func('now()'),
+    },
+  });
+
+  pgm.createIndex('user_onboarding_progress', 'user_id');
+
+  pgm.createTable('media_attachments', {
+    id: {
+      type: 'uuid',
+      primaryKey: true,
+      default: pgm.func('gen_random_uuid()'),
+    },
+    message_id: {
+      type: 'uuid',
+      notNull: true,
+      references: 'messages(id)',
+      onDelete: 'cascade',
+    },
+    media_url: {
+      type: 'text',
+      notNull: true,
+    },
+    content_type: {
+      type: 'text',
+      notNull: true,
+    },
+    file_name: {
+      type: 'text',
+      notNull: false,
+    },
+    created_at: {
+      type: 'timestamptz',
+      notNull: true,
+      default: pgm.func('now()'),
+    },
+  });
+
+  pgm.createIndex('media_attachments', 'message_id');
 };
 
 exports.down = (pgm) => {

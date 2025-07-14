@@ -1,6 +1,8 @@
 import { Skeleton } from '@/components/ui/skeleton';
 import { useJitsi } from '@/hooks/jitsi-provider';
 import { useTwilioVoice } from '@/hooks/twilio-provider';
+import { useLightbox } from '@/hooks/use-lightbox';
+import { useAttachmentPrep } from '@/hooks/useAttachmentPrep';
 import useMainStore from '@/lib/store';
 import { useVideoCallStore } from '@/lib/stores/videocall';
 import { useTRPC } from '@/lib/trpc';
@@ -10,10 +12,16 @@ import { Loader2, Paperclip, Phone, Send, Video } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
+import AttachmentPreview from './attachment-preview';
 import ChatBubble from './chat-bubble';
+import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Form, FormControl, FormField } from './ui/form';
 import { Input } from './ui/input';
+import { Label } from './ui/label';
+import Lightbox from './ui/lightbox';
+import { Separator } from './ui/separator';
+import TooltipStandalone from './ui/tooltip-standalone';
 
 interface MessengerProps {
   contactId?: string | null;
@@ -150,8 +158,13 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
     }
   }, [items.length, isMessagesLoading, initialScrollDone, contactId]);
 
-  function onSubmitMessage(data: { message: string }) {
+  async function onSubmitMessage(data: { message: string }) {
     if (!contactId) return;
+
+    const base64s = await getBase64Attachments();
+    const mappedAttachments = attachments.map((_, index) => ({
+      ...base64s[index],
+    }));
 
     const tempMessage = {
       id: `temp-${Date.now()}`,
@@ -160,6 +173,7 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
       direction: 'outbound',
       type: 'message',
       message: data.message,
+      attachments: mappedAttachments,
     };
 
     setItems((prev) => [...prev, tempMessage]);
@@ -175,6 +189,7 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
         body: data.message,
         contactId,
         numberId: activeNumber?.id as string,
+        attachments: mappedAttachments.length ? mappedAttachments : undefined,
       },
       {
         onSuccess: () => {
@@ -184,6 +199,7 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
     );
 
     form.reset({ message: '' });
+    clearAttachments();
   }
 
   useEffect(() => {
@@ -284,6 +300,16 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
 
   const { makeCall } = useTwilioVoice();
   const { createRoom } = useJitsi();
+  const {
+    attachments,
+    addAttachment,
+    removeAttachment,
+    getBase64Attachments,
+    totalSize,
+    clearAttachments,
+  } = useAttachmentPrep();
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const { open, setOpen, files, setFiles, setIndex, index } = useLightbox();
 
   if (!contactId) {
     return (
@@ -376,7 +402,12 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
                         </span>
                       </div>
                     )}
-                    <ChatBubble item={item} />
+                    <ChatBubble
+                      item={item}
+                      setFiles={setFiles}
+                      setIndex={setIndex}
+                      setOpen={setOpen}
+                    />
                   </div>
                 );
               });
@@ -391,14 +422,60 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
         </div>
       )}
 
+      {attachments.length > 0 && (
+        <div className="px-5 pt-6 pb-4 flex flex-col gap-3">
+          <Separator />
+          <Label>
+            Attachments{' '}
+            {totalSize && (
+              <TooltipStandalone content="Total size of all attachments">
+                {' '}
+                <Badge>{`${totalSize}/5 MB`}</Badge>
+              </TooltipStandalone>
+            )}
+          </Label>
+          <div className="grid grid-cols-6 gap-3 overflow-auto pb-2">
+            {attachments.map((file) => (
+              <div key={file.id} className="h-24">
+                <AttachmentPreview
+                  file={file}
+                  onClose={() => removeAttachment(file.id)}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <Form {...form}>
         <form
           className="flex gap-2 px-5 py-5"
           onSubmit={form.handleSubmit(onSubmitMessage)}
         >
-          <Button size={'icon'} variant={'outline'}>
-            <Paperclip />
-          </Button>
+          <>
+            <TooltipStandalone content="Add Attachment">
+              <Button
+                size="icon"
+                variant="outline"
+                type="button"
+                onClick={() => inputRef.current?.click()}
+              >
+                <Paperclip />
+              </Button>
+            </TooltipStandalone>
+            <input
+              ref={inputRef}
+              id="file-upload"
+              type="file"
+              accept="image/*,video/*"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) addAttachment(file);
+                e.target.value = '';
+              }}
+              className="hidden"
+            />
+          </>
+
           <FormField
             control={form.control}
             name="message"
@@ -413,6 +490,12 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
           </Button>
         </form>
       </Form>
+      <Lightbox
+        images={files}
+        initialIndex={index}
+        open={open}
+        onOpenChange={setOpen}
+      />
     </div>
   );
 }

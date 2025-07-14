@@ -124,6 +124,12 @@ export const InboxesRepository = {
       status?: 'sent' | 'draft';
       duration?: number;
       meta?: any;
+      attachments?: {
+        id: string;
+        media_url: string;
+        content_type: string;
+        file_name: string | null;
+      }[];
     }[]
   > {
     const result = await pool.query(
@@ -169,7 +175,48 @@ export const InboxesRepository = {
       [contactId, cursorCreatedAt || null, cursorId || null, limit]
     );
 
-    return result.rows;
+    const activity = result.rows;
+
+    const messageIds = activity
+      .filter((item) => item.type === 'message')
+      .map((item) => item.id);
+
+    let attachmentsByMessageId: Record<string, any[]> = {};
+
+    if (messageIds.length > 0) {
+      const res = await pool.query(
+        `
+      SELECT *
+      FROM media_attachments
+      WHERE message_id = ANY($1::uuid[])
+      `,
+        [messageIds]
+      );
+
+      attachmentsByMessageId = res.rows.reduce(
+        (acc, row) => {
+          if (!acc[row.message_id]) acc[row.message_id] = [];
+          acc[row.message_id].push({
+            id: row.id,
+            media_url: row.media_url,
+            content_type: row.content_type,
+            file_name: row.file_name,
+          });
+          return acc;
+        },
+        {} as Record<string, any[]>
+      );
+    }
+
+    return activity.map((item) => {
+      if (item.type === 'message') {
+        return {
+          ...item,
+          attachments: attachmentsByMessageId[item.id] ?? [],
+        };
+      }
+      return item;
+    });
   },
   async markInboxAsViewed(inboxId: string): Promise<void> {
     await pool.query(`UPDATE inboxes SET last_viewed_at = $1 WHERE id = $2`, [

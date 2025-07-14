@@ -11,6 +11,32 @@ type AvailablePhoneNumberInstance = Awaited<
   ReturnType<ReturnType<Twilio['availablePhoneNumbers']>['local']['list']>
 >[number];
 
+export const TWILIO_ALLOWED_MIME_TYPES = [
+  // Images
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/gif',
+
+  // Videos
+  'video/3gpp',
+  'video/mp4',
+
+  // Audio
+  'audio/mpeg',
+  'audio/mp3',
+  'audio/amr',
+  'audio/aac',
+  'audio/ogg',
+
+  // Documents (only on supported carriers)
+  'application/pdf',
+  'application/msword',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+];
+
 export class TwilioClient {
   client: Twilio;
   private from: string;
@@ -22,11 +48,16 @@ export class TwilioClient {
 
   // ───────────── Messaging ─────────────
 
-  async sendSms(to: string, body: string): Promise<MessageInstance> {
+  async sendSms(
+    to: string,
+    body: string,
+    mediaUrls?: string[]
+  ): Promise<MessageInstance> {
     return await this.client.messages.create({
       body,
       from: this.from,
       to,
+      mediaUrl: mediaUrls ?? [],
     });
   }
 
