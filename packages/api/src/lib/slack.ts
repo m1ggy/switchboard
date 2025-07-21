@@ -25,7 +25,7 @@ export async function sendCallAlertToSlack(
 *From:* \`${from}\`  
 *To:* \`${to}\`
 
-🔗 <https://stagingspace.org|Click here to respond>
+🔗 <${process.env.WEB_DOMAIN}|Click here to respond>
 
 🕒 *Call is currently on hold.*`;
 
