@@ -1,9 +1,7 @@
 name: Deploy Web + API to VPS (pnpm + PM2 + Caddy + Static Serve)
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch
 
 jobs:
   deploy:
