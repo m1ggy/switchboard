@@ -16,6 +16,7 @@ import CallHistory from './pages/call-history';
 import Dashboard from './pages/dashboard';
 import Draft from './pages/draft';
 import Inbox from './pages/inbox';
+import Onboarding from './pages/onboarding';
 import Sent from './pages/sent';
 import ShortUrl from './pages/short-url';
 import SignIn from './pages/sign-in';
@@ -78,6 +79,7 @@ function App() {
                     </AuthRoute>
                   }
                 />
+                <Route path="/onboarding" element={<Onboarding />} />
                 <Route path="/call/:callId" element={<VideoCall />} />
                 <Route path="/s/:shortUrlId" element={<ShortUrl />} />
                 <Route

@@ -47,13 +47,14 @@ export interface Inbox {
 export interface Message {
   id: string;
   number_id: string;
-  message: string | null;
-  created_at: Date | null;
+  message: string;
   contact_id: string;
   inbox_id: string;
-  meta: Record<string, unknown> | null;
-  status: MessageStatus | null;
+  meta?: Record<string, unknown>;
+  status?: MessageStatus;
   direction: MessageDirection;
+  type: MessageType;
+  created_at: string;
 }
 
 export interface Call {
@@ -99,7 +100,7 @@ export type InboxWithDetails = {
     inbox_id: string;
     message: string | null;
     created_at: string | null;
-    meta: any;
+    meta: Record<string, string>;
     status: 'sent' | 'draft' | null;
     direction: 'inbound' | 'outbound';
   } | null;
@@ -110,7 +111,7 @@ export type InboxWithDetails = {
     contact_id: string;
     initiated_at: string | null;
     duration: number | null;
-    meta: any;
+    meta: Record<string, string>;
   } | null;
 
   lastViewedAt: string | null;
@@ -125,7 +126,7 @@ export type CombinedActivity = {
   message?: string | null;
   status?: 'sent' | 'draft' | null;
   duration?: number | null;
-  meta: any;
+  meta: Record<string, string>;
 };
 
 export type CallNote = {
@@ -155,3 +156,14 @@ export type MediaAttachment = {
   file_name?: string | null;
   created_at: string;
 };
+
+export interface FaxForwardLog {
+  id: string;
+  call_sid: string;
+  from_number: string;
+  to_number: string;
+  forwarded_to_fax_at: Date;
+  status: 'forwarded' | 'confirmed';
+}
+
+export type MessageType = 'message' | 'fax';

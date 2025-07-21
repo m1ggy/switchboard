@@ -4,6 +4,7 @@ import fastifySocketIO from 'fastify-socket.io';
 
 import fastifyCors from '@fastify/cors';
 import formBody from '@fastify/formbody';
+import multipart from '@fastify/multipart';
 import dotenv from 'dotenv';
 import path from 'path';
 import jitsiRoutes from './http/routes/jitsi';
@@ -52,6 +53,8 @@ app.register(fastifyCors, {
   origin: ['http://localhost:5173', process.env.WEB_DOMAIN as string],
 });
 app.register(formBody);
+app.register(multipart);
+
 app.register(fastifyTRPCPlugin, {
   prefix: '/trpc',
   trpcOptions: { router: appRouter, createContext, allowBatching: false },

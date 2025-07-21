@@ -1,6 +1,7 @@
 import { CallsRepository } from '@/db/repositories/calls';
 import { UserCompaniesRepository } from '@/db/repositories/companies';
 import { ContactsRepository } from '@/db/repositories/contacts';
+import { FaxForwardLogRepository } from '@/db/repositories/fax_forward';
 import { InboxesRepository } from '@/db/repositories/inboxes';
 import { MediaAttachmentsRepository } from '@/db/repositories/message_attachments';
 import { MessagesRepository } from '@/db/repositories/messages';
@@ -12,7 +13,7 @@ import { sendCallAlertToSlack } from '@/lib/slack';
 import { activeCallStore, presenceStore } from '@/lib/store';
 import { TwilioClient } from '@/lib/twilio';
 import axios from 'axios';
-import crypto from 'crypto';
+import crypto, { randomUUID } from 'crypto';
 import { type FastifyInstance } from 'fastify';
 import twilio from 'twilio';
 import { authMiddleware } from '../middlewares/auth';
@@ -31,10 +32,12 @@ async function routes(app: FastifyInstance) {
   app.post('/voice', async (request, reply) => {
     const { To, From, CallerId, Direction, ParentCallSid, CallSid } =
       request.body as Record<string, string>;
+    const query = request.query as { ivr: string };
 
     const callerId = CallerId || From;
     const isInbound = Direction === 'inbound';
     const response = new twiml.VoiceResponse();
+    const hasPassedIVR = query.ivr === '1';
 
     if (!To) {
       response.say('Invalid destination number.');
@@ -88,6 +91,22 @@ async function routes(app: FastifyInstance) {
       });
 
       await InboxesRepository.updateLastCall(inbox.id, call.id);
+    }
+
+    if (isInbound && !hasPassedIVR) {
+      response
+        .gather({
+          numDigits: 1,
+          timeout: 12,
+          action: '/twilio/voice/handle-gather',
+          method: 'POST',
+          actionOnEmptyResult: true,
+        })
+        .say(
+          'Press 1 to speak to an agent. Otherwise, please hold to send a fax.'
+        );
+
+      return reply.type('text/xml').status(200).send(response.toString());
     }
 
     // Track active call
@@ -191,6 +210,31 @@ async function routes(app: FastifyInstance) {
       );
 
       activeCallStore.updateStatus(CallSid, 'held', agentIdentity);
+    }
+
+    return reply.type('text/xml').status(200).send(response.toString());
+  });
+
+  app.post('/twilio/voice/handle-gather', async (request, reply) => {
+    const { Digits, CallSid, From, To } = request.body as Record<
+      string,
+      string
+    >;
+    const response = new twiml.VoiceResponse();
+
+    if (Digits === '1') {
+      // Caller chose voice support — redirect to main logic, mark IVR passed
+      response.redirect({ method: 'POST' }, `/voice?ivr=1`);
+    } else {
+      await FaxForwardLogRepository.create({
+        call_sid: CallSid,
+        from_number: From,
+        to_number: To,
+        forwarded_to_fax_at: new Date(),
+        status: 'forwarded',
+        id: randomUUID(),
+      });
+      response.dial('+1YOUR_FAXPLUS_NUMBER');
     }
 
     return reply.type('text/xml').status(200).send(response.toString());

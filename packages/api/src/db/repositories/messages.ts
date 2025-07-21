@@ -1,9 +1,14 @@
 import pool from '@/lib/pg';
-import { Message, MessageDirection, MessageStatus } from '@/types/db';
+import {
+  Message,
+  MessageDirection,
+  MessageStatus,
+  MessageType,
+} from '@/types/db';
 
 export const MessagesRepository = {
   /**
-   * Create a new message
+   * Create a new message (SMS, MMS, or FAX)
    */
   async create({
     id,
@@ -14,6 +19,7 @@ export const MessagesRepository = {
     meta,
     status,
     direction,
+    type = 'message', // default type
     createdAt,
   }: {
     id: string;
@@ -24,14 +30,15 @@ export const MessagesRepository = {
     meta?: Record<string, unknown>;
     status?: MessageStatus;
     direction: MessageDirection;
+    type?: MessageType; // 'message' | 'fax'
     createdAt?: Date;
   }): Promise<Message> {
     const res = await pool.query<Message>(
       `INSERT INTO messages (
          id, number_id, message, contact_id, inbox_id,
-         meta, status, direction, created_at
+         meta, status, direction, type, created_at
        ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
        ) RETURNING *`,
       [
         id,
@@ -42,7 +49,8 @@ export const MessagesRepository = {
         meta || null,
         status || null,
         direction,
-        createdAt?.toISOString() || new Date()?.toISOString(),
+        type,
+        createdAt?.toISOString() || new Date().toISOString(),
       ]
     );
 
@@ -76,12 +84,12 @@ export const MessagesRepository = {
     return res.rows;
   },
 
+  /**
+   * Find a message by ID
+   */
   async findById(messageId: string): Promise<Message | null> {
     const res = await pool.query<Message>(
-      `
-      SELECT * FROM messages
-      WHERE id = $1
-      `,
+      `SELECT * FROM messages WHERE id = $1`,
       [messageId]
     );
 
