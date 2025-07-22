@@ -196,9 +196,14 @@ function ActiveCallDialog() {
     return `${mins}:${secs}`;
   };
 
+  const hangupAndCloseDialog = () => {
+    hangUp();
+    setOpen(false);
+  };
+
   return (
     <Dialog open={open}>
-      <DialogContent className="text-center max-w-sm">
+      <DialogContent className="text-center max-w-sm [&>button:last-child]:hidden">
         <DialogHeader>
           <DialogTitle>📞 Call In Progress</DialogTitle>
         </DialogHeader>
@@ -211,12 +216,29 @@ function ActiveCallDialog() {
           Duration:{' '}
           <span className="font-mono">{formatDuration(callDuration)}</span>
         </div>
+        <div className="grid grid-cols-3 gap-2 mb-4">
+          {['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map(
+            (digit) => (
+              <Button
+                key={digit}
+                variant="outline"
+                onClick={() => {
+                  if (activeCall) {
+                    activeCall.sendDigits(digit);
+                  }
+                }}
+              >
+                {digit}
+              </Button>
+            )
+          )}
+        </div>
 
         <DialogFooter className="flex flex-col gap-2 sm:flex-row justify-center">
           <Button variant="secondary" onClick={toggleMute}>
             {muted ? 'Unmute' : 'Mute'}
           </Button>
-          <Button variant="destructive" onClick={hangUp}>
+          <Button variant="destructive" onClick={hangupAndCloseDialog}>
             End Call
           </Button>
         </DialogFooter>

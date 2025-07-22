@@ -53,11 +53,11 @@ function ActiveVideoCallDialog() {
       remote
         .filter((track) => track.isAudioTrack())
         .forEach((track) => {
-          //@ts-ignore
-          const id = track.getId?.() ?? track.track?.id; // Fallback to raw ID if needed
-          //@ts-ignore
+          const id = track.getId?.()
+          /* eslint-disable */
+          // @ts-ignore
           const level = track.getAudioLevel?.();
-          newSpeakingMap[id] = level > 0.1; // Adjust threshold as needed
+          newSpeakingMap[id] = level > 0.1;
         });
 
       setSpeakingMap(newSpeakingMap);
@@ -91,6 +91,7 @@ function ActiveVideoCallDialog() {
     return () => {
       try {
         local.detach(el);
+        // eslint-disable-next-line
       } catch (err) {
         console.warn('[Local Track] Failed to detach or already detached.');
       }
@@ -123,9 +124,9 @@ function ActiveVideoCallDialog() {
   }, [remote]);
 
   function endCall() {
-    conference?.end();
     local?.dispose();
     localAudio?.dispose();
+    conference?.end();
   }
 
   return (
@@ -155,6 +156,7 @@ function ActiveVideoCallDialog() {
                     track={_}
                     label={contact?.label}
                     isSpeaking={speakingMap[_.getId?.() ?? '']}
+                    key={_.getId()}
                   />
                 ))}
             </div>
@@ -167,6 +169,7 @@ function ActiveVideoCallDialog() {
                     if (el) remoteAudioRefs.current[i] = el;
                   }}
                   autoPlay
+                  // eslint-disable-next-line
                   playsInline
                 />
               ))}

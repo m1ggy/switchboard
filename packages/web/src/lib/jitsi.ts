@@ -1,3 +1,5 @@
+/* eslint-disable */
+
 export declare namespace JitsiMeetJS {
   const version: string;
   function init(): void;
