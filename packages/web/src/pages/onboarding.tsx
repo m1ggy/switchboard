@@ -14,6 +14,7 @@ import {
 import * as React from 'react';
 
 import { StripePaymentForm } from '@/components/stripe-payment-form';
+import { TwilioNumberSearch } from '@/components/twilio-number-search';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -41,8 +42,10 @@ const steps = [
   { id: 3, title: 'Preferences', description: 'Customize your experience' },
   { id: 4, title: 'Choose Plan', description: 'Select your subscription plan' },
   { id: 5, title: 'Payment Method', description: 'Add your payment details' },
-  { id: 6, title: 'Features Tour', description: 'Discover key features' },
-  { id: 7, title: 'Ready to Go', description: "You're all set!" },
+  { id: 6, title: 'Company Setup', description: 'Set up your company' },
+  { id: 7, title: 'Phone Number', description: 'Choose your phone number' },
+  { id: 8, title: 'Features Tour', description: 'Discover key features' },
+  { id: 9, title: 'Ready to Go', description: "You're all set!" },
 ];
 
 export default function Onboarding() {
@@ -63,6 +66,8 @@ export default function Onboarding() {
       cvc: '',
       cardName: '',
     },
+    selectedNumber: '',
+    companyName: '',
   });
 
   const progress = (currentStep / steps.length) * 100;
@@ -79,7 +84,7 @@ export default function Onboarding() {
     }
   };
 
-  const handleInputChange = (field: string, value: string | boolean | any) => {
+  const handleInputChange = (field: string, value: string | boolean) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
@@ -115,8 +120,8 @@ export default function Onboarding() {
             <div className="space-y-2">
               <h2 className="text-2xl font-bold">Welcome to Calliya</h2>
               <p className="text-muted-foreground max-w-md mx-auto">
-                Let's get you set up with everything you need to handle customer
-                calls efficiently and professionally.
+                Let&apos;s get you set up with everything you need to handle
+                customer calls efficiently and professionally.
               </p>
             </div>
             <div className="grid grid-cols-3 gap-4 max-w-md mx-auto">
@@ -308,7 +313,7 @@ export default function Onboarding() {
             <div className="text-center space-y-2">
               <h2 className="text-2xl font-bold">Choose Your Plan</h2>
               <p className="text-muted-foreground">
-                Select the plan that best fits your team's needs.
+                Select the plan that best fits your team&apos;s needs.
               </p>
             </div>
             <div className="grid gap-4 md:grid-cols-3">
@@ -527,13 +532,13 @@ export default function Onboarding() {
           />
         );
 
-      case 6:
+      case 8:
         return (
           <div className="space-y-6">
             <div className="text-center space-y-2">
               <h2 className="text-2xl font-bold">Key Features Overview</h2>
               <p className="text-muted-foreground">
-                Here are the main features you'll be using daily.
+                Here are the main features you&apos;ll be using daily.
               </p>
             </div>
             <div className="grid gap-4">
@@ -582,18 +587,69 @@ export default function Onboarding() {
             </div>
           </div>
         );
+      case 6:
+        return (
+          <div className="space-y-6">
+            <div className="text-center space-y-2">
+              <h2 className="text-2xl font-bold">Set Up Your Company</h2>
+              <p className="text-muted-foreground">
+                Tell us about your company to personalize your experience.
+              </p>
+            </div>
+            <div className="max-w-md mx-auto space-y-4">
+              <Card>
+                <CardContent className="p-6 space-y-4">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
+                      <Users className="w-5 h-5 text-primary" />
+                    </div>
+                    <span className="font-medium">Company Information</span>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="companyName">Company Name</Label>
+                    <Input
+                      id="companyName"
+                      value={formData.companyName}
+                      onChange={(e) =>
+                        handleInputChange('companyName', e.target.value)
+                      }
+                      placeholder="Enter your company name"
+                      className="text-center text-lg font-medium"
+                    />
+                  </div>
+                  <div className="text-xs text-muted-foreground text-center">
+                    <p>
+                      This will be displayed on your call center dashboard and
+                      reports.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        );
 
       case 7:
+        return (
+          <TwilioNumberSearch
+            selectedNumber={formData.selectedNumber}
+            onNumberSelect={(number) =>
+              handleInputChange('selectedNumber', number)
+            }
+          />
+        );
+
+      case 9:
         return (
           <div className="text-center space-y-6">
             <div className="mx-auto w-20 h-20 bg-green-100 rounded-full flex items-center justify-center">
               <Check className="w-10 h-10 text-green-600" />
             </div>
             <div className="space-y-2">
-              <h2 className="text-2xl font-bold">You're All Set!</h2>
+              <h2 className="text-2xl font-bold">You&apos;re All Set!</h2>
               <p className="text-muted-foreground max-w-md mx-auto">
-                Welcome to the team, {formData.firstName}! You're ready to start
-                handling calls and providing excellent customer service.
+                Welcome to the team, {formData.firstName}! You&apos;re ready to
+                start handling calls and providing excellent customer service.
               </p>
             </div>
             <div className="bg-muted/50 rounded-lg p-4 space-y-2">

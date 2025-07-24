@@ -5,9 +5,9 @@ import { TwilioVoiceProvider } from '@/hooks/twilio-provider';
 import { getSocket } from '@/lib/socket';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { Outlet } from 'react-router';
+import { Outlet, useNavigate } from 'react-router';
 import type { Socket } from 'socket.io-client';
 import ActiveCallDialog from './active-call-dialog';
 import ActiveVideoCallDialog from './active-video-call-dialog';
@@ -25,6 +25,9 @@ function Layout() {
   const rootSocket = getSocket();
   const trpc = useTRPC();
   const { activeNumber } = useMainStore();
+  const navigate = useNavigate();
+
+  const { data: userInfo } = useQuery(trpc.users.getUser.queryOptions());
 
   const { mutate } = useMutation(trpc.twilio.presence.mutationOptions());
 
@@ -40,6 +43,12 @@ function Layout() {
       setSocket(rootSocket);
     }
   }, [rootSocket]);
+
+  useEffect(() => {
+    if (userInfo && !userInfo.onboarding_completed) {
+      navigate('/onboarding');
+    }
+  }, [userInfo, navigate]);
 
   return (
     <NotificationProvider>

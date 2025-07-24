@@ -20,6 +20,7 @@ import Onboarding from './pages/onboarding';
 import Sent from './pages/sent';
 import ShortUrl from './pages/short-url';
 import SignIn from './pages/sign-in';
+import SignUp from './pages/sign-up';
 import VideoCall from './pages/video-call';
 import AuthRoute from './routes/auth-route';
 import PrivateRoute from './routes/private-route';
@@ -82,6 +83,7 @@ function App() {
                 <Route path="/onboarding" element={<Onboarding />} />
                 <Route path="/call/:callId" element={<VideoCall />} />
                 <Route path="/s/:shortUrlId" element={<ShortUrl />} />
+                <Route path="/sign-up" element={<SignUp />} />
                 <Route
                   path="/dashboard"
                   element={

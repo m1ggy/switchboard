@@ -12,6 +12,11 @@ export interface User {
   user_id: string;
   added_at: Date;
   is_active: boolean;
+  first_name: string;
+  last_name: string;
+  stripe_customer_id: string;
+  onboarding_step: number;
+  onboarding_completed: boolean;
 }
 
 export interface UserCompany {
