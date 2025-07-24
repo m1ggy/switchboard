@@ -50,13 +50,13 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
   const { data: token, refetch: refetchToken } = useQuery({
     ...trpc.twilio.token.queryOptions({ identity: activeNumber?.number }),
     refetchInterval: 4 * 60 * 10 * 1000,
-    refetchOnMount: true,
+    refetchOnMount: false,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
     enabled:
       Boolean(activeNumber) &&
       //@ts-ignore
-      !Boolean(clientRef.current?.activeConnection?.()),
+      !clientRef.current?.activeConnection?.(),
   });
 
   useEffect(() => {

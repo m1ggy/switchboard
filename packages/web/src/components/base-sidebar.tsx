@@ -102,15 +102,19 @@ function BaseSidebar() {
     setCompanySwitcherDialogShown,
   } = useMainStore();
 
-  const { data: companies, isFetching: companiesLoading } = useQuery(
-    trpc.companies.getUserCompanies.queryOptions()
-  );
+  const { data: companies, isFetching: companiesLoading } = useQuery({
+    ...trpc.companies.getUserCompanies.queryOptions(),
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    enabled: !!activeCompany,
+  });
 
   const { data: numbers, isFetching: numbersLoading } = useQuery({
     ...trpc.numbers.getCompanyNumbers.queryOptions({
       companyId: activeCompany?.id as string,
     }),
     enabled: !!activeCompany,
+    refetchOnWindowFocus: false,
   });
 
   useEffect(() => {
