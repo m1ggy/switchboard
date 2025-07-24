@@ -8,7 +8,7 @@ import { useVideoCallStore } from '@/lib/stores/videocall';
 import { useTRPC } from '@/lib/trpc';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
-import { Loader2, Paperclip, Phone, Send, Video } from 'lucide-react';
+import { Loader2, Paperclip, Phone, Printer, Send, Video } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -16,11 +16,12 @@ import AttachmentPreview from './attachment-preview';
 import ChatBubble from './chat-bubble';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
+import FaxSendDialog from './ui/fax-send-dialog';
 import { Form, FormControl, FormField } from './ui/form';
-import { Input } from './ui/input';
 import { Label } from './ui/label';
 import Lightbox from './ui/lightbox';
 import { Separator } from './ui/separator';
+import { Textarea } from './ui/textarea';
 import TooltipStandalone from './ui/tooltip-standalone';
 
 interface MessengerProps {
@@ -41,8 +42,11 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [hasReachedBottomOnce, setHasReachedBottomOnce] = useState(false);
   const [initialScrollDone, setInitialScrollDone] = useState(false);
+  // eslint-disable-next-line
   const [items, setItems] = useState<any[]>([]);
   const firstLoadRef = useRef(true);
+
+  const [showFaxDialog, setShowFaxDialog] = useState(false);
 
   const { mutateAsync: markInboxViewed } = useMutation(
     trpc.inboxes.markAsViewed.mutationOptions()
@@ -71,19 +75,6 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
     })
   );
 
-  useEffect(() => {
-    setReadyToPaginate(false);
-    setHasReachedBottomOnce(false);
-    setInitialScrollDone(false);
-    setPrevHeight(null);
-  }, [contactId]);
-
-  useEffect(() => {
-    if (contactId && inboxId) {
-      refetchMessages();
-    }
-  }, [contactId, inboxId]);
-
   const {
     data,
     fetchNextPage,
@@ -103,6 +94,19 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
       }
     )
   );
+
+  useEffect(() => {
+    setReadyToPaginate(false);
+    setHasReachedBottomOnce(false);
+    setInitialScrollDone(false);
+    setPrevHeight(null);
+  }, [contactId]);
+
+  useEffect(() => {
+    if (contactId && inboxId) {
+      refetchMessages();
+    }
+  }, [contactId, inboxId, refetchMessages]);
 
   const form = useForm({
     resolver: zodResolver(z.object({ message: z.string().min(1).max(500) })),
@@ -135,7 +139,7 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
     window.addEventListener('new-message-scroll', scrollToBottom);
     return () =>
       window.removeEventListener('new-message-scroll', scrollToBottom);
-  }, [inboxId]);
+  }, [inboxId, markInboxViewed, refetchInboxes, refetchUnreadCount]);
 
   useEffect(() => {
     if (
@@ -156,7 +160,13 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
         });
       });
     }
-  }, [items.length, isMessagesLoading, initialScrollDone, contactId]);
+  }, [
+    items.length,
+    isMessagesLoading,
+    initialScrollDone,
+    contactId,
+    isAtBottom,
+  ]);
 
   async function onSubmitMessage(data: { message: string }) {
     if (!contactId) return;
@@ -249,7 +259,7 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
     el.scrollTop = diff + 60;
 
     setPrevHeight(null);
-  }, [data]);
+  }, [data, prevHeight]);
 
   useEffect(() => {
     const container = scrollRef.current;
@@ -335,6 +345,16 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
               </span>
             </span>
             <div className="flex gap-2">
+              <TooltipStandalone content="Send Fax">
+                <Button
+                  size="icon"
+                  variant="outline"
+                  type="button"
+                  onClick={() => setShowFaxDialog(true)}
+                >
+                  <Printer />
+                </Button>
+              </TooltipStandalone>
               <Button
                 variant={'outline'}
                 size={'icon'}
@@ -446,56 +466,74 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
           </div>
         </div>
       )}
-      <Form {...form}>
-        <form
-          className="flex gap-2 px-5 py-5"
-          onSubmit={form.handleSubmit(onSubmitMessage)}
-        >
-          <>
-            <TooltipStandalone content="Add Attachment">
-              <Button
-                size="icon"
-                variant="outline"
-                type="button"
-                onClick={() => inputRef.current?.click()}
-              >
-                <Paperclip />
-              </Button>
-            </TooltipStandalone>
-            <input
-              ref={inputRef}
-              id="file-upload"
-              type="file"
-              accept="image/*,video/*"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) addAttachment(file);
-                e.target.value = '';
-              }}
-              className="hidden"
-            />
-          </>
-
-          <FormField
-            control={form.control}
-            name="message"
-            render={({ field }) => (
-              <FormControl>
-                <Input className="border rounded w-full" {...field} />
-              </FormControl>
-            )}
-          />
-          <Button size={'icon'} variant={'outline'} type="submit">
-            <Send />
+      <div className="flex gap-2 px-5 py-5 items-center">
+        {/* NON-FORM BUTTONS */}
+        <TooltipStandalone content="Add Attachment">
+          <Button
+            size="icon"
+            variant="outline"
+            type="button"
+            onClick={() => inputRef.current?.click()}
+          >
+            <Paperclip />
           </Button>
-        </form>
-      </Form>
+        </TooltipStandalone>
+
+        <input
+          ref={inputRef}
+          id="file-upload"
+          type="file"
+          accept="image/*,video/*"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            const files = Array.from(e.target.files ?? []);
+            if (files.length) files.forEach(addAttachment);
+            e.target.value = '';
+          }}
+        />
+
+        {/* THE FORM STARTS HERE */}
+        <Form {...form}>
+          <form
+            className="flex gap-2 items-center w-full"
+            onSubmit={form.handleSubmit(onSubmitMessage)}
+          >
+            <FormField
+              control={form.control}
+              name="message"
+              render={({ field }) => (
+                <FormControl>
+                  <Textarea
+                    className="border rounded w-full resize-none max-h-48 overflow-y-auto ring-accent"
+                    rows={1}
+                    {...field}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        form.handleSubmit(onSubmitMessage)();
+                      }
+                    }}
+                  />
+                </FormControl>
+              )}
+            />
+
+            <Button size="icon" variant="outline" type="submit">
+              <Send />
+            </Button>
+          </form>
+        </Form>
+      </div>
+
       <Lightbox
         images={files}
         initialIndex={index}
         open={open}
         onOpenChange={setOpen}
       />
+
+      <FaxSendDialog open={showFaxDialog} onOpenChange={setShowFaxDialog} />
     </div>
   );
 }

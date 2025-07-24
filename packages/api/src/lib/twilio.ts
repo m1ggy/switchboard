@@ -37,6 +37,25 @@ export const TWILIO_ALLOWED_MIME_TYPES = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 ];
 
+function buildCacheKey(
+  prefix: string,
+  params: Record<string, string | number | boolean | undefined>
+): string {
+  const sortedEntries = Object.entries(params)
+    .filter(([_, v]) => v !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b));
+
+  const key = sortedEntries.map(([k, v]) => `${k}=${v}`).join('&');
+  return `${prefix}:${key}`;
+}
+
+const numberSearchCache = new Map<
+  string,
+  { data: AvailablePhoneNumberInstance[]; expiresAt: number }
+>();
+
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
 export class TwilioClient {
   client: Twilio;
   private from: string;
@@ -92,13 +111,46 @@ export class TwilioClient {
       limit?: number;
     } = {}
   ): Promise<AvailablePhoneNumberInstance[]> {
-    return await this.client.availablePhoneNumbers(country).local.list({
-      smsEnabled: options.smsEnabled ?? true,
-      voiceEnabled: options.voiceEnabled ?? true,
-      areaCode: options.areaCode,
-      contains: options.contains,
-      limit: options.limit ?? 5,
+    const {
+      areaCode,
+      contains,
+      smsEnabled = true,
+      voiceEnabled = true,
+      limit = 5,
+    } = options;
+
+    const cacheKey = buildCacheKey('twilio:numbers', {
+      country,
+      areaCode,
+      contains,
+      smsEnabled,
+      voiceEnabled,
+      limit,
     });
+
+    const now = Date.now();
+    const cached = numberSearchCache.get(cacheKey);
+
+    if (cached && cached.expiresAt > now) {
+      return cached.data;
+    }
+
+    const numbers = await this.client
+      .availablePhoneNumbers(country)
+      .local.list({
+        smsEnabled,
+        voiceEnabled,
+        areaCode,
+        contains,
+        limit,
+      });
+
+    numberSearchCache.set(cacheKey, {
+      data: numbers,
+      expiresAt: now + CACHE_TTL_MS,
+    });
+
+    return numbers;
   }
 
   /**

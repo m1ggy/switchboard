@@ -1,6 +1,7 @@
 'use client';
 
 import { formatDurationWithDateFns } from '@/lib/utils';
+import { FileText, Phone, Printer } from 'lucide-react';
 import { useState } from 'react';
 
 type Attachment = {
@@ -12,16 +13,19 @@ type Attachment = {
 
 type ChatBubbleProps = {
   item: {
-    type: 'message' | 'call';
+    type: 'message' | 'call' | 'fax';
     id: string;
     numberId: string;
     createdAt: string;
     direction?: 'inbound' | 'outbound';
     message?: string;
-    status?: 'sent' | 'draft';
+    status?: 'sent' | 'draft' | 'delivered' | 'failed';
     duration?: number;
-    meta?: any;
+    meta?: Record<string, string>;
     attachments?: Attachment[];
+    // Fax-specific properties
+    pages?: number;
+    faxStatus?: 'completed' | 'failed' | 'in-progress';
   };
   setFiles: (files: Attachment[]) => void;
   setIndex: (index: number) => void;
@@ -39,7 +43,9 @@ function ChatBubble({ item, setFiles, setIndex, setOpen }: ChatBubbleProps) {
   const imageAttachments =
     item.attachments?.filter((a) => a?.content_type?.startsWith('image/')) ||
     [];
-
+  const pdfAttachments =
+    item.attachments?.filter((a) => a?.content_type === 'application/pdf') ||
+    [];
   const previewImages = imageAttachments.slice(0, 3);
   const remainingCount = imageAttachments.length - 3;
 
@@ -51,6 +57,32 @@ function ChatBubble({ item, setFiles, setIndex, setOpen }: ChatBubbleProps) {
 
   const handleImageStart = (id: string) => {
     setLoadingMap((prev) => ({ ...prev, [id]: true }));
+  };
+
+  const getFaxStatusColor = (status?: string) => {
+    switch (status) {
+      case 'completed':
+        return 'text-green-400';
+      case 'failed':
+        return 'text-red-400';
+      case 'in-progress':
+        return 'text-yellow-400';
+      default:
+        return '';
+    }
+  };
+
+  const getFaxStatusText = (status?: string) => {
+    switch (status) {
+      case 'completed':
+        return 'Delivered';
+      case 'failed':
+        return 'Failed';
+      case 'in-progress':
+        return 'Sending';
+      default:
+        return 'Sent';
+    }
   };
 
   return (
@@ -74,17 +106,16 @@ function ChatBubble({ item, setFiles, setIndex, setOpen }: ChatBubbleProps) {
                     <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                   </div>
                 )}
-
                 <img
-                  src={img.media_url}
+                  src={img.media_url || '/placeholder.svg'}
                   alt={img.file_name}
                   className={`w-full h-full object-cover transition-opacity duration-300 ${
                     loadingMap[img.id] === false ? 'opacity-100' : 'opacity-0'
                   }`}
                   onLoad={() => handleImageLoad(img.id)}
+                  //eslint-disable-next-line
                   onLoadStart={() => handleImageStart(img.id)}
                 />
-
                 {/* Overlay for more count */}
                 {index === 2 && remainingCount > 0 && (
                   <div className="absolute inset-0 bg-black/60 text-white flex items-center justify-center text-xs font-semibold z-20">
@@ -100,16 +131,60 @@ function ChatBubble({ item, setFiles, setIndex, setOpen }: ChatBubbleProps) {
           <span className="break-words whitespace-pre-wrap">
             {item.message}
           </span>
-        ) : (
-          <span className="break-words whitespace-pre-wrap">
-            📞 Call —{' '}
-            <strong>
-              {formatDurationWithDateFns(item?.duration as number)}
-            </strong>
+        ) : item?.type === 'call' ? (
+          <span className="break-words whitespace-pre-wrap flex gap-1 items-center font-bold">
+            <Phone className="w-4 h-4" /> Call —{' '}
+            {formatDurationWithDateFns(item?.duration as number)}
           </span>
-        )}
-      </div>
+        ) : item?.type === 'fax' ? (
+          <div className="flex flex-col gap-2">
+            <span className="break-words whitespace-pre-wrap flex gap-1 items-center font-bold">
+              <Printer className="w-4 h-4" /> Fax
+              {item.pages && (
+                <span className="text-sm font-normal">
+                  — {item.pages} page{item.pages !== 1 ? 's' : ''}
+                </span>
+              )}
+            </span>
 
+            {/* PDF Attachments */}
+            {pdfAttachments.length > 0 && (
+              <div className="space-y-2">
+                {pdfAttachments.map((pdf) => (
+                  <div
+                    key={pdf.id}
+                    className={`flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors ${
+                      isOutbound
+                        ? 'bg-white/10 hover:bg-white/20'
+                        : 'bg-gray-100 hover:bg-gray-200'
+                    }`}
+                    onClick={() => window.open(pdf.media_url, '_blank')}
+                  >
+                    <FileText className="w-4 h-4 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">
+                        {pdf.file_name}
+                      </p>
+                      <p className="text-xs opacity-75">PDF Document</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {item.faxStatus && (
+              <span className={`text-xs ${getFaxStatusColor(item.faxStatus)}`}>
+                {getFaxStatusText(item.faxStatus)}
+              </span>
+            )}
+            {item.message && (
+              <span className="text-sm mt-1 break-words whitespace-pre-wrap">
+                {item.message}
+              </span>
+            )}
+          </div>
+        ) : null}
+      </div>
       <span className="text-[10px] text-muted-foreground mt-1">
         {new Date(item.createdAt).toLocaleTimeString([], {
           minute: '2-digit',

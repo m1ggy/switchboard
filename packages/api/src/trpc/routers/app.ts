@@ -11,6 +11,7 @@ import { pingRouter } from './ping';
 import { shortUrlRouter } from './shortUrls';
 import { statisticsRouter } from './statistics';
 import { twilioRouter } from './twilio';
+import { usersRouter } from './users';
 
 export const appRouter = t.router({
   ping: pingRouter.ping,
@@ -26,6 +27,7 @@ export const appRouter = t.router({
   jitsi: jitsiRouter,
   notes: notesRouter,
   shortenUrl: shortUrlRouter,
+  users: usersRouter,
 });
 
 export type AppRouter = typeof appRouter;
