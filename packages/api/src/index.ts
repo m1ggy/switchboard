@@ -7,6 +7,7 @@ import formBody from '@fastify/formbody';
 import multipart from '@fastify/multipart';
 import dotenv from 'dotenv';
 import path from 'path';
+import faxRoutes from './http/routes/fax';
 import jitsiRoutes from './http/routes/jitsi';
 import twilioRoutes from './http/routes/twilio';
 import { auth } from './lib/firebase';
@@ -73,6 +74,7 @@ app.get('/health', () => {
 
 app.register(twilioRoutes, { prefix: '/twilio' });
 app.register(jitsiRoutes, { prefix: '/jitsi' });
+app.register(faxRoutes, { prefix: '/fax' });
 
 app.listen({ port: 3000 }, () => {
   console.log('API listening on http://localhost:3000');
