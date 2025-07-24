@@ -215,7 +215,7 @@ async function routes(app: FastifyInstance) {
     return reply.type('text/xml').status(200).send(response.toString());
   });
 
-  app.post('/twilio/voice/handle-gather', async (request, reply) => {
+  app.post('/voice/handle-gather', async (request, reply) => {
     const { Digits, CallSid, From, To } = request.body as Record<
       string,
       string
