@@ -98,7 +98,7 @@ async function routes(app: FastifyInstance) {
         .gather({
           numDigits: 1,
           timeout: 12,
-          action: '/twilio/voice/handle-gather',
+          action: `${SERVER_DOMAIN}/twilio/voice/handle-gather`,
           method: 'POST',
           actionOnEmptyResult: true,
         })
@@ -234,7 +234,7 @@ async function routes(app: FastifyInstance) {
         status: 'forwarded',
         id: randomUUID(),
       });
-      response.dial('+1YOUR_FAXPLUS_NUMBER');
+      response.dial(process.env.TELNYX_FAX_NUMBER);
     }
 
     return reply.type('text/xml').status(200).send(response.toString());
