@@ -26,9 +26,10 @@ function CompanySwitcherDialog() {
   } = useMainStore();
 
   const trpc = useTRPC();
-  const { data: companies, isFetching } = useQuery(
-    trpc.companies.getUserCompanies.queryOptions()
-  );
+  const { data: companies, isFetching } = useQuery({
+    ...trpc.companies.getUserCompanies.queryOptions(),
+    refetchOnWindowFocus: false,
+  });
   const { mutateAsync: mutate } = useMutation(
     trpc.twilio.presence.mutationOptions()
   );
