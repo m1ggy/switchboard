@@ -19,33 +19,51 @@ async function routes(app: FastifyInstance) {
     const payload = event?.data?.payload;
     const eventType = event?.data?.event_type;
 
-    if (
-      !payload ||
-      eventType !== 'received' ||
-      payload.status !== 'delivered'
-    ) {
-      return reply.status(200).send('Ignored');
+    console.log('📩 Incoming Telnyx webhook received');
+    console.log('🔍 Event type:', eventType);
+    console.log('📦 Raw payload:', JSON.stringify(payload, null, 2));
+
+    if (!payload) {
+      console.warn('⚠️ No payload found in webhook');
+      return reply.status(200).send('Ignored: missing payload');
+    }
+
+    if (eventType !== 'fax.received') {
+      console.warn(`⚠️ Ignored event type: ${eventType}`);
+      return reply.status(200).send('Ignored: wrong event type');
+    }
+
+    if (payload.status !== 'delivered') {
+      console.warn(`⚠️ Ignored fax with status: ${payload.status}`);
+      return reply.status(200).send('Ignored: status not delivered');
     }
 
     const { from, to, media_url, fax_id, pages } = payload;
+
+    console.log(`📠 Fax received from ${from} to Telnyx number ${to}`);
 
     // 🔍 Match fax forward log by sender number
     const recentLogs = await FaxForwardLogRepository.listRecent(50);
     const lastLog = recentLogs.find((log) => log.from_number === from);
 
     if (!lastLog) {
-      console.warn(`No fax forward log found for sender: ${from}`);
+      console.warn(`⚠️ No fax forward log found for sender: ${from}`);
       return reply.status(200).send('No matching forward log');
     }
 
     const twilioNumber = lastLog.to_number;
+    console.log(`🔗 Matched to Twilio number: ${twilioNumber}`);
 
     // 🔍 Match Twilio number in our system
     const number = await NumbersRepository.findByNumber(twilioNumber);
     if (!number) {
-      console.warn(`No number record found for Twilio number: ${twilioNumber}`);
+      console.warn(
+        `⚠️ No number record found for Twilio number: ${twilioNumber}`
+      );
       return reply.status(200).send('No matching number');
     }
+
+    console.log(`🏢 Matched number belongs to company: ${number.company_id}`);
 
     // 👤 Find or create contact
     let contact = await ContactsRepository.findByNumber(
@@ -53,32 +71,45 @@ async function routes(app: FastifyInstance) {
       number.company_id
     );
     if (!contact) {
+      console.log(`👤 Creating new contact for ${from}`);
       contact = await ContactsRepository.create({
         id: randomUUID(),
         number: from,
         company_id: number.company_id,
         label: from,
       });
+    } else {
+      console.log(`👤 Found existing contact: ${contact.id}`);
     }
 
     // 📥 Create inbox entry
-    await InboxesRepository.findOrCreate({
+    const inbox = await InboxesRepository.findOrCreate({
       numberId: number.id,
       contactId: contact.id,
     });
+    console.log(`📬 Inbox ensured for contact: ${inbox.id}`);
 
     // ✅ Confirm fax forward log
     await FaxForwardLogRepository.markConfirmed(lastLog.call_sid);
+    console.log(`📌 Fax forward log confirmed: ${lastLog.call_sid}`);
 
-    // ☁️ Upload fax file to GCS
-    const response = await axios.get(media_url, {
-      responseType: 'arraybuffer',
-    });
-    const buffer = Buffer.from(response.data);
-    const gcsUrl = await uploadAttachmentBuffer(buffer, `fax-${fax_id}.pdf`);
+    // ☁️ Download and upload fax file
+    let gcsUrl = null;
+    try {
+      console.log(`⬇️ Downloading fax from: ${media_url}`);
+      const response = await axios.get(media_url, {
+        responseType: 'arraybuffer',
+      });
+      const buffer = Buffer.from(response.data);
+      gcsUrl = await uploadAttachmentBuffer(buffer, `fax-${fax_id}.pdf`);
+      console.log(`☁️ Fax file uploaded to: ${gcsUrl}`);
+    } catch (err) {
+      console.error('❌ Failed to download or upload fax file:', err);
+      return reply.status(500).send('Error storing fax file');
+    }
 
     // 🧾 Log the fax
-    await FaxesRepository.create({
+    const fax = await FaxesRepository.create({
       id: randomUUID(),
       number_id: number.id,
       contact_id: contact.id,
@@ -95,7 +126,7 @@ async function routes(app: FastifyInstance) {
       },
     });
 
-    console.log(`✅ Fax stored and logged for ${from} → ${twilioNumber}`);
+    console.log(`✅ Fax stored and logged: ${fax.id}`);
     return reply.status(200).send('Fax processed');
   });
 
