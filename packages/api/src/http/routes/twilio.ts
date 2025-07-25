@@ -109,15 +109,17 @@ async function routes(app: FastifyInstance) {
       return reply.type('text/xml').status(200).send(response.toString());
     }
 
-    // Track active call
-    activeCallStore.add({
-      sid: CallSid,
-      from: From,
-      to: To,
-      status: 'initiated',
-      startedAt: new Date(),
-      agent: agentIdentity,
-    });
+    if (hasPassedIVR) {
+      // Track active call
+      activeCallStore.add({
+        sid: CallSid,
+        from: From,
+        to: To,
+        status: 'initiated',
+        startedAt: new Date(),
+        agent: agentIdentity,
+      });
+    }
 
     await notifyIncomingCall({ callerId, toNumber: To, callSid: CallSid, app });
 

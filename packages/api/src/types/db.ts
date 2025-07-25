@@ -172,3 +172,17 @@ export interface FaxForwardLog {
 }
 
 export type MessageType = 'message' | 'fax';
+
+export interface Fax {
+  id: string;
+  number_id: string;
+  contact_id: string;
+  direction: 'inbound' | 'outbound';
+  status: string;
+  initiated_at: Date;
+  pages: number | null;
+  media_url: string | null;
+  fax_id: string | null;
+  meta: Record<string, unknown> | null;
+  created_at: Date;
+}

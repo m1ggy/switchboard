@@ -115,7 +115,7 @@ export const InboxesRepository = {
     }
   ): Promise<
     {
-      type: 'message' | 'call';
+      type: 'message' | 'call' | 'fax';
       id: string;
       numberId: string;
       createdAt: string;
@@ -123,7 +123,8 @@ export const InboxesRepository = {
       message?: string;
       status?: 'sent' | 'draft';
       duration?: number;
-      meta?: any;
+      mediaUrl?: string;
+      meta?: Record<string, string>;
       attachments?: {
         id: string;
         media_url: string;
@@ -136,6 +137,7 @@ export const InboxesRepository = {
       `
     SELECT *
     FROM (
+      -- messages
       SELECT
         'message' AS type,
         m.id,
@@ -145,12 +147,14 @@ export const InboxesRepository = {
         m.message,
         m.status::text AS status,
         NULL::integer AS duration,
+        NULL::text AS "mediaUrl",
         m.meta
       FROM messages m
       WHERE m.contact_id = $1
 
       UNION ALL
 
+      -- calls
       SELECT
         'call' AS type,
         c.id,
@@ -160,9 +164,27 @@ export const InboxesRepository = {
         NULL::text AS message,
         NULL::text AS status,
         c.duration,
+        NULL::text AS "mediaUrl",
         c.meta
       FROM calls c
       WHERE c.contact_id = $1
+
+      UNION ALL
+
+      -- faxes
+      SELECT
+        'fax' AS type,
+        f.id,
+        f.number_id AS "numberId",
+        f.initiated_at AS "createdAt",
+        f.direction::text AS direction,
+        NULL::text AS message,
+        f.status::text AS status,
+        NULL::integer AS duration,
+        f.media_url AS "mediaUrl",
+        f.meta
+      FROM faxes f
+      WHERE f.contact_id = $1
     ) AS combined
     WHERE 
       ($2::timestamp IS NULL OR (
@@ -177,11 +199,12 @@ export const InboxesRepository = {
 
     const activity = result.rows;
 
+    // Fetch attachments for messages only
     const messageIds = activity
       .filter((item) => item.type === 'message')
       .map((item) => item.id);
 
-    let attachmentsByMessageId: Record<string, any[]> = {};
+    let attachmentsByMessageId: Record<string, string[]> = {};
 
     if (messageIds.length > 0) {
       const res = await pool.query(
@@ -204,7 +227,7 @@ export const InboxesRepository = {
           });
           return acc;
         },
-        {} as Record<string, any[]>
+        {} as Record<string, string[]>
       );
     }
 
