@@ -33,7 +33,7 @@ async function routes(app: FastifyInstance) {
       return reply.status(200).send('Ignored: wrong event type');
     }
 
-    if (payload.status !== 'delivered') {
+    if (payload.status !== 'received') {
       console.warn(`⚠️ Ignored fax with status: ${payload.status}`);
       return reply.status(200).send('Ignored: status not delivered');
     }
