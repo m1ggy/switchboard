@@ -21,7 +21,7 @@ async function routes(app: FastifyInstance) {
 
     if (
       !payload ||
-      eventType !== 'fax.received' ||
+      eventType !== 'received' ||
       payload.status !== 'delivered'
     ) {
       return reply.status(200).send('Ignored');
