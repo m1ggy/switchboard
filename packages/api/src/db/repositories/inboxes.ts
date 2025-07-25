@@ -121,10 +121,10 @@ export const InboxesRepository = {
       createdAt: string;
       direction?: 'inbound' | 'outbound';
       message?: string;
-      status?: 'sent' | 'draft';
+      status?: string;
       duration?: number;
       mediaUrl?: string;
-      meta?: Record<string, string>;
+      meta?: any;
       attachments?: {
         id: string;
         media_url: string;
@@ -137,7 +137,7 @@ export const InboxesRepository = {
       `
     SELECT *
     FROM (
-      -- messages
+      -- 📩 messages
       SELECT
         'message' AS type,
         m.id,
@@ -148,13 +148,13 @@ export const InboxesRepository = {
         m.status::text AS status,
         NULL::integer AS duration,
         NULL::text AS "mediaUrl",
-        m.meta
+        (m.meta)::json AS meta
       FROM messages m
       WHERE m.contact_id = $1
 
       UNION ALL
 
-      -- calls
+      -- 📞 calls
       SELECT
         'call' AS type,
         c.id,
@@ -165,13 +165,13 @@ export const InboxesRepository = {
         NULL::text AS status,
         c.duration,
         NULL::text AS "mediaUrl",
-        c.meta
+        (c.meta)::json AS meta
       FROM calls c
       WHERE c.contact_id = $1
 
       UNION ALL
 
-      -- faxes
+      -- 📠 faxes
       SELECT
         'fax' AS type,
         f.id,
@@ -182,7 +182,7 @@ export const InboxesRepository = {
         f.status::text AS status,
         NULL::integer AS duration,
         f.media_url AS "mediaUrl",
-        f.meta
+        (f.meta)::json AS meta
       FROM faxes f
       WHERE f.contact_id = $1
     ) AS combined
@@ -199,12 +199,12 @@ export const InboxesRepository = {
 
     const activity = result.rows;
 
-    // Fetch attachments for messages only
+    // 🧩 Collect message IDs for attachment lookup
     const messageIds = activity
       .filter((item) => item.type === 'message')
       .map((item) => item.id);
 
-    let attachmentsByMessageId: Record<string, string[]> = {};
+    let attachmentsByMessageId: Record<string, any[]> = {};
 
     if (messageIds.length > 0) {
       const res = await pool.query(
@@ -227,10 +227,11 @@ export const InboxesRepository = {
           });
           return acc;
         },
-        {} as Record<string, string[]>
+        {} as Record<string, any[]>
       );
     }
 
+    // 🔁 Normalize all results
     return activity.map((item) => {
       if (item.type === 'message') {
         return {
