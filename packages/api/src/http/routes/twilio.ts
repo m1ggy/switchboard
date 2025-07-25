@@ -226,7 +226,7 @@ async function routes(app: FastifyInstance) {
 
     if (Digits === '1') {
       // Caller chose voice support — redirect to main logic, mark IVR passed
-      response.redirect({ method: 'POST' }, `/voice?ivr=1`);
+      response.redirect({ method: 'POST' }, `/twilio/voice?ivr=1`);
     } else {
       await FaxForwardLogRepository.create({
         call_sid: CallSid,
