@@ -1,5 +1,3 @@
-'use client';
-
 import { formatDurationWithDateFns } from '@/lib/utils';
 import { FileText, Phone, Printer } from 'lucide-react';
 import { useState } from 'react';
@@ -19,13 +17,12 @@ type ChatBubbleProps = {
     createdAt: string;
     direction?: 'inbound' | 'outbound';
     message?: string;
-    status?: 'sent' | 'draft' | 'delivered' | 'failed';
+    status?: 'sent' | 'draft' | 'delivered' | 'failed' | string;
     duration?: number;
     meta?: Record<string, string>;
     attachments?: Attachment[];
-    // Fax-specific properties
+    mediaUrl?: string; // NEW for faxes
     pages?: number;
-    faxStatus?: 'completed' | 'failed' | 'in-progress';
   };
   setFiles: (files: Attachment[]) => void;
   setIndex: (index: number) => void;
@@ -46,6 +43,7 @@ function ChatBubble({ item, setFiles, setIndex, setOpen }: ChatBubbleProps) {
   const pdfAttachments =
     item.attachments?.filter((a) => a?.content_type === 'application/pdf') ||
     [];
+
   const previewImages = imageAttachments.slice(0, 3);
   const remainingCount = imageAttachments.length - 3;
 
@@ -61,23 +59,27 @@ function ChatBubble({ item, setFiles, setIndex, setOpen }: ChatBubbleProps) {
 
   const getFaxStatusColor = (status?: string) => {
     switch (status) {
+      case 'delivered':
       case 'completed':
-        return 'text-green-400';
+        return 'text-green-500';
       case 'failed':
-        return 'text-red-400';
+        return 'text-red-500';
+      case 'queued':
       case 'in-progress':
-        return 'text-yellow-400';
+        return 'text-yellow-500';
       default:
-        return '';
+        return 'text-muted-foreground';
     }
   };
 
   const getFaxStatusText = (status?: string) => {
     switch (status) {
+      case 'delivered':
       case 'completed':
         return 'Delivered';
       case 'failed':
         return 'Failed';
+      case 'queued':
       case 'in-progress':
         return 'Sending';
       default:
@@ -100,7 +102,6 @@ function ChatBubble({ item, setFiles, setIndex, setOpen }: ChatBubbleProps) {
                   setOpen(true);
                 }}
               >
-                {/* Spinner */}
                 {loadingMap[img.id] !== false && (
                   <div className="absolute inset-0 flex items-center justify-center bg-black/10 z-10">
                     <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -116,7 +117,6 @@ function ChatBubble({ item, setFiles, setIndex, setOpen }: ChatBubbleProps) {
                   //eslint-disable-next-line
                   onLoadStart={() => handleImageStart(img.id)}
                 />
-                {/* Overlay for more count */}
                 {index === 2 && remainingCount > 0 && (
                   <div className="absolute inset-0 bg-black/60 text-white flex items-center justify-center text-xs font-semibold z-20">
                     +{remainingCount} more
@@ -147,36 +147,27 @@ function ChatBubble({ item, setFiles, setIndex, setOpen }: ChatBubbleProps) {
               )}
             </span>
 
-            {/* PDF Attachments */}
-            {pdfAttachments.length > 0 && (
-              <div className="space-y-2">
-                {pdfAttachments.map((pdf) => (
-                  <div
-                    key={pdf.id}
-                    className={`flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors ${
-                      isOutbound
-                        ? 'bg-white/10 hover:bg-white/20'
-                        : 'bg-gray-100 hover:bg-gray-200'
-                    }`}
-                    onClick={() => window.open(pdf.media_url, '_blank')}
-                  >
-                    <FileText className="w-4 h-4 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">
-                        {pdf.file_name}
-                      </p>
-                      <p className="text-xs opacity-75">PDF Document</p>
-                    </div>
-                  </div>
-                ))}
+            {item.mediaUrl && (
+              <div
+                className={`flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors ${
+                  isOutbound
+                    ? 'bg-white/10 hover:bg-white/20'
+                    : 'bg-gray-100 hover:bg-gray-200'
+                }`}
+                onClick={() => window.open(item.mediaUrl, '_blank')}
+              >
+                <FileText className="w-4 h-4 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">Fax Document</p>
+                  <p className="text-xs opacity-75">PDF</p>
+                </div>
               </div>
             )}
 
-            {item.faxStatus && (
-              <span className={`text-xs ${getFaxStatusColor(item.faxStatus)}`}>
-                {getFaxStatusText(item.faxStatus)}
-              </span>
-            )}
+            <span className={`text-xs ${getFaxStatusColor(item.status)}`}>
+              {getFaxStatusText(item.status)}
+            </span>
+
             {item.message && (
               <span className="text-sm mt-1 break-words whitespace-pre-wrap">
                 {item.message}
