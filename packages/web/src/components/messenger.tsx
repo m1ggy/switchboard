@@ -14,6 +14,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import AttachmentPreview from './attachment-preview';
 import ChatBubble from './chat-bubble';
+import { PdfPreviewModal } from './pdf-preview-modal';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import FaxSendDialog from './ui/fax-send-dialog';
@@ -45,6 +46,7 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
   // eslint-disable-next-line
   const [items, setItems] = useState<any[]>([]);
   const firstLoadRef = useRef(true);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
 
   const [showFaxDialog, setShowFaxDialog] = useState(false);
 
@@ -427,6 +429,7 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
                       setFiles={setFiles}
                       setIndex={setIndex}
                       setOpen={setOpen}
+                      onPreviewFax={(url) => setPdfUrl(url)}
                     />
                   </div>
                 );
@@ -534,6 +537,7 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
       />
 
       <FaxSendDialog open={showFaxDialog} onOpenChange={setShowFaxDialog} />
+      <PdfPreviewModal url={pdfUrl} onClose={() => setPdfUrl(null)} />
     </div>
   );
 }

@@ -1,3 +1,4 @@
+/* eslint-disable*/
 import { formatDurationWithDateFns } from '@/lib/utils';
 import { FileText, Phone, Printer } from 'lucide-react';
 import { useState } from 'react';
@@ -17,19 +18,27 @@ type ChatBubbleProps = {
     createdAt: string;
     direction?: 'inbound' | 'outbound';
     message?: string;
-    status?: 'sent' | 'draft' | 'delivered' | 'failed' | string;
+    status?: 'sent' | 'draft' | 'delivered' | 'failed';
     duration?: number;
     meta?: Record<string, string>;
     attachments?: Attachment[];
-    mediaUrl?: string; // NEW for faxes
     pages?: number;
+    faxStatus?: 'completed' | 'failed' | 'in-progress';
+    mediaUrl?: string; // for faxes
   };
   setFiles: (files: Attachment[]) => void;
   setIndex: (index: number) => void;
   setOpen: (open: boolean) => void;
+  onPreviewFax?: (url: string) => void; // 🆕 new prop
 };
 
-function ChatBubble({ item, setFiles, setIndex, setOpen }: ChatBubbleProps) {
+function ChatBubble({
+  item,
+  setFiles,
+  setIndex,
+  setOpen,
+  onPreviewFax,
+}: ChatBubbleProps) {
   const isOutbound =
     item?.meta?.Direction === 'OUTGOING' || item.direction === 'outbound';
   const alignClass = isOutbound ? 'items-end' : 'items-start';
@@ -38,12 +47,9 @@ function ChatBubble({ item, setFiles, setIndex, setOpen }: ChatBubbleProps) {
     : 'bg-gray-200 text-gray-900';
 
   const imageAttachments =
-    item.attachments?.filter((a) => a?.content_type?.startsWith('image/')) ||
-    [];
+    item.attachments?.filter((a) => a.content_type?.startsWith('image/')) || [];
   const pdfAttachments =
-    item.attachments?.filter((a) => a?.content_type === 'application/pdf') ||
-    [];
-
+    item.attachments?.filter((a) => a.content_type === 'application/pdf') || [];
   const previewImages = imageAttachments.slice(0, 3);
   const remainingCount = imageAttachments.length - 3;
 
@@ -59,27 +65,23 @@ function ChatBubble({ item, setFiles, setIndex, setOpen }: ChatBubbleProps) {
 
   const getFaxStatusColor = (status?: string) => {
     switch (status) {
-      case 'delivered':
       case 'completed':
-        return 'text-green-500';
+        return 'text-green-400';
       case 'failed':
-        return 'text-red-500';
-      case 'queued':
+        return 'text-red-400';
       case 'in-progress':
-        return 'text-yellow-500';
+        return 'text-yellow-400';
       default:
-        return 'text-muted-foreground';
+        return '';
     }
   };
 
   const getFaxStatusText = (status?: string) => {
     switch (status) {
-      case 'delivered':
       case 'completed':
         return 'Delivered';
       case 'failed':
         return 'Failed';
-      case 'queued':
       case 'in-progress':
         return 'Sending';
       default:
@@ -114,7 +116,6 @@ function ChatBubble({ item, setFiles, setIndex, setOpen }: ChatBubbleProps) {
                     loadingMap[img.id] === false ? 'opacity-100' : 'opacity-0'
                   }`}
                   onLoad={() => handleImageLoad(img.id)}
-                  //eslint-disable-next-line
                   onLoadStart={() => handleImageStart(img.id)}
                 />
                 {index === 2 && remainingCount > 0 && (
@@ -127,16 +128,20 @@ function ChatBubble({ item, setFiles, setIndex, setOpen }: ChatBubbleProps) {
           </div>
         )}
 
-        {item?.type === 'message' ? (
+        {item.type === 'message' && (
           <span className="break-words whitespace-pre-wrap">
             {item.message}
           </span>
-        ) : item?.type === 'call' ? (
+        )}
+
+        {item.type === 'call' && (
           <span className="break-words whitespace-pre-wrap flex gap-1 items-center font-bold">
             <Phone className="w-4 h-4" /> Call —{' '}
-            {formatDurationWithDateFns(item?.duration as number)}
+            {formatDurationWithDateFns(item.duration ?? 0)}
           </span>
-        ) : item?.type === 'fax' ? (
+        )}
+
+        {item.type === 'fax' && (
           <div className="flex flex-col gap-2">
             <span className="break-words whitespace-pre-wrap flex gap-1 items-center font-bold">
               <Printer className="w-4 h-4" /> Fax
@@ -147,6 +152,7 @@ function ChatBubble({ item, setFiles, setIndex, setOpen }: ChatBubbleProps) {
               )}
             </span>
 
+            {/* PDF Preview Trigger */}
             {item.mediaUrl && (
               <div
                 className={`flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors ${
@@ -154,19 +160,22 @@ function ChatBubble({ item, setFiles, setIndex, setOpen }: ChatBubbleProps) {
                     ? 'bg-white/10 hover:bg-white/20'
                     : 'bg-gray-100 hover:bg-gray-200'
                 }`}
-                onClick={() => window.open(item.mediaUrl, '_blank')}
+                // @ts-ignore
+                onClick={() => onPreviewFax?.(item.mediaUrl)}
               >
                 <FileText className="w-4 h-4 flex-shrink-0" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">Fax Document</p>
-                  <p className="text-xs opacity-75">PDF</p>
+                  <p className="text-xs opacity-75">Click to preview PDF</p>
                 </div>
               </div>
             )}
 
-            <span className={`text-xs ${getFaxStatusColor(item.status)}`}>
-              {getFaxStatusText(item.status)}
-            </span>
+            {item.faxStatus && (
+              <span className={`text-xs ${getFaxStatusColor(item.faxStatus)}`}>
+                {getFaxStatusText(item.faxStatus)}
+              </span>
+            )}
 
             {item.message && (
               <span className="text-sm mt-1 break-words whitespace-pre-wrap">
@@ -174,7 +183,7 @@ function ChatBubble({ item, setFiles, setIndex, setOpen }: ChatBubbleProps) {
               </span>
             )}
           </div>
-        ) : null}
+        )}
       </div>
       <span className="text-[10px] text-muted-foreground mt-1">
         {new Date(item.createdAt).toLocaleTimeString([], {
