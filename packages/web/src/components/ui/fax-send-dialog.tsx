@@ -1,8 +1,5 @@
 'use client';
 
-import type React from 'react';
-import { useRef, useState } from 'react';
-
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -14,22 +11,17 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-
+import { auth } from '@/lib/firebase';
 import { isPdfPasswordProtected } from '@/lib/pdf';
-import {
-  File,
-  FileImage,
-  FileSpreadsheet,
-  FileText,
-  Loader2,
-  Upload,
-  X,
-} from 'lucide-react';
+import useMainStore from '@/lib/store';
+import { FileText, Loader2, Upload, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 
 type FaxDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  defaultTo?: string;
+  defaultFromName?: string;
 };
 
 type AttachedFile = {
@@ -39,302 +31,246 @@ type AttachedFile = {
   size: number;
 };
 
-export default function FaxSendDialog({ open, onOpenChange }: FaxDialogProps) {
-  const [recipientNumber, setRecipientNumber] = useState('');
-  const [message, setMessage] = useState('');
-  const [coverText, setCoverText] = useState('');
-  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+export default function FaxSendDialog({
+  open,
+  onOpenChange,
+  defaultTo = '',
+  defaultFromName = '',
+}: FaxDialogProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { activeNumber } = useMainStore();
+
+  const [fromName, setFromName] = useState(defaultFromName);
+  const [toName, setToName] = useState('');
+  const [to, setTo] = useState('');
+  const [subject, setSubject] = useState('');
+  const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null);
+  const [fileError, setFileError] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [fileSizeError, setFileSizeError] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const allowedTypes = [
-    'application/pdf',
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'text/plain',
-    'text/rtf',
-    'application/rtf',
-    'image/jpeg',
-    'image/png',
-    'image/tiff',
-    'application/vnd.ms-excel',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  ];
-
-  const MAX_TOTAL_SIZE = 30 * 1024 * 1024;
-
-  const checkAllPdfs = async (files: File[]) => {
-    for (const file of files) {
-      if (file.type === 'application/pdf') {
-        const isProtected = await isPdfPasswordProtected(file);
-        if (isProtected) {
-          setFileSizeError(
-            `"${file.name}" is password-protected and cannot be uploaded.`
-          );
-          return false;
-        }
-      }
+  useEffect(() => {
+    if (!to && defaultTo) {
+      setTo(defaultTo);
     }
-    return true;
-  };
+  }, [defaultTo, to]);
 
-  const handleFileSelect = async (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const files = event.target.files;
-    if (!files) return;
+  const MAX_SIZE = 50 * 1024 * 1024;
 
-    const validFiles = Array.from(files).filter((file) =>
-      allowedTypes.includes(file.type)
-    );
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-    if (validFiles.length === 0) {
-      setFileSizeError('Unsupported file type selected.');
+    if (file.type !== 'application/pdf') {
+      setFileError('Only PDF files are allowed.');
       return;
     }
 
-    const newTotalSize =
-      attachedFiles.reduce((acc, f) => acc + f.size, 0) +
-      validFiles.reduce((acc, f) => acc + f.size, 0);
-
-    if (newTotalSize > MAX_TOTAL_SIZE) {
-      setFileSizeError('Total file size must be under 30MB.');
+    if (file.size > MAX_SIZE) {
+      setFileError('File must be under 50MB.');
       return;
     }
 
-    const pdfsOk = await checkAllPdfs(validFiles);
-    if (!pdfsOk) return;
+    const protectedPdf = await isPdfPasswordProtected(file);
+    if (protectedPdf) {
+      setFileError('Password-protected PDFs cannot be uploaded.');
+      return;
+    }
 
-    setFileSizeError('');
+    setFileError('');
     setIsUploading(true);
 
     setTimeout(() => {
-      const newFiles: AttachedFile[] = validFiles.map((file) => ({
+      setAttachedFile({
         file,
         id: Math.random().toString(36).substr(2, 9),
         name: file.name,
         size: file.size,
-      }));
-
-      setAttachedFiles((prev) => [...prev, ...newFiles]);
+      });
       setIsUploading(false);
-
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-    }, 1000);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }, 800);
   };
 
-  const removeFile = (id: string) => {
-    setAttachedFiles((prev) => prev.filter((file) => file.id !== id));
-  };
+  const removeFile = () => setAttachedFile(null);
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return (
-      Number.parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-    );
-  };
-
-  const formatRemainingSize = (bytesRemaining: number) => {
-    return `${(bytesRemaining / (1024 * 1024)).toFixed(2)} MB remaining`;
-  };
-
-  const getFileIcon = (fileType: string) => {
-    if (fileType.startsWith('image/'))
-      return <FileImage className="w-4 h-4 text-blue-600" />;
-    if (
-      fileType === 'application/vnd.ms-excel' ||
-      fileType ===
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
-      return <FileSpreadsheet className="w-4 h-4 text-green-600" />;
-    if (
-      fileType === 'application/pdf' ||
-      fileType.includes('word') ||
-      fileType === 'text/plain' ||
-      fileType.includes('rtf')
-    )
-      return <FileText className="w-4 h-4 text-red-600" />;
-    return <File className="w-4 h-4 text-gray-600" />;
-  };
-
-  const handleSend = async () => {
-    if (!recipientNumber.trim()) return;
-
-    setIsSending(true);
-
-    // Simulate sending fax
-    setTimeout(() => {
-      console.log('Sending fax to:', recipientNumber);
-      console.log('Message:', message);
-      console.log('Cover text:', coverText);
-      console.log('Files:', attachedFiles);
-
-      setRecipientNumber('');
-      setMessage('');
-      setCoverText('');
-      setAttachedFiles([]);
-      setIsSending(false);
-      onOpenChange(false);
-    }, 2000);
-  };
+  const formatFileSize = (bytes: number) =>
+    `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 
   const isFormValid =
-    recipientNumber.trim().length > 0 &&
-    (message.trim().length > 0 ||
-      coverText.trim().length > 0 ||
-      attachedFiles.length > 0);
+    fromName.trim() &&
+    toName.trim() &&
+    to.trim() &&
+    subject.trim() &&
+    attachedFile;
+
+  const handleSend = async () => {
+    if (!isFormValid) return;
+    setIsSending(true);
+
+    const formData = new FormData();
+    if (attachedFile) formData.append('file', attachedFile.file);
+    formData.append('to', to);
+
+    formData.append(
+      'cover',
+      JSON.stringify({
+        fromName,
+        toName,
+        subject,
+        fromFax: activeNumber?.number,
+        to,
+      })
+    );
+
+    const token = await auth.currentUser?.getIdToken();
+    await fetch(`${import.meta.env.VITE_WEBSOCKET_URL}/fax/send`, {
+      method: 'POST',
+      body: formData,
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    setIsSending(false);
+    onOpenChange(false);
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[50vw] max-h-[90vh] flex flex-col">
-        <DialogHeader className="flex-shrink-0">
+      <DialogContent className="sm:max-w-[80vw] max-h-[90vh]">
+        <DialogHeader>
           <DialogTitle>Send Fax</DialogTitle>
           <DialogDescription>
-            Send a fax message with optional attachments.
+            Fill out the fields and attach a PDF to send.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto px-2">
-          <div className="grid gap-4 py-4 pr-2">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 overflow-y-auto max-h-[70vh] px-1">
+          {/* Left column: Lean form */}
+          <div className="space-y-4 pr-2">
             <div className="grid gap-2">
-              <Label htmlFor="recipient">Recipient Number</Label>
+              <Label>To (Fax Number)</Label>
               <Input
-                id="recipient"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
                 placeholder="+1 (555) 123-4567"
-                value={recipientNumber}
-                onChange={(e) => setRecipientNumber(e.target.value)}
               />
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="cover-text">Cover Page Text</Label>
-              <Textarea
-                id="cover-text"
-                placeholder="This text will appear on the first page of your fax..."
-                value={coverText}
-                onChange={(e) => setCoverText(e.target.value)}
-                rows={3}
-                className="resize-none"
+              <Label>From Name</Label>
+              <Input
+                value={fromName}
+                onChange={(e) => setFromName(e.target.value)}
               />
-              <p className="text-xs text-gray-500">
-                This will be added as the first page before your attachments.
-              </p>
             </div>
 
             <div className="grid gap-2">
-              <Label>Attachments</Label>
-              <div className="border-2 border-dashed border-gray-300 rounded-lg p-3">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".pdf,.doc,.docx,.txt,.rtf,.jpg,.jpeg,.png,.tiff,.xls,.xlsx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/rtf,image/jpeg,image/png,image/tiff,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                  multiple
-                  onChange={handleFileSelect}
-                  className="hidden"
-                />
+              <Label>To Name</Label>
+              <Input
+                value={toName}
+                onChange={(e) => setToName(e.target.value)}
+              />
+            </div>
 
-                <div className="text-center">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isUploading}
-                    className="mb-2"
-                  >
-                    {isUploading ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Uploading...
-                      </>
-                    ) : (
-                      <>
-                        <Upload className="w-4 h-4 mr-2" />
-                        Upload Files
-                      </>
-                    )}
-                  </Button>
-                  <p className="text-sm text-gray-500">
-                    Supported formats: PDF, DOC, DOCX, TXT, RTF, JPG, PNG, TIFF,
-                    XLS, XLSX
-                  </p>
-                  {fileSizeError && (
-                    <p className="text-sm text-red-500 mt-1">{fileSizeError}</p>
-                  )}
-                  {!fileSizeError && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      {formatRemainingSize(
-                        MAX_TOTAL_SIZE -
-                          attachedFiles.reduce((acc, f) => acc + f.size, 0)
-                      )}
-                    </p>
-                  )}
-                </div>
-              </div>
+            <div className="grid gap-2">
+              <Label>Subject</Label>
+              <Input
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+              />
+            </div>
 
-              {attachedFiles.length > 0 && (
-                <div className="mt-2">
-                  <div className="max-h-48 overflow-y-auto space-y-2 pr-2">
-                    {attachedFiles.map((file) => (
-                      <div
-                        key={file.id}
-                        className="flex items-center justify-between p-2 bg-gray-50 rounded-md"
-                      >
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          {getFileIcon(file.file.type)}
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium truncate">
-                              {file.name}
-                            </p>
-                            <p className="text-xs text-gray-500">
-                              {formatFileSize(file.size)}
-                            </p>
-                          </div>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => removeFile(file.id)}
-                          className="h-8 w-8 p-0 flex-shrink-0"
-                        >
-                          <X className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    ))}
+            <div className="grid gap-2">
+              <Label>PDF Attachment</Label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/pdf"
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+              >
+                {isUploading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Uploading...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-4 h-4 mr-2" />
+                    Upload PDF
+                  </>
+                )}
+              </Button>
+
+              {fileError && <p className="text-red-500 text-sm">{fileError}</p>}
+
+              {attachedFile && (
+                <div className="flex justify-between items-center mt-2 bg-gray-50 p-2 rounded-md">
+                  <div className="flex items-center gap-2">
+                    <FileText className="text-red-600 w-4 h-4" />
+                    <div>
+                      <p className="text-sm">{attachedFile.name}</p>
+                      <p className="text-xs text-gray-500">
+                        {formatFileSize(attachedFile.size)}
+                      </p>
+                    </div>
                   </div>
-                  {attachedFiles.length > 1 && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      {attachedFiles.length} files attached
-                    </p>
-                  )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={removeFile}
+                    className="h-8 w-8 p-0"
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
                 </div>
               )}
             </div>
           </div>
+
+          {/* Right column: Cover preview */}
+          <div className="overflow-auto border rounded-md p-4 bg-gray-50">
+            <Label className="mb-2 block">Cover Page Preview</Label>
+            <pre className="whitespace-pre-wrap font-mono text-sm">
+              {`----------------------------------------
+               FAX COVER
+----------------------------------------
+
+Date:        ${new Date().toLocaleDateString()}
+
+From:        ${fromName || '[Your Name]'}
+Fax:         ${activeNumber?.number || '[Fax #]'}
+To:          ${toName || '[Recipient Name]'}
+Subject:     ${subject || '[Subject]'}
+
+----------------------------------------
+CONFIDENTIALITY NOTICE:
+This fax may contain confidential information 
+intended only for the recipient. If you are not 
+the intended recipient, please notify the sender 
+and destroy this document.
+----------------------------------------`}
+            </pre>
+          </div>
         </div>
 
-        <DialogFooter className="flex-shrink-0">
+        <DialogFooter className="mt-4">
           <Button
-            type="button"
             variant="outline"
             onClick={() => onOpenChange(false)}
             disabled={isSending}
           >
             Cancel
           </Button>
-          <Button
-            type="button"
-            onClick={handleSend}
-            disabled={!isFormValid || isSending}
-          >
+          <Button onClick={handleSend} disabled={!isFormValid || isSending}>
             {isSending ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />

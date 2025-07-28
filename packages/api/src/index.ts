@@ -54,7 +54,7 @@ app.register(fastifyCors, {
   origin: ['http://localhost:5173', process.env.WEB_DOMAIN as string],
 });
 app.register(formBody);
-app.register(multipart);
+app.register(multipart, { attachFieldsToBody: true });
 
 app.register(fastifyTRPCPlugin, {
   prefix: '/trpc',

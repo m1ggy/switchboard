@@ -536,7 +536,11 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
         onOpenChange={setOpen}
       />
 
-      <FaxSendDialog open={showFaxDialog} onOpenChange={setShowFaxDialog} />
+      <FaxSendDialog
+        open={showFaxDialog}
+        onOpenChange={setShowFaxDialog}
+        defaultTo={contact?.number}
+      />
       <PdfPreviewModal url={pdfUrl} onClose={() => setPdfUrl(null)} />
     </div>
   );
