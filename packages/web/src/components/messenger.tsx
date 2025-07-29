@@ -357,29 +357,33 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
                   <Printer />
                 </Button>
               </TooltipStandalone>
-              <Button
-                variant={'outline'}
-                size={'icon'}
-                onClick={async () => {
-                  setCurrentCallContactId(contact?.id as string);
-                  await createRoom(contactId);
-                  setActiveVideoCallDialogShown(true);
-                }}
-              >
-                <Video />
-              </Button>
-              <Button
-                variant={'outline'}
-                size={'icon'}
-                onClick={() =>
-                  makeCall({
-                    To: contact?.number as string,
-                    CallerId: activeNumber?.number as string,
-                  })
-                }
-              >
-                <Phone />
-              </Button>
+              <TooltipStandalone content="Initiate Video Call">
+                <Button
+                  variant={'outline'}
+                  size={'icon'}
+                  onClick={async () => {
+                    setCurrentCallContactId(contact?.id as string);
+                    await createRoom(contactId);
+                    setActiveVideoCallDialogShown(true);
+                  }}
+                >
+                  <Video />
+                </Button>
+              </TooltipStandalone>
+              <TooltipStandalone content="Initiate Voice Call">
+                <Button
+                  variant={'outline'}
+                  size={'icon'}
+                  onClick={() =>
+                    makeCall({
+                      To: contact?.number as string,
+                      CallerId: activeNumber?.number as string,
+                    })
+                  }
+                >
+                  <Phone />
+                </Button>
+              </TooltipStandalone>
             </div>
           </div>
         )}
