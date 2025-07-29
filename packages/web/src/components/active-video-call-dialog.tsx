@@ -118,18 +118,14 @@ function ActiveVideoCallDialog() {
   }, [remote]);
 
   function endCall() {
+    console.log('END CALL: ', { local, localAudio, conference });
     local?.dispose();
     localAudio?.dispose();
     conference?.end();
   }
 
   return (
-    <Dialog
-      open={activeVideoCallDialogShown}
-      onOpenChange={(open) => {
-        if (!open) endCall();
-      }}
-    >
+    <Dialog open={activeVideoCallDialogShown}>
       <DialogContent className="[&>button:last-child]:hidden !w-[90vw] !max-w-none">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -230,6 +226,7 @@ function ActiveVideoCallDialog() {
             variant="destructive"
             onClick={() => {
               setActiveVideoCallDialogShown(false);
+              endCall();
             }}
           >
             END
