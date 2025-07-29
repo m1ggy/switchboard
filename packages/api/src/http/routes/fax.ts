@@ -63,7 +63,7 @@ async function routes(app: FastifyInstance) {
         });
       }
 
-      const inbox = await InboxesRepository.findOrCreate({
+      await InboxesRepository.findOrCreate({
         numberId: number.id,
         contactId: contact.id,
       });

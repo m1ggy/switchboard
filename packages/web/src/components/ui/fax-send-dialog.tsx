@@ -1,5 +1,6 @@
 'use client';
 
+import { getQueryClient } from '@/App';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -14,6 +15,7 @@ import { Label } from '@/components/ui/label';
 import { auth } from '@/lib/firebase';
 import { isPdfPasswordProtected } from '@/lib/pdf';
 import useMainStore from '@/lib/store';
+import { useTRPC } from '@/lib/trpc';
 import { FileText, Loader2, Upload, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -22,6 +24,7 @@ type FaxDialogProps = {
   onOpenChange: (open: boolean) => void;
   defaultTo?: string;
   defaultFromName?: string;
+  contactId: string;
 };
 
 type AttachedFile = {
@@ -36,6 +39,7 @@ export default function FaxSendDialog({
   onOpenChange,
   defaultTo = '',
   defaultFromName = '',
+  contactId,
 }: FaxDialogProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { activeNumber } = useMainStore();
@@ -49,6 +53,7 @@ export default function FaxSendDialog({
   const [isUploading, setIsUploading] = useState(false);
   const [isSending, setIsSending] = useState(false);
 
+  const trpc = useTRPC();
   useEffect(() => {
     if (!to && defaultTo) {
       setTo(defaultTo);
@@ -133,6 +138,19 @@ export default function FaxSendDialog({
     });
 
     setIsSending(false);
+    setAttachedFile(null);
+    setFromName('');
+    setSubject('');
+    setTo('');
+    setToName('');
+
+    const client = getQueryClient();
+
+    client.invalidateQueries({
+      queryKey: trpc.inboxes.getActivityByContact.infiniteQueryOptions({
+        contactId,
+      }).queryKey,
+    });
     onOpenChange(false);
   };
 
