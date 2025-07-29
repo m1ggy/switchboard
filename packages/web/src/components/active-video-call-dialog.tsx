@@ -9,13 +9,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Mic, MicOff, Video, VideoOff } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from './ui/button';
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from './ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { VideoTrackPreview } from './video-preview';
 import VideoCallNotes from './videocall-notes';
 
@@ -53,7 +47,7 @@ function ActiveVideoCallDialog() {
       remote
         .filter((track) => track.isAudioTrack())
         .forEach((track) => {
-          const id = track.getId?.()
+          const id = track.getId?.();
           /* eslint-disable */
           // @ts-ignore
           const level = track.getAudioLevel?.();
@@ -134,10 +128,8 @@ function ActiveVideoCallDialog() {
       open={activeVideoCallDialogShown}
       onOpenChange={(open) => {
         if (!open) endCall();
-        setActiveVideoCallDialogShown(open);
       }}
     >
-      <DialogClose />
       <DialogContent className="[&>button:last-child]:hidden !w-[90vw] !max-w-none">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -236,7 +228,9 @@ function ActiveVideoCallDialog() {
           </Button>
           <Button
             variant="destructive"
-            onClick={() => setActiveVideoCallDialogShown(false)}
+            onClick={() => {
+              setActiveVideoCallDialogShown(false);
+            }}
           >
             END
           </Button>
