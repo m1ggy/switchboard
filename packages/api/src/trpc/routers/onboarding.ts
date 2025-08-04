@@ -13,7 +13,7 @@ export const onboardingRouter = t.router({
     .input(
       z.object({
         country: z.string().default('US'),
-        areaCode: z.number().optional(),
+        areaCode: z.string().optional(),
         contains: z.string().optional(),
         smsEnabled: z.boolean().optional(),
         voiceEnabled: z.boolean().optional(),

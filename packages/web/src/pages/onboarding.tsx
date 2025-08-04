@@ -15,6 +15,12 @@ import * as React from 'react';
 
 import { StripePaymentForm } from '@/components/stripe-payment-form';
 import { TwilioNumberSearch } from '@/components/twilio-number-search';
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -27,25 +33,15 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
 
 const steps = [
   { id: 1, title: 'Welcome', description: 'Get started with Calliya' },
   { id: 2, title: 'Profile Setup', description: 'Tell us about yourself' },
-  { id: 3, title: 'Preferences', description: 'Customize your experience' },
-  { id: 4, title: 'Choose Plan', description: 'Select your subscription plan' },
-  { id: 5, title: 'Payment Method', description: 'Add your payment details' },
-  { id: 6, title: 'Company Setup', description: 'Set up your company' },
-  { id: 7, title: 'Phone Number', description: 'Choose your phone number' },
-  { id: 8, title: 'Features Tour', description: 'Discover key features' },
-  { id: 9, title: 'Ready to Go', description: "You're all set!" },
+  { id: 3, title: 'Choose Plan', description: 'Select your subscription plan' },
+  { id: 4, title: 'Payment Method', description: 'Add your payment details' },
+  { id: 5, title: 'Company Setup', description: 'Set up your company' },
+  { id: 6, title: 'Features Tour', description: 'Discover key features' },
+  { id: 7, title: 'Ready to Go', description: "You're all set!" },
 ];
 
 export default function Onboarding() {
@@ -66,8 +62,7 @@ export default function Onboarding() {
       cvc: '',
       cardName: '',
     },
-    selectedNumber: '',
-    companyName: '',
+    companies: [{ companyName: '', selectedNumber: '', id: 1 }],
   });
 
   const progress = (currentStep / steps.length) * 100;
@@ -90,9 +85,9 @@ export default function Onboarding() {
 
   const canProceed = () => {
     switch (currentStep) {
-      case 4:
+      case 3:
         return formData.selectedPlan !== '';
-      case 5:
+      case 4:
         return (
           formData.paymentMethod &&
           formData.paymentMethod.cardNumber &&
@@ -100,9 +95,35 @@ export default function Onboarding() {
           formData.paymentMethod.cvc &&
           formData.paymentMethod.cardName
         );
+      case 5:
+        return formData.companies.length !== 0;
       default:
         return true;
     }
+  };
+
+  const handleCompanyChange = (
+    index: number,
+    field: 'companyName' | 'selectedNumber',
+    value: string
+  ) => {
+    const updatedCompanies = [...formData.companies];
+    updatedCompanies[index][field] = value;
+    setFormData((prev) => ({ ...prev, companies: updatedCompanies }));
+  };
+
+  const addCompany = () => {
+    const newCompany = { companyName: '', selectedNumber: '', id: Date.now() };
+    setFormData((prev) => ({
+      ...prev,
+      companies: [...prev.companies, newCompany],
+    }));
+  };
+
+  const removeCompany = (index: number) => {
+    const updatedCompanies = [...formData.companies];
+    updatedCompanies.splice(index, 1);
+    setFormData((prev) => ({ ...prev, companies: updatedCompanies }));
   };
 
   const renderStepContent = () => {
@@ -127,15 +148,19 @@ export default function Onboarding() {
             <div className="grid grid-cols-3 gap-4 max-w-md mx-auto">
               <div className="text-center space-y-2">
                 <Phone className="w-8 h-8 mx-auto text-primary" />
-                <p className="text-sm font-medium">Smart Routing</p>
+                <p className="text-sm font-medium">
+                  SMS, Voice and Video Calls
+                </p>
               </div>
               <div className="text-center space-y-2">
                 <Users className="w-8 h-8 mx-auto text-primary" />
-                <p className="text-sm font-medium">Team Collaboration</p>
+                <p className="text-sm font-medium">Company Switching</p>
               </div>
               <div className="text-center space-y-2">
                 <Settings className="w-8 h-8 mx-auto text-primary" />
-                <p className="text-sm font-medium">Custom Settings</p>
+                <p className="text-sm font-medium">
+                  Realtime Notifications (Powered by Slack)
+                </p>
               </div>
             </div>
           </div>
@@ -185,129 +210,11 @@ export default function Onboarding() {
                   placeholder="Enter your work email"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="department">Department</Label>
-                  <Select
-                    value={formData.department}
-                    onValueChange={(value) =>
-                      handleInputChange('department', value)
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select department" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="sales">Sales</SelectItem>
-                      <SelectItem value="support">Customer Support</SelectItem>
-                      <SelectItem value="technical">
-                        Technical Support
-                      </SelectItem>
-                      <SelectItem value="billing">Billing</SelectItem>
-                      <SelectItem value="management">Management</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="role">Role</Label>
-                  <Select
-                    value={formData.role}
-                    onValueChange={(value) => handleInputChange('role', value)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select role" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="agent">Agent</SelectItem>
-                      <SelectItem value="senior-agent">Senior Agent</SelectItem>
-                      <SelectItem value="supervisor">Supervisor</SelectItem>
-                      <SelectItem value="manager">Manager</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
             </div>
           </div>
         );
 
       case 3:
-        return (
-          <div className="space-y-6">
-            <div className="text-center space-y-2">
-              <h2 className="text-2xl font-bold">Customize Your Preferences</h2>
-              <p className="text-muted-foreground">
-                Configure your settings to match your workflow.
-              </p>
-            </div>
-            <div className="space-y-6">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label className="text-base">Desktop Notifications</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Get notified about incoming calls and messages
-                    </p>
-                  </div>
-                  <Switch
-                    checked={formData.notifications}
-                    onCheckedChange={(checked) =>
-                      handleInputChange('notifications', checked)
-                    }
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label className="text-base">Auto-Answer Calls</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Automatically answer incoming calls after 3 rings
-                    </p>
-                  </div>
-                  <Switch
-                    checked={formData.autoAnswer}
-                    onCheckedChange={(checked) =>
-                      handleInputChange('autoAnswer', checked)
-                    }
-                  />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label>Default Availability Status</Label>
-                <Select
-                  value={formData.availability}
-                  onValueChange={(value) =>
-                    handleInputChange('availability', value)
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="available">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                        Available
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="busy">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 bg-red-500 rounded-full"></div>
-                        Busy
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="away">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
-                        Away
-                      </div>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </div>
-        );
-
-      case 4:
         return (
           <div className="space-y-6">
             <div className="text-center space-y-2">
@@ -521,8 +428,7 @@ export default function Onboarding() {
             </Card>
           </div>
         );
-
-      case 5:
+      case 4:
         return (
           <StripePaymentForm
             selectedPlan={formData.selectedPlan}
@@ -531,115 +437,90 @@ export default function Onboarding() {
             }
           />
         );
-
-      case 8:
-        return (
-          <div className="space-y-6">
-            <div className="text-center space-y-2">
-              <h2 className="text-2xl font-bold">Key Features Overview</h2>
-              <p className="text-muted-foreground">
-                Here are the main features you&apos;ll be using daily.
-              </p>
-            </div>
-            <div className="grid gap-4">
-              <Card>
-                <CardContent className="flex items-start gap-4 p-4">
-                  <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                    <Phone className="w-5 h-5 text-blue-600" />
-                  </div>
-                  <div className="space-y-1">
-                    <h3 className="font-semibold">Call Management</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Handle incoming calls, transfer to colleagues, and manage
-                      call queues efficiently.
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="flex items-start gap-4 p-4">
-                  <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-                    <Users className="w-5 h-5 text-green-600" />
-                  </div>
-                  <div className="space-y-1">
-                    <h3 className="font-semibold">Customer Database</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Access customer information, call history, and notes
-                      instantly during calls.
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="flex items-start gap-4 p-4">
-                  <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-                    <Settings className="w-5 h-5 text-purple-600" />
-                  </div>
-                  <div className="space-y-1">
-                    <h3 className="font-semibold">Analytics Dashboard</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Track your performance metrics, call volume, and response
-                      times.
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </div>
-        );
-      case 6:
+      case 5:
         return (
           <div className="space-y-6">
             <div className="text-center space-y-2">
               <h2 className="text-2xl font-bold">Set Up Your Company</h2>
               <p className="text-muted-foreground">
-                Tell us about your company to personalize your experience.
+                Add all the companies you&apos;d like to manage and assign a
+                phone number to each.
               </p>
             </div>
-            <div className="max-w-md mx-auto space-y-4">
-              <Card>
-                <CardContent className="p-6 space-y-4">
-                  <div className="flex items-center gap-2 mb-4">
-                    <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
-                      <Users className="w-5 h-5 text-primary" />
-                    </div>
-                    <span className="font-medium">Company Information</span>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="companyName">Company Name</Label>
-                    <Input
-                      id="companyName"
-                      value={formData.companyName}
-                      onChange={(e) =>
-                        handleInputChange('companyName', e.target.value)
-                      }
-                      placeholder="Enter your company name"
-                      className="text-center text-lg font-medium"
-                    />
-                  </div>
-                  <div className="text-xs text-muted-foreground text-center">
-                    <p>
-                      This will be displayed on your call center dashboard and
-                      reports.
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
+            <div className="space-y-4">
+              <Accordion type="multiple" className="w-full">
+                {formData.companies.map((company, index) => (
+                  <AccordionItem
+                    value={`company-${company.id}`}
+                    key={company.id}
+                  >
+                    <AccordionTrigger className="text-left text-base font-medium">
+                      Company #{index + 1}: {company.companyName || 'Unnamed'}
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <Card className="mt-2">
+                        <CardContent className="p-4 space-y-4">
+                          <div className="flex items-center justify-between">
+                            <Label htmlFor={`companyName-${index}`}>
+                              Company Name
+                            </Label>
+                            {formData.companies.length > 1 && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => removeCompany(index)}
+                              >
+                                Remove
+                              </Button>
+                            )}
+                          </div>
+                          <Input
+                            id={`companyName-${index}`}
+                            value={company.companyName}
+                            onChange={(e) =>
+                              handleCompanyChange(
+                                index,
+                                'companyName',
+                                e.target.value
+                              )
+                            }
+                            placeholder="Enter your company name"
+                          />
+                          <TwilioNumberSearch
+                            selectedNumber={company.selectedNumber}
+                            onNumberSelect={(number) =>
+                              handleCompanyChange(
+                                index,
+                                'selectedNumber',
+                                number
+                              )
+                            }
+                          />
+                        </CardContent>
+                      </Card>
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
+
+              <Button
+                variant="outline"
+                onClick={addCompany}
+                disabled={
+                  (formData.selectedPlan === 'starter' &&
+                    formData.companies.length >= 1) ||
+                  (formData.selectedPlan === 'professional' &&
+                    formData.companies.length >= 3) ||
+                  (formData.selectedPlan === 'business' &&
+                    formData.companies.length >= 10)
+                }
+              >
+                + Add Another Company
+              </Button>
             </div>
           </div>
         );
-
-      case 7:
-        return (
-          <TwilioNumberSearch
-            selectedNumber={formData.selectedNumber}
-            onNumberSelect={(number) =>
-              handleInputChange('selectedNumber', number)
-            }
-          />
-        );
-
-      case 9:
+      case 6:
         return (
           <div className="text-center space-y-6">
             <div className="mx-auto w-20 h-20 bg-green-100 rounded-full flex items-center justify-center">
@@ -665,6 +546,59 @@ export default function Onboarding() {
           </div>
         );
 
+      case 7:
+        return (
+          <div className="space-y-6">
+            <div className="text-center space-y-2">
+              <h2 className="text-2xl font-bold">Key Features Overview</h2>
+              <p className="text-muted-foreground">
+                Here are the main features you&apos;ll be using daily.
+              </p>
+            </div>
+            <div className="grid gap-4">
+              <Card>
+                <CardContent className="flex items-start gap-4 p-4">
+                  <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                    <Phone className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="font-semibold">Call Management</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Handle incoming calls and manage call queues efficiently.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="flex items-start gap-4 p-4">
+                  <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                    <Users className="w-5 h-5 text-green-600" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="font-semibold">Customer Database</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Access customer information, and call history.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="flex items-start gap-4 p-4">
+                  <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+                    <Settings className="w-5 h-5 text-purple-600" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="font-semibold">Analytics Dashboard</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Track your performance metrics, call volume, and response
+                      times.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        );
       default:
         return null;
     }

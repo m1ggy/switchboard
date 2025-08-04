@@ -7,6 +7,7 @@ import { logsRouter } from './logs';
 import { notesRouter } from './notes';
 import { notificationsRouter } from './notifications';
 import { numbersRouter } from './numbers';
+import { onboardingRouter } from './onboarding';
 import { pingRouter } from './ping';
 import { shortUrlRouter } from './shortUrls';
 import { statisticsRouter } from './statistics';
@@ -28,6 +29,7 @@ export const appRouter = t.router({
   notes: notesRouter,
   shortenUrl: shortUrlRouter,
   users: usersRouter,
+  onboarding: onboardingRouter,
 });
 
 export type AppRouter = typeof appRouter;

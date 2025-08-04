@@ -104,7 +104,7 @@ export class TwilioClient {
   async searchAvailableNumbers(
     country: string,
     options: {
-      areaCode?: number;
+      areaCode?: string;
       contains?: string;
       smsEnabled?: boolean;
       voiceEnabled?: boolean;
@@ -140,7 +140,7 @@ export class TwilioClient {
       .local.list({
         smsEnabled,
         voiceEnabled,
-        areaCode,
+        areaCode: areaCode as unknown as number,
         contains,
         limit,
       });
