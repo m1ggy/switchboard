@@ -11,6 +11,7 @@ import { onboardingRouter } from './onboarding';
 import { pingRouter } from './ping';
 import { shortUrlRouter } from './shortUrls';
 import { statisticsRouter } from './statistics';
+import { stripeRouter } from './stripe';
 import { twilioRouter } from './twilio';
 import { usersRouter } from './users';
 
@@ -30,6 +31,7 @@ export const appRouter = t.router({
   shortenUrl: shortUrlRouter,
   users: usersRouter,
   onboarding: onboardingRouter,
+  stripe: stripeRouter,
 });
 
 export type AppRouter = typeof appRouter;

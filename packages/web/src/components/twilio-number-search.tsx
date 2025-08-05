@@ -198,7 +198,7 @@ export function TwilioNumberSearch({
                 <Card
                   key={index}
                   className={`cursor-pointer transition-all hover:shadow-md ${
-                    selectedNumber?.phoneNumber === number.phoneNumber
+                    selectedNumber === number.phoneNumber
                       ? 'ring-2 ring-primary bg-primary/5'
                       : ''
                   }`}
@@ -240,7 +240,7 @@ export function TwilioNumberSearch({
                             </Badge>
                           ))}
                         </div>
-                        {selectedNumber?.phoneNumber === number.phoneNumber && (
+                        {selectedNumber === number.phoneNumber && (
                           <Badge className="bg-green-100 text-green-800">
                             Selected
                           </Badge>

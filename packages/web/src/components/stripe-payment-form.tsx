@@ -1,68 +1,49 @@
+// NOTE: This is a secure Stripe Elements-based replacement for your StripePaymentForm
+
 'use client';
+
+import {
+  CardElement,
+  Elements,
+  useElements,
+  useStripe,
+} from '@stripe/react-stripe-js';
+import { loadStripe } from '@stripe/stripe-js';
+import React from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { CreditCard, Lock } from 'lucide-react';
-import * as React from 'react';
+import { useTRPC } from '@/lib/trpc';
+import { useMutation } from '@tanstack/react-query';
+import { Lock } from 'lucide-react';
+
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY!);
 
 interface StripePaymentFormProps {
   selectedPlan: string;
-  onPaymentMethodChange: (paymentMethod: any) => void;
+  onPaymentMethodChange: (paymentMethodId: string) => void;
 }
 
-export function StripePaymentForm({
+function StripeElementsForm({
   selectedPlan,
   onPaymentMethodChange,
 }: StripePaymentFormProps) {
-  const [cardData, setCardData] = React.useState({
-    cardNumber: '',
-    expiry: '',
-    cvc: '',
-    cardName: '',
-  });
-  const [isProcessing, setIsProcessing] = React.useState(false);
+  const trpc = useTRPC();
+  const stripe = useStripe();
+  const elements = useElements();
+  const [loading, setLoading] = React.useState(false);
+  const [name, setName] = React.useState('');
+  const [email, setEmail] = React.useState('');
 
-  const formatCardNumber = (value: string) => {
-    const v = value.replace(/\s+/g, '').replace(/[^0-9]/gi, '');
-    const matches = v.match(/\d{4,16}/g);
-    const match = (matches && matches[0]) || '';
-    const parts = [];
+  const createSetupIntent = useMutation(
+    trpc.stripe.createSetupIntent.mutationOptions()
+  );
 
-    for (let i = 0, len = match.length; i < len; i += 4) {
-      parts.push(match.substring(i, i + 4));
-    }
-
-    if (parts.length) {
-      return parts.join(' ');
-    } else {
-      return v;
-    }
-  };
-
-  const formatExpiry = (value: string) => {
-    const v = value.replace(/\s+/g, '').replace(/[^0-9]/gi, '');
-    if (v.length >= 2) {
-      return `${v.substring(0, 2)}/${v.substring(2, 4)}`;
-    }
-    return v;
-  };
-
-  const handleInputChange = (field: string, value: string) => {
-    let formattedValue = value;
-
-    if (field === 'cardNumber') {
-      formattedValue = formatCardNumber(value);
-    } else if (field === 'expiry') {
-      formattedValue = formatExpiry(value);
-    } else if (field === 'cvc') {
-      formattedValue = value.replace(/[^0-9]/g, '').substring(0, 4);
-    }
-
-    setCardData((prev) => ({ ...prev, [field]: formattedValue }));
-    onPaymentMethodChange({ ...cardData, [field]: formattedValue });
-  };
+  const createSubscription = useMutation(
+    trpc.stripe.createSubscription.mutationOptions()
+  );
 
   const getPlanPrice = (plan: string) => {
     switch (plan) {
@@ -77,8 +58,65 @@ export function StripePaymentForm({
     }
   };
 
+  const getPriceId = (plan: string) => {
+    switch (plan) {
+      case 'business':
+        return 'price_1RnzeCR329ZHknhO6LKUSMnZ';
+      // Add more plan mappings as needed
+      default:
+        throw new Error('Unsupported plan selected');
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!stripe || !elements) return;
+
+    setLoading(true);
+
+    try {
+      // Create setup intent on submit
+      const setupIntentData = await createSetupIntent.mutateAsync({
+        name,
+        email,
+      });
+      const clientSecret = setupIntentData.clientSecret;
+      const customerId = setupIntentData.customerId;
+
+      const result = await stripe.confirmCardSetup(clientSecret as string, {
+        payment_method: {
+          card: elements.getElement(CardElement)!,
+          billing_details: {
+            name,
+            email,
+          },
+        },
+      });
+
+      if (result.error) {
+        console.error(result.error.message);
+        setLoading(false);
+        return;
+      }
+
+      const paymentMethodId = result.setupIntent.payment_method as string;
+      onPaymentMethodChange(paymentMethodId);
+
+      const priceId = getPriceId(selectedPlan);
+      await createSubscription.mutateAsync({
+        customerId,
+        paymentMethodId,
+        priceId,
+      });
+    } catch (error) {
+      console.error('Failed to complete subscription flow:', error);
+    }
+
+    setLoading(false);
+  };
+
   return (
-    <div className="space-y-6">
+    <form onSubmit={handleSubmit} className="space-y-6">
       <div className="text-center space-y-2">
         <h2 className="text-2xl font-bold">Add Payment Method</h2>
         <p className="text-muted-foreground">
@@ -103,63 +141,31 @@ export function StripePaymentForm({
 
         <Card>
           <CardContent className="p-6 space-y-4">
-            <div className="flex items-center gap-2 mb-4">
-              <CreditCard className="w-5 h-5" />
-              <span className="font-medium">Payment Details</span>
+            <div className="space-y-2">
+              <Label htmlFor="name">Full Name</Label>
+              <Input
+                id="name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="John Doe"
+              />
             </div>
 
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="cardNumber">Card Number</Label>
-                <Input
-                  id="cardNumber"
-                  value={cardData.cardNumber}
-                  onChange={(e) =>
-                    handleInputChange('cardNumber', e.target.value)
-                  }
-                  placeholder="1234 5678 9012 3456"
-                  className="font-mono"
-                  maxLength={19}
-                />
-              </div>
+            <div className="space-y-2">
+              <Label htmlFor="email">Email Address</Label>
+              <Input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+              />
+            </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="expiry">Expiry Date</Label>
-                  <Input
-                    id="expiry"
-                    value={cardData.expiry}
-                    onChange={(e) =>
-                      handleInputChange('expiry', e.target.value)
-                    }
-                    placeholder="MM/YY"
-                    className="font-mono"
-                    maxLength={5}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="cvc">CVC</Label>
-                  <Input
-                    id="cvc"
-                    value={cardData.cvc}
-                    onChange={(e) => handleInputChange('cvc', e.target.value)}
-                    placeholder="123"
-                    className="font-mono"
-                    maxLength={4}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="cardName">Cardholder Name</Label>
-                <Input
-                  id="cardName"
-                  value={cardData.cardName}
-                  onChange={(e) =>
-                    handleInputChange('cardName', e.target.value)
-                  }
-                  placeholder="John Doe"
-                />
+            <div className="space-y-2">
+              <Label className="font-medium">Card Details</Label>
+              <div className="border rounded-md p-3">
+                <CardElement options={{ hidePostalCode: true }} />
               </div>
             </div>
 
@@ -173,11 +179,27 @@ export function StripePaymentForm({
           </CardContent>
         </Card>
 
+        <button
+          type="submit"
+          disabled={!stripe || loading}
+          className="w-full bg-primary text-white p-2 rounded-md"
+        >
+          {loading ? 'Processing...' : 'Save & Subscribe'}
+        </button>
+
         <div className="text-center text-xs text-muted-foreground">
           <p>You can cancel your subscription at any time.</p>
           <p>No setup fees or hidden charges.</p>
         </div>
       </div>
-    </div>
+    </form>
+  );
+}
+
+export default function SecureStripePaymentForm(props: StripePaymentFormProps) {
+  return (
+    <Elements stripe={stripePromise}>
+      <StripeElementsForm {...props} />
+    </Elements>
   );
 }

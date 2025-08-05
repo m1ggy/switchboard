@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import * as React from 'react';
 
-import { StripePaymentForm } from '@/components/stripe-payment-form';
+import StripePaymentForm from '@/components/stripe-payment-form';
 import { TwilioNumberSearch } from '@/components/twilio-number-search';
 import {
   Accordion,
@@ -95,8 +95,15 @@ export default function Onboarding() {
           formData.paymentMethod.cvc &&
           formData.paymentMethod.cardName
         );
-      case 5:
-        return formData.companies.length !== 0;
+      case 5: {
+        const hasEmptyCompany = formData.companies.find(
+          (company) =>
+            company.companyName.trim().length === 0 ||
+            company.selectedNumber.trim().length === 0
+        );
+
+        return formData.companies.length !== 0 && !hasEmptyCompany;
+      }
       default:
         return true;
     }
@@ -455,7 +462,12 @@ export default function Onboarding() {
                     key={company.id}
                   >
                     <AccordionTrigger className="text-left text-base font-medium">
-                      Company #{index + 1}: {company.companyName || 'Unnamed'}
+                      <div>
+                        Company #{index + 1}: {company.companyName || 'Unnamed'}{' '}
+                        {company.selectedNumber && (
+                          <Badge>{company.selectedNumber}</Badge>
+                        )}
+                      </div>
                     </AccordionTrigger>
                     <AccordionContent>
                       <Card className="mt-2">
@@ -488,13 +500,14 @@ export default function Onboarding() {
                           />
                           <TwilioNumberSearch
                             selectedNumber={company.selectedNumber}
-                            onNumberSelect={(number) =>
+                            onNumberSelect={(number) => {
+                              console.log({ number });
                               handleCompanyChange(
                                 index,
                                 'selectedNumber',
-                                number
-                              )
-                            }
+                                number.phoneNumber
+                              );
+                            }}
                           />
                         </CardContent>
                       </Card>

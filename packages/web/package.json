@@ -35,6 +35,8 @@
     "@radix-ui/react-slot": "^1.2.3",
     "@radix-ui/react-switch": "^1.2.5",
     "@radix-ui/react-tooltip": "^1.2.6",
+    "@stripe/react-stripe-js": "^3.9.0",
+    "@stripe/stripe-js": "^7.8.0",
     "@tailwindcss/vite": "^4.1.5",
     "@tanstack/react-query": "^5.75.5",
     "@trpc/client": "^11.1.2",
