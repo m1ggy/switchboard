@@ -37,9 +37,6 @@ export const UsersRepository = {
     return res.rows[0];
   },
 
-  /**
-   * Find user by ID
-   */
   async findById(id: string): Promise<User | null> {
     const res = await pool.query<User>(`SELECT * FROM users WHERE id = $1`, [
       id,
@@ -52,13 +49,9 @@ export const UsersRepository = {
       `SELECT * FROM users WHERE user_id = $1`,
       [uid]
     );
-
     return res.rows[0] || null;
   },
 
-  /**
-   * Find user by email
-   */
   async findByEmail(email: string): Promise<User | null> {
     const res = await pool.query<User>(`SELECT * FROM users WHERE email = $1`, [
       email,
@@ -66,9 +59,6 @@ export const UsersRepository = {
     return res.rows[0] || null;
   },
 
-  /**
-   * Find user by Stripe customer ID
-   */
   async findByStripeCustomerId(stripeCustomerId: string): Promise<User | null> {
     const res = await pool.query<User>(
       `SELECT * FROM users WHERE stripe_customer_id = $1`,
@@ -77,9 +67,6 @@ export const UsersRepository = {
     return res.rows[0] || null;
   },
 
-  /**
-   * Update user by ID
-   */
   async update(id: string, updates: Partial<User>): Promise<User | null> {
     const fields: string[] = [];
     const values: (string | boolean | Date | number)[] = [];
@@ -106,8 +93,36 @@ export const UsersRepository = {
   },
 
   /**
-   * Delete user by ID
+   * 🔹 Update user by Stripe customer ID
    */
+  async updateByStripeCustomerId(
+    customerId: string,
+    updates: Partial<User>
+  ): Promise<User | null> {
+    const fields: string[] = [];
+    const values: (string | boolean | Date | number)[] = [];
+    let paramIndex = 1;
+
+    for (const [key, value] of Object.entries(updates)) {
+      fields.push(`${key} = $${paramIndex}`);
+      values.push(value);
+      paramIndex++;
+    }
+
+    if (fields.length === 0) {
+      throw new Error('No fields provided to update.');
+    }
+
+    values.push(customerId); // final param is stripe_customer_id
+
+    const res = await pool.query<User>(
+      `UPDATE users SET ${fields.join(', ')} WHERE stripe_customer_id = $${paramIndex} RETURNING *`,
+      values
+    );
+
+    return res.rows[0] || null;
+  },
+
   async delete(id: string): Promise<void> {
     await pool.query(`DELETE FROM users WHERE id = $1`, [id]);
   },

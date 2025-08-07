@@ -9,6 +9,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import faxRoutes from './http/routes/fax';
 import jitsiRoutes from './http/routes/jitsi';
+import stripeRoutes from './http/routes/stripe';
 import twilioRoutes from './http/routes/twilio';
 import { auth } from './lib/firebase';
 import { appRouter } from './trpc';
@@ -75,6 +76,7 @@ app.get('/health', () => {
 app.register(twilioRoutes, { prefix: '/twilio' });
 app.register(jitsiRoutes, { prefix: '/jitsi' });
 app.register(faxRoutes, { prefix: '/fax' });
+app.register(stripeRoutes, { prefix: '/stripe' });
 
 app.listen({ port: 3000 }, () => {
   console.log('API listening on http://localhost:3000');
