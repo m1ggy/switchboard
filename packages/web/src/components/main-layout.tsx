@@ -18,6 +18,7 @@ import DialerDialog from './dialer-dialog';
 import Header from './header';
 import { IncomingCallDialog } from './incoming-call-dialog';
 import SendMessageDialog from './send-message';
+import Loader from './ui/loader';
 import { SidebarProvider } from './ui/sidebar';
 
 function Layout() {
@@ -27,7 +28,9 @@ function Layout() {
   const { activeNumber } = useMainStore();
   const navigate = useNavigate();
 
-  const { data: userInfo } = useQuery(trpc.users.getUser.queryOptions());
+  const { data: userInfo, isLoading: userLoading } = useQuery(
+    trpc.users.getUser.queryOptions()
+  );
 
   const { mutate } = useMutation(trpc.twilio.presence.mutationOptions());
 
@@ -45,10 +48,22 @@ function Layout() {
   }, [rootSocket]);
 
   useEffect(() => {
-    if (userInfo && !userInfo.onboarding_completed) {
+    console.log({ userInfo });
+    if (
+      (userInfo && !userInfo.onboarding_completed) ||
+      (!userLoading && !userInfo)
+    ) {
       navigate('/onboarding');
     }
-  }, [userInfo, navigate]);
+  }, [userInfo, navigate, userLoading]);
+
+  if (userLoading) {
+    return (
+      <div className="w-full h-[100vh] flex justify-center items-center">
+        <Loader />
+      </div>
+    );
+  }
 
   return (
     <NotificationProvider>

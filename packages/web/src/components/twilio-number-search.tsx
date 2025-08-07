@@ -119,7 +119,9 @@ export function TwilioNumberSearch({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="area-code">Area Code</SelectItem>
-                  <SelectItem value="city">City</SelectItem>
+                  <SelectItem value="city" disabled>
+                    City
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>

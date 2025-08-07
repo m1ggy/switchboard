@@ -124,7 +124,7 @@ function Dashboard() {
         ) : (
           <Card>
             <CardHeader>
-              <CardTitle>Average call duration this week</CardTitle>
+              <CardTitle>Average call duration</CardTitle>
             </CardHeader>
             <CardContent className="text-2xl font-bold">
               {formatDurationWithDateFns(avgCallDurationThisWeek as number)}
@@ -136,7 +136,7 @@ function Dashboard() {
         ) : (
           <Card>
             <CardHeader>
-              <CardTitle>Longest call this week</CardTitle>
+              <CardTitle>Longest call</CardTitle>
             </CardHeader>
             <CardContent className="text-2xl font-bold">
               {formatDurationWithDateFns(longestCallThisWeek as number)}
@@ -146,15 +146,18 @@ function Dashboard() {
         {topContactByCallCountLoading ? (
           <Skeleton />
         ) : (
-          <Card>
-            <CardHeader>
-              <CardTitle>Contact with most calls</CardTitle>
-            </CardHeader>
-            <CardContent className="text-2xl font-bold">
-              {topContactByCallCount?.[0]?.label} (
-              {topContactByCallCount?.[0]?.call_count})
-            </CardContent>
-          </Card>
+          topContactByCallCount &&
+          topContactByCallCount?.[0]?.call_count > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Contact with most calls</CardTitle>
+              </CardHeader>
+              <CardContent className="text-2xl font-bold">
+                {topContactByCallCount?.[0]?.label} (
+                {topContactByCallCount?.[0]?.call_count})
+              </CardContent>
+            </Card>
+          )
         )}
       </div>
 

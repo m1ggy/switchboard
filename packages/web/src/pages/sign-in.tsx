@@ -19,7 +19,11 @@ import { auth } from '@/lib/firebase';
 import useMainStore from '@/lib/store';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { FirebaseError } from 'firebase/app';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import {
+  GoogleAuthProvider,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+} from 'firebase/auth';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router';
@@ -76,6 +80,32 @@ function SignIn() {
           break;
         default:
           setError('An unexpected error occurred. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      setUser(result.user);
+      navigate('/dashboard');
+    } catch (error) {
+      const firebaseError = error as FirebaseError;
+      switch (firebaseError.code) {
+        case 'auth/popup-closed-by-user':
+          setError('Google sign-in popup was closed.');
+          break;
+        case 'auth/cancelled-popup-request':
+          setError('Google sign-in was canceled.');
+          break;
+        default:
+          setError('Failed to sign in with Google. Please try again.');
       }
     } finally {
       setLoading(false);
@@ -142,16 +172,30 @@ function SignIn() {
                     </Button>
                   </div>
                   {error && (
-                    <p className="text-red-300 text-sm font-semibold">
+                    <p className="text-red-300 text-sm font-semibold text-center">
                       {error}
                     </p>
                   )}
                 </form>
               </Form>
+              <div className="text-sm text-center mb-2 text-muted-foreground">
+                or
+              </div>
+
+              <div className="flex justify-center mb-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleGoogleSignIn}
+                  disabled={loading}
+                >
+                  {loading ? <Loader /> : 'Continue with Google'}
+                </Button>
+              </div>
 
               <div className="mt-5 text-center">
                 <span>
-                  Need an account? <Link to={'/signup'}>Create one!</Link>
+                  Need an account? <Link to={'/sign-up'}>Create one!</Link>
                 </span>
               </div>
             </CardDescription>

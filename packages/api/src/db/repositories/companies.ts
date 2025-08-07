@@ -101,4 +101,15 @@ export const UserCompaniesRepository = {
     );
     return res.rows?.[0] || null;
   },
+
+  async createCompany({ companyName }: { companyName: string }) {
+    const res = await pool.query<Company>(
+      `INSERT INTO companies (id, name)
+       VALUES (gen_random_uuid(), $1)
+       RETURNING *`,
+      [companyName]
+    );
+
+    return res.rows[0];
+  },
 };

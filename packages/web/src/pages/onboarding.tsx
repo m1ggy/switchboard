@@ -33,43 +33,95 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
+import { useTRPC } from '@/lib/trpc';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router';
+import { toast } from 'sonner';
 
 const steps = [
   { id: 1, title: 'Welcome', description: 'Get started with Calliya' },
-  { id: 2, title: 'Profile Setup', description: 'Tell us about yourself' },
-  { id: 3, title: 'Choose Plan', description: 'Select your subscription plan' },
-  { id: 4, title: 'Payment Method', description: 'Add your payment details' },
-  { id: 5, title: 'Company Setup', description: 'Set up your company' },
-  { id: 6, title: 'Features Tour', description: 'Discover key features' },
-  { id: 7, title: 'Ready to Go', description: "You're all set!" },
+  { id: 2, title: 'Choose Plan', description: 'Select your subscription plan' },
+  { id: 3, title: 'Payment Method', description: 'Add your payment details' },
+  { id: 4, title: 'Company Setup', description: 'Set up your company' },
+  { id: 5, title: 'Features Tour', description: 'Discover key features' },
+  { id: 6, title: 'Ready to Go', description: "You're all set!" },
 ];
 
 export default function Onboarding() {
+  const trpc = useTRPC();
+  const navigate = useNavigate();
+
+  const { data: user } = useQuery(trpc.users.getUser.queryOptions());
+  const { mutateAsync } = useMutation(
+    trpc.onboarding.finishOnboarding.mutationOptions()
+  );
+  console.log({ user });
   const [currentStep, setCurrentStep] = React.useState(1);
   const [formData, setFormData] = React.useState({
-    firstName: '',
-    lastName: '',
-    email: '',
-    department: '',
-    role: '',
-    notifications: true,
-    autoAnswer: false,
-    availability: 'available',
     selectedPlan: '',
-    paymentMethod: {
-      cardNumber: '',
-      expiry: '',
-      cvc: '',
-      cardName: '',
-    },
+    paymentMethod: '',
     companies: [{ companyName: '', selectedNumber: '', id: 1 }],
   });
+  const [companyValidationError, setCompanyValidationError] = React.useState<
+    string | null
+  >(null);
 
   const progress = (currentStep / steps.length) * 100;
 
-  const handleNext = () => {
+  const handleNext = async () => {
+    if (currentStep === 4) {
+      const { companies } = formData;
+      const nameSet = new Set<string>();
+      const numberSet = new Set<string>();
+
+      for (const company of companies) {
+        const name = company.companyName.trim().toLowerCase();
+        const number = company.selectedNumber.trim();
+
+        if (!name || !number) {
+          setCompanyValidationError(
+            'All companies must have a name and a number.'
+          );
+          return;
+        }
+
+        if (nameSet.has(name)) {
+          setCompanyValidationError(
+            `Duplicate company name found: "${company.companyName}"`
+          );
+          return;
+        }
+
+        if (numberSet.has(number)) {
+          setCompanyValidationError(
+            `Duplicate phone number found: "${company.selectedNumber}"`
+          );
+          return;
+        }
+
+        nameSet.add(name);
+        numberSet.add(number);
+      }
+
+      // Clear error if all checks pass
+      setCompanyValidationError(null);
+    }
+
     if (currentStep < steps.length) {
       setCurrentStep(currentStep + 1);
+    }
+
+    if (currentStep === steps.length) {
+      console.log('END ONBOARDING: ', formData);
+      await mutateAsync({
+        companies: formData.companies.map((company) => ({
+          ...company,
+          companyNumber: company.selectedNumber,
+        })),
+      });
+
+      toast.success('Companies created!');
+      navigate('/dashboard');
     }
   };
 
@@ -85,24 +137,29 @@ export default function Onboarding() {
 
   const canProceed = () => {
     switch (currentStep) {
-      case 3:
+      case 2:
         return formData.selectedPlan !== '';
-      case 4:
-        return (
-          formData.paymentMethod &&
-          formData.paymentMethod.cardNumber &&
-          formData.paymentMethod.expiry &&
-          formData.paymentMethod.cvc &&
-          formData.paymentMethod.cardName
-        );
-      case 5: {
-        const hasEmptyCompany = formData.companies.find(
-          (company) =>
-            company.companyName.trim().length === 0 ||
-            company.selectedNumber.trim().length === 0
-        );
+      case 3:
+        return formData.paymentMethod !== '';
+      case 4: {
+        const { companies } = formData;
 
-        return formData.companies.length !== 0 && !hasEmptyCompany;
+        const nameSet = new Set<string>();
+        const numberSet = new Set<string>();
+
+        for (const company of companies) {
+          const name = company.companyName.trim().toLowerCase();
+          const number = company.selectedNumber.trim();
+
+          if (!name || !number) return false;
+          if (nameSet.has(name)) return false;
+          if (numberSet.has(number)) return false;
+
+          nameSet.add(name);
+          numberSet.add(number);
+        }
+
+        return true;
       }
       default:
         return true;
@@ -172,56 +229,7 @@ export default function Onboarding() {
             </div>
           </div>
         );
-
       case 2:
-        return (
-          <div className="space-y-6">
-            <div className="text-center space-y-2">
-              <h2 className="text-2xl font-bold">Set Up Your Profile</h2>
-              <p className="text-muted-foreground">
-                Help your team identify you and route calls appropriately.
-              </p>
-            </div>
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="firstName">First Name</Label>
-                  <Input
-                    id="firstName"
-                    value={formData.firstName}
-                    onChange={(e) =>
-                      handleInputChange('firstName', e.target.value)
-                    }
-                    placeholder="Enter your first name"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="lastName">Last Name</Label>
-                  <Input
-                    id="lastName"
-                    value={formData.lastName}
-                    onChange={(e) =>
-                      handleInputChange('lastName', e.target.value)
-                    }
-                    placeholder="Enter your last name"
-                  />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="email">Email Address</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => handleInputChange('email', e.target.value)}
-                  placeholder="Enter your work email"
-                />
-              </div>
-            </div>
-          </div>
-        );
-
-      case 3:
         return (
           <div className="space-y-6">
             <div className="text-center space-y-2">
@@ -435,16 +443,17 @@ export default function Onboarding() {
             </Card>
           </div>
         );
-      case 4:
+      case 3:
         return (
           <StripePaymentForm
             selectedPlan={formData.selectedPlan}
             onPaymentMethodChange={(paymentMethod) =>
               handleInputChange('paymentMethod', paymentMethod)
             }
+            onPaymentDone={handleNext}
           />
         );
-      case 5:
+      case 4:
         return (
           <div className="space-y-6">
             <div className="text-center space-y-2">
@@ -454,6 +463,11 @@ export default function Onboarding() {
                 phone number to each.
               </p>
             </div>
+            {companyValidationError && (
+              <div className="text-sm text-red-500 font-medium">
+                {companyValidationError}
+              </div>
+            )}
             <div className="space-y-4">
               <Accordion type="multiple" className="w-full">
                 {formData.companies.map((company, index) => (
@@ -533,7 +547,7 @@ export default function Onboarding() {
             </div>
           </div>
         );
-      case 6:
+      case 5:
         return (
           <div className="text-center space-y-6">
             <div className="mx-auto w-20 h-20 bg-green-100 rounded-full flex items-center justify-center">
@@ -542,24 +556,14 @@ export default function Onboarding() {
             <div className="space-y-2">
               <h2 className="text-2xl font-bold">You&apos;re All Set!</h2>
               <p className="text-muted-foreground max-w-md mx-auto">
-                Welcome to the team, {formData.firstName}! You&apos;re ready to
-                start handling calls and providing excellent customer service.
+                Welcome to Calliya! You&apos;re ready to start handling calls
+                and providing excellent customer service.
               </p>
-            </div>
-            <div className="bg-muted/50 rounded-lg p-4 space-y-2">
-              <h3 className="font-semibold">Your Profile Summary</h3>
-              <div className="flex flex-wrap gap-2 justify-center">
-                <Badge variant="secondary">{formData.department}</Badge>
-                <Badge variant="secondary">{formData.role}</Badge>
-                <Badge variant="secondary" className="capitalize">
-                  {formData.availability}
-                </Badge>
-              </div>
             </div>
           </div>
         );
 
-      case 7:
+      case 6:
         return (
           <div className="space-y-6">
             <div className="text-center space-y-2">
@@ -577,7 +581,7 @@ export default function Onboarding() {
                   <div className="space-y-1">
                     <h3 className="font-semibold">Call Management</h3>
                     <p className="text-sm text-muted-foreground">
-                      Handle incoming calls and manage call queues efficiently.
+                      Handle incoming calls and manage call efficiently.
                     </p>
                   </div>
                 </CardContent>
@@ -588,9 +592,11 @@ export default function Onboarding() {
                     <Users className="w-5 h-5 text-green-600" />
                   </div>
                   <div className="space-y-1">
-                    <h3 className="font-semibold">Customer Database</h3>
+                    <h3 className="font-semibold">Inbox Management</h3>
                     <p className="text-sm text-muted-foreground">
-                      Access customer information, and call history.
+                      Handle SMS and voice logs in the inbox{' '}
+                      {formData.selectedPlan === 'business' &&
+                        '(and manage your fax and MMS too from the inbox!)'}
                     </p>
                   </div>
                 </CardContent>
@@ -603,8 +609,7 @@ export default function Onboarding() {
                   <div className="space-y-1">
                     <h3 className="font-semibold">Analytics Dashboard</h3>
                     <p className="text-sm text-muted-foreground">
-                      Track your performance metrics, call volume, and response
-                      times.
+                      Track your performance metrics and call volumes
                     </p>
                   </div>
                 </CardContent>
@@ -639,18 +644,20 @@ export default function Onboarding() {
         <CardContent className="space-y-6">
           {renderStepContent()}
           <div className="flex justify-between pt-4">
-            <Button
-              variant="outline"
-              onClick={handlePrevious}
-              disabled={currentStep === 1}
-              className="flex items-center gap-2 bg-transparent"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Previous
-            </Button>
+            {currentStep < 4 && (
+              <Button
+                variant="outline"
+                onClick={handlePrevious}
+                disabled={currentStep === 1}
+                className="flex items-center gap-2 bg-transparent"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Previous
+              </Button>
+            )}
             <Button
               onClick={handleNext}
-              disabled={currentStep === steps.length || !canProceed()}
+              disabled={!canProceed()}
               className="flex items-center gap-2"
             >
               {currentStep === steps.length ? 'Get Started' : 'Next'}

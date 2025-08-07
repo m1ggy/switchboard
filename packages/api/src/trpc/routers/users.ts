@@ -43,6 +43,9 @@ export const usersRouter = t.router({
       })
     )
     .mutation(async ({ input }) => {
+      const existingUser = await UsersRepository.findByEmail(input.email);
+
+      if (existingUser) throw new Error('Email already used');
       const user = await UsersRepository.create({
         id: randomUUID(),
         email: input.email,

@@ -1,5 +1,6 @@
 import { useAuth } from '@/hooks/auth-provider';
 import { auth } from '@/lib/firebase';
+import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
 import { useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -36,6 +37,8 @@ function Header({ isLoggedIn }: HeaderProps) {
   const { data: unreadCount } = useQuery(
     trpc.notifications.getUnreadNotificationsCount.queryOptions()
   );
+
+  const store = useMainStore();
   return (
     <div
       className={clsx([
@@ -83,6 +86,8 @@ function Header({ isLoggedIn }: HeaderProps) {
               onClick={() => {
                 signOut(auth).then(() => {
                   authContext.setUser(null);
+                  store.setActiveCompany(null);
+                  store.setActiveNumber(null);
                   navigate('/sign-in');
                 });
               }}

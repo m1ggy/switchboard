@@ -1,19 +1,22 @@
+import { useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router';
-import useMainStore from './lib/store';
+import { useTRPC } from './lib/trpc';
 import PageLoader from './pages/loader';
 
 function AppRoot() {
-  const { user } = useMainStore();
+  const trpc = useTRPC();
+  const { data: userInfo } = useQuery(trpc.users.getUser.queryOptions());
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!user) {
+    console.log({ userInfo });
+    if (!userInfo) {
       navigate('/sign-in');
     } else {
       navigate('/dashboard');
     }
-  }, [user, navigate]);
+  }, [userInfo, navigate]);
   return <PageLoader />;
 }
 

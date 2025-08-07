@@ -1,3 +1,4 @@
+import { UsersRepository } from '@/db/repositories/users';
 import Stripe from 'stripe';
 import { z } from 'zod';
 import { protectedProcedure, t } from '../trpc';
@@ -50,7 +51,7 @@ export const stripeRouter = t.router({
         priceId: z.string(), // from your Stripe dashboard for that plan
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const stripe = new Stripe(process.env.STRIPE_API_KEY!);
 
       // Attach the payment method to customer (optional, if not already)
@@ -65,11 +66,27 @@ export const stripeRouter = t.router({
         },
       });
 
-      // Create the subscription
-      const subscription = await stripe.subscriptions.create({
+      // Check for existing subscriptions
+      const subscriptions = await stripe.subscriptions.list({
         customer: input.customerId,
-        items: [{ price: input.priceId }],
-        expand: ['latest_invoice.payment_intent'],
+      });
+
+      let subscription = subscriptions.data[0];
+
+      if (!subscription) {
+        // Create the subscription
+        subscription = await stripe.subscriptions.create({
+          customer: input.customerId,
+          items: [{ price: input.priceId }],
+          expand: ['latest_invoice.payment_intent'],
+        });
+      }
+
+      await UsersRepository.update(ctx.user.uid, {
+        stripe_customer_id: input.customerId,
+        stripe_subscription_id: subscription.id,
+        plan_started_at: new Date(subscription.start_date * 1000).toISOString(),
+        onboarding_step: 4,
       });
 
       return {

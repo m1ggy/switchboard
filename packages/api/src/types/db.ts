@@ -17,6 +17,12 @@ export interface User {
   stripe_customer_id: string;
   onboarding_step: number;
   onboarding_completed: boolean;
+  stripe_subscription_id: string;
+  subscription_status: string;
+  selected_plan: string;
+  plan_started_at: string;
+  plan_ends_at: string;
+  email: string;
 }
 
 export interface UserCompany {

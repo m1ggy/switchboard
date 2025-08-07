@@ -98,7 +98,7 @@ export const UsersRepository = {
     values.push(id); // final param is user ID
 
     const res = await pool.query<User>(
-      `UPDATE users SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+      `UPDATE users SET ${fields.join(', ')} WHERE user_id = $${paramIndex} RETURNING *`,
       values
     );
 

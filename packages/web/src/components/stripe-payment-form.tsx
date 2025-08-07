@@ -18,17 +18,20 @@ import { Label } from '@/components/ui/label';
 import { useTRPC } from '@/lib/trpc';
 import { useMutation } from '@tanstack/react-query';
 import { Lock } from 'lucide-react';
+import { toast } from 'sonner';
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY!);
 
 interface StripePaymentFormProps {
   selectedPlan: string;
   onPaymentMethodChange: (paymentMethodId: string) => void;
+  onPaymentDone: () => void;
 }
 
 function StripeElementsForm({
   selectedPlan,
   onPaymentMethodChange,
+  onPaymentDone,
 }: StripePaymentFormProps) {
   const trpc = useTRPC();
   const stripe = useStripe();
@@ -62,7 +65,10 @@ function StripeElementsForm({
     switch (plan) {
       case 'business':
         return 'price_1RnzeCR329ZHknhO6LKUSMnZ';
-      // Add more plan mappings as needed
+      case 'professional':
+        return 'price_1RnzdUR329ZHknhOrItXwc2w';
+      case 'starter':
+        return 'price_1RnzbsR329ZHknhOHiTusZmW';
       default:
         throw new Error('Unsupported plan selected');
     }
@@ -108,6 +114,8 @@ function StripeElementsForm({
         paymentMethodId,
         priceId,
       });
+      toast.success('Payment Successful');
+      onPaymentDone();
     } catch (error) {
       console.error('Failed to complete subscription flow:', error);
     }
