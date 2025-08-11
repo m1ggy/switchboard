@@ -192,3 +192,52 @@ export interface Fax {
   meta: Record<string, unknown> | null;
   created_at: Date;
 }
+
+export interface Usage {
+  id: string;
+  subscription_id: string;
+  user_id: string;
+  amount: number;
+  type: 'fax' | 'mms' | 'sms' | 'call';
+}
+
+export interface Plan {
+  id: string;
+  name: string;
+  description: string | null;
+  stripe_price_id: string;
+  monthly_price: number;
+  created_at: Date;
+}
+
+export interface Feature {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+}
+
+export interface PlanFeature {
+  plan_id: string;
+  feature_id: string;
+  name?: string; // populated when joining with features table
+  key?: string; // populated when joining with features table
+  description?: string | null;
+}
+
+export interface UsageMetric {
+  id: string;
+  key: string;
+  name: string;
+  unit: string;
+}
+
+export interface PlanUsageLimit {
+  id: string;
+  plan_id: string;
+  metric_id: string;
+  included_quantity: number;
+  metric_key?: string; // populated from join
+  metric_name?: string; // populated from join
+  unit?: string; // populated from join
+}

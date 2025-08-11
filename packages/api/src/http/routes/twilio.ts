@@ -6,6 +6,8 @@ import { InboxesRepository } from '@/db/repositories/inboxes';
 import { MediaAttachmentsRepository } from '@/db/repositories/message_attachments';
 import { MessagesRepository } from '@/db/repositories/messages';
 import { NumbersRepository } from '@/db/repositories/numbers';
+import { UsageRepository } from '@/db/repositories/usage';
+import { UsersRepository } from '@/db/repositories/users';
 import { uploadAttachmentBuffer } from '@/lib/google/storage';
 import { notifyIncomingCall, notifyNewMessage } from '@/lib/helpers';
 import { callQueueManager } from '@/lib/queue';
@@ -427,6 +429,24 @@ async function routes(app: FastifyInstance) {
         target: { contactId: contact.id },
       },
     });
+
+    const companyId = matchingNumber.company_id;
+
+    const userCompany = await UserCompaniesRepository.findUserIdById(companyId);
+
+    if (userCompany) {
+      const user = await UsersRepository.findByFirebaseUid(
+        userCompany?.user_id
+      );
+
+      UsageRepository.create({
+        subscription_id: user?.stripe_subscription_id as string,
+        user_id: user?.user_id as string,
+        amount: 1,
+        type: mediaCount > 0 ? 'mms' : 'sms',
+        id: randomUUID(),
+      });
+    }
 
     return reply.status(204).send();
   });

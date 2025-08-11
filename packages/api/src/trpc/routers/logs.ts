@@ -2,10 +2,12 @@ import { CallsRepository } from '@/db/repositories/calls';
 import { ContactsRepository } from '@/db/repositories/contacts';
 import { InboxesRepository } from '@/db/repositories/inboxes';
 import { NumbersRepository } from '@/db/repositories/numbers';
+import { UsageRepository } from '@/db/repositories/usage';
+import { UsersRepository } from '@/db/repositories/users';
 import { app } from '@/index';
 import { notifyUser } from '@/lib/helpers';
 import { Call, Contact } from '@/types/db';
-import crypto from 'crypto';
+import crypto, { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { protectedProcedure, t } from '../trpc';
 
@@ -70,6 +72,15 @@ export const logsRouter = t.router({
       InboxesRepository.updateLastCall(inbox.id, callLog.id);
       const number = await NumbersRepository.findById(input.numberId);
       const contact = await ContactsRepository.findById(input.contactId);
+
+      const user = await UsersRepository.findByFirebaseUid(ctx.user.uid);
+      await UsageRepository.create({
+        id: randomUUID(),
+        subscription_id: user?.stripe_subscription_id as string,
+        user_id: ctx.user.uid as string,
+        amount: input.duration / 60,
+        type: 'call',
+      });
 
       notifyUser({
         userId: ctx.user.uid,

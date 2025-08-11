@@ -1,5 +1,6 @@
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -55,6 +56,27 @@ function CustomChartTooltip({
 function Dashboard() {
   const trpc = useTRPC();
 
+  const { data: userInfo } = useQuery(trpc.users.getUser.queryOptions());
+
+  const { data: usage, isLoading: usageLoading } = useQuery(
+    trpc.subscription.getUsageStatistics.queryOptions()
+  );
+
+  const { data: usageLimits } = useQuery(
+    trpc.subscription.getPlanUsageLimits.queryOptions()
+  );
+
+  const maxVoiceMinutes = usageLimits?.find(
+    (p) => p.metric_key === 'minutes_combined'
+  );
+  const voiceCallsUsage = usage?.['calls'] ?? 0;
+  const maxSMS = usageLimits?.find((p) => p.metric_key === 'sms_usage');
+  const smsUsage = usage?.['sms'] ?? 0;
+
+  const maxFax = usageLimits?.find((p) => p.metric_key == 'fax_usage');
+  const faxUsage = usage?.['fax'] ?? 0;
+
+  console.log({ usage, usageLimits, userInfo });
   const { data: weeklyCallCount, isLoading: weeklyCallCountLoading } = useQuery(
     trpc.statistics.getWeeklyCount.queryOptions()
   );
@@ -249,6 +271,58 @@ function Dashboard() {
                 ))}
               </TableBody>
             </Table>
+          </CardContent>
+        </Card>
+      )}
+      {usageLoading ? (
+        <Skeleton className="h-[300px] w-full" />
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle>Usage</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <span className="text-sm font-semibold">SMS</span>
+              <div className="flex gap-2 items-center">
+                <Progress
+                  value={(smsUsage / (maxSMS?.included_quantity ?? 0)) * 100}
+                />
+                <Badge>
+                  {smsUsage} / {maxSMS?.included_quantity}
+                </Badge>
+              </div>
+            </div>
+
+            <div>
+              <span className="text-sm font-semibold">Voice Calls</span>
+              <div className="flex gap-2 items-center">
+                <Progress
+                  value={
+                    (voiceCallsUsage /
+                      (maxVoiceMinutes?.included_quantity ?? 0)) *
+                    100
+                  }
+                />
+                <Badge>
+                  {voiceCallsUsage} / {maxVoiceMinutes?.included_quantity}
+                </Badge>
+              </div>
+            </div>
+
+            {maxFax && (
+              <div>
+                <span className="text-sm font-semibold">Fax</span>
+                <div className="flex gap-2 items-center">
+                  <Progress
+                    value={(faxUsage / maxFax.included_quantity) * 100}
+                  />
+                  <Badge>
+                    {faxUsage} / {maxFax.included_quantity}
+                  </Badge>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

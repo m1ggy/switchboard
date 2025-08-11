@@ -113,6 +113,7 @@ function StripeElementsForm({
         customerId,
         paymentMethodId,
         priceId,
+        selectedPlan,
       });
       toast.success('Payment Successful');
       onPaymentDone();

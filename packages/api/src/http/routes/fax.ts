@@ -2,11 +2,14 @@ import axios from 'axios';
 import { randomUUID } from 'crypto';
 import { FastifyInstance } from 'fastify';
 
+import { UserCompaniesRepository } from '@/db/repositories/companies';
 import { ContactsRepository } from '@/db/repositories/contacts';
 import { FaxForwardLogRepository } from '@/db/repositories/fax_forward';
 import { FaxesRepository } from '@/db/repositories/faxes';
 import { InboxesRepository } from '@/db/repositories/inboxes';
 import { NumbersRepository } from '@/db/repositories/numbers';
+import { UsageRepository } from '@/db/repositories/usage';
+import { UsersRepository } from '@/db/repositories/users';
 import { uploadAttachmentBuffer } from '@/lib/google/storage';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { authMiddleware } from '../middlewares/auth';
@@ -295,6 +298,21 @@ async function routes(app: FastifyInstance) {
       });
 
       console.log(`📤 Outbound fax sent and logged. ID: ${faxData.id}`);
+
+      const userCompany = await UserCompaniesRepository.findUserIdById(
+        number.company_id
+      );
+
+      const user = await UsersRepository.findByFirebaseUid(
+        userCompany?.user_id as string
+      );
+      await UsageRepository.create({
+        id: randomUUID(),
+        subscription_id: user?.stripe_subscription_id as string,
+        user_id: user?.user_id as string,
+        amount: 1,
+        type: 'fax',
+      });
       return reply.send({ success: true, fax: faxData });
     } catch (error) {
       console.error(

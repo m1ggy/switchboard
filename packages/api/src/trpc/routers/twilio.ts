@@ -3,11 +3,13 @@ import { InboxesRepository } from '@/db/repositories/inboxes';
 import { MediaAttachmentsRepository } from '@/db/repositories/message_attachments';
 import { MessagesRepository } from '@/db/repositories/messages';
 import { NumbersRepository } from '@/db/repositories/numbers';
+import { UsageRepository } from '@/db/repositories/usage';
+import { UsersRepository } from '@/db/repositories/users';
 import { uploadAttachmentBuffer } from '@/lib/google/storage';
 import { activeCallStore, presenceStore } from '@/lib/store';
 import { TWILIO_ALLOWED_MIME_TYPES, TwilioClient } from '@/lib/twilio';
 import { getMimeType } from '@/lib/utils';
-import crypto from 'crypto';
+import crypto, { randomUUID } from 'crypto';
 import dotenv from 'dotenv';
 import path from 'path';
 import { z } from 'zod';
@@ -95,7 +97,7 @@ export const twilioRouter = router({
           .optional(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       try {
         const number = await NumbersRepository.findById(input.numberId);
         if (!number) throw new Error('No matching number was found');
@@ -176,7 +178,15 @@ export const twilioRouter = router({
             })
           )
         );
+        const user = await UsersRepository.findByFirebaseUid(ctx.user.uid);
 
+        UsageRepository.create({
+          id: randomUUID(),
+          subscription_id: user?.stripe_subscription_id as string,
+          user_id: ctx.user.uid,
+          amount: 1,
+          type: mediaResults.length > 0 ? 'mms' : 'sms',
+        });
         return await MessagesRepository.findById(dbMessage.id);
       } catch (error) {
         console.error(error);

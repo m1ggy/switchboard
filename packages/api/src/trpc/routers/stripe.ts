@@ -49,6 +49,7 @@ export const stripeRouter = t.router({
         customerId: z.string(),
         paymentMethodId: z.string(),
         priceId: z.string(), // from your Stripe dashboard for that plan
+        selectedPlan: z.string(),
       })
     )
     .mutation(async ({ input, ctx }) => {
@@ -87,6 +88,8 @@ export const stripeRouter = t.router({
         stripe_subscription_id: subscription.id,
         plan_started_at: new Date(subscription.start_date * 1000).toISOString(),
         onboarding_step: 4,
+        subscription_status: subscription.status,
+        selected_plan: input.selectedPlan,
       });
 
       return {

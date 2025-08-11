@@ -87,6 +87,7 @@ export const onboardingRouter = t.router({
       await UsersRepository.update(ctx.user.uid, {
         onboarding_completed: true,
         onboarding_step: 6,
+        subscription_status: 'active',
       });
     }),
 });
