@@ -10,9 +10,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import TooltipStandalone from '@/components/ui/tooltip-standalone';
 import { useTRPC } from '@/lib/trpc';
 import { formatDurationWithDateFns } from '@/lib/utils';
 import { useQuery } from '@tanstack/react-query';
+import { Info } from 'lucide-react';
 
 import {
   Area,
@@ -69,10 +71,9 @@ function Dashboard() {
   const maxVoiceMinutes = usageLimits?.find(
     (p) => p.metric_key === 'minutes_combined'
   );
-  const voiceCallsUsage = usage?.['calls'] ?? 0;
+  const voiceCallsUsage = usage?.['call'] ?? 0;
   const maxSMS = usageLimits?.find((p) => p.metric_key === 'sms_usage');
   const smsUsage = usage?.['sms'] ?? 0;
-
   const maxFax = usageLimits?.find((p) => p.metric_key == 'fax_usage');
   const faxUsage = usage?.['fax'] ?? 0;
 
@@ -283,7 +284,14 @@ function Dashboard() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <span className="text-sm font-semibold">SMS</span>
+              <div className="flex gap-2">
+                <span className="text-sm font-semibold">SMS</span>
+                <TooltipStandalone
+                  content={`${maxSMS?.unit} (inbound + outbound)`}
+                >
+                  <Info className="h-4 w-4" />
+                </TooltipStandalone>
+              </div>
               <div className="flex gap-2 items-center">
                 <Progress
                   value={(smsUsage / (maxSMS?.included_quantity ?? 0)) * 100}
@@ -295,7 +303,14 @@ function Dashboard() {
             </div>
 
             <div>
-              <span className="text-sm font-semibold">Voice Calls</span>
+              <div className="flex gap-2">
+                <span className="text-sm font-semibold">Voice Calls</span>
+                <TooltipStandalone
+                  content={`${maxVoiceMinutes?.unit} (inbound + outbound)`}
+                >
+                  <Info className="h-4 w-4" />
+                </TooltipStandalone>
+              </div>
               <div className="flex gap-2 items-center">
                 <Progress
                   value={
@@ -312,7 +327,14 @@ function Dashboard() {
 
             {maxFax && (
               <div>
-                <span className="text-sm font-semibold">Fax</span>
+                <div className="flex gap-2">
+                  <span className="text-sm font-semibold">Fax</span>
+                  <TooltipStandalone
+                    content={`${maxFax?.unit} (inbound + outbound)`}
+                  >
+                    <Info className="h-4 w-4" />
+                  </TooltipStandalone>
+                </div>
                 <div className="flex gap-2 items-center">
                   <Progress
                     value={(faxUsage / maxFax.included_quantity) * 100}

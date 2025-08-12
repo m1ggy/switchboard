@@ -81,7 +81,7 @@ export const UsageRepository = {
 
     return res.rows.reduce(
       (acc, row) => {
-        acc[row.type] = parseInt(row.total, 10);
+        acc[row.type] = parseFloat(row.total);
         return acc;
       },
       {} as Record<string, number>
