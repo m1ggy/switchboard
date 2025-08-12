@@ -41,3 +41,42 @@ export function formatDurationWithDateFns(seconds: number) {
 
   return `${hrStr}${minStr}${secStr}`.trim();
 }
+
+// --- Types from your features list ---
+export const FEATURES = {
+  support_email_basic: 'Email Support',
+  support_email_priority: 'Priority Email Support',
+  support_dedicated: 'Dedicated Support',
+  mms: 'MMS Messaging',
+  fax: 'Fax Support',
+  video_calls: 'Video Calls',
+} as const;
+
+export type FeatureKey = keyof typeof FEATURES;
+
+// --- Plans & feature mapping ---
+export type PlanName = 'starter' | 'professional' | 'business';
+
+export const PLAN_FEATURES: Record<PlanName, readonly FeatureKey[]> = {
+  starter: ['support_email_basic'],
+  professional: ['support_email_priority', 'mms'],
+  business: ['support_dedicated', 'mms', 'fax'],
+} as const;
+
+// --- Quick helpers ---
+export const hasFeature = (plan: PlanName, feature: FeatureKey): boolean =>
+  PLAN_FEATURES[plan].includes(feature);
+
+export const getFeaturesForPlan = (plan: PlanName): readonly FeatureKey[] =>
+  PLAN_FEATURES[plan];
+
+export const getPlansWithFeature = (feature: FeatureKey): PlanName[] =>
+  (Object.keys(PLAN_FEATURES) as PlanName[]).filter((p) =>
+    PLAN_FEATURES[p].includes(feature)
+  );
+
+// --- (Optional) pretty-print helpers ---
+export const getFeatureLabel = (feature: FeatureKey) => FEATURES[feature];
+
+export const listLabeledFeatures = (plan: PlanName): string[] =>
+  PLAN_FEATURES[plan].map(getFeatureLabel);

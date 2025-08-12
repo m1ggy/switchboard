@@ -7,17 +7,13 @@ import { protectedProcedure, t } from '../trpc';
 export const subscriptionRouter = t.router({
   subscriptionStatus: protectedProcedure.query(async ({ ctx }) => {
     const stripe = new Stripe(process.env.STRIPE_API_KEY as string);
-
     const user = await UsersRepository.findByFirebaseUid(ctx.user.uid);
-
     if (!user) return null;
 
     const subscription = await stripe.subscriptions.list({
       customer: user.stripe_customer_id as string,
     });
-
     const userSub = subscription.data[0];
-
     return userSub.status;
   }),
 
@@ -27,21 +23,34 @@ export const subscriptionRouter = t.router({
 
   getPlanUsageLimits: protectedProcedure.query(async ({ ctx }) => {
     const userInfo = await UsersRepository.findByFirebaseUid(ctx.user.uid);
+    if (!userInfo) return [];
     const userPlan = await PlansRepository.findByPlanName(
-      userInfo?.selected_plan as string
+      userInfo.selected_plan as string
     );
+    if (!userPlan) return [];
 
     const usageLimits = (
-      await PlansRepository.getUsageLimitsByPlanId(userPlan?.id as string)
+      await PlansRepository.getUsageLimitsByPlanId(userPlan.id as string)
     )?.map((plan) => ({
       ...plan,
       included_quantity: parseInt(plan.included_quantity.split('.')[0], 10),
     }));
 
-    console.log('USER INFO: ', userInfo);
-    console.log('CURRENT PLAN: ', userPlan);
-    console.log('USAGE LIMIT: ', usageLimits);
-
     return usageLimits;
+  }),
+
+  // NEW: get the current plan's features
+  getPlanFeatures: protectedProcedure.query(async ({ ctx }) => {
+    const userInfo = await UsersRepository.findByFirebaseUid(ctx.user.uid);
+    if (!userInfo) return [];
+    const userPlan = await PlansRepository.findByPlanName(
+      userInfo.selected_plan as string
+    );
+    if (!userPlan) return [];
+
+    const features = await PlansRepository.getFeaturesByPlanId(
+      userPlan.id as string
+    );
+    return features; // [{ id, key, name, description }]
   }),
 });

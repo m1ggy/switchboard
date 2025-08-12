@@ -6,6 +6,7 @@ import { useAttachmentPrep } from '@/hooks/useAttachmentPrep';
 import useMainStore from '@/lib/store';
 import { useVideoCallStore } from '@/lib/stores/videocall';
 import { useTRPC } from '@/lib/trpc';
+import { hasFeature, type PlanName } from '@/lib/utils';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { Loader2, Paperclip, Phone, Printer, Send, Video } from 'lucide-react';
@@ -50,6 +51,12 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
 
   const [showFaxDialog, setShowFaxDialog] = useState(false);
 
+  const { data: enabledFeatures } = useQuery(
+    trpc.subscription.getPlanFeatures.queryOptions()
+  );
+
+  const { data: userInfo } = useQuery(trpc.users.getUser.queryOptions());
+  console.log({ enabledFeatures });
   const { mutateAsync: markInboxViewed } = useMutation(
     trpc.inboxes.markAsViewed.mutationOptions()
   );
@@ -347,29 +354,36 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
               </span>
             </span>
             <div className="flex gap-2">
-              <TooltipStandalone content="Send Fax">
-                <Button
-                  size="icon"
-                  variant="outline"
-                  type="button"
-                  onClick={() => setShowFaxDialog(true)}
-                >
-                  <Printer />
-                </Button>
-              </TooltipStandalone>
-              <TooltipStandalone content="Initiate Video Call">
-                <Button
-                  variant={'outline'}
-                  size={'icon'}
-                  onClick={async () => {
-                    setCurrentCallContactId(contact?.id as string);
-                    await createRoom(contactId);
-                    setActiveVideoCallDialogShown(true);
-                  }}
-                >
-                  <Video />
-                </Button>
-              </TooltipStandalone>
+              {hasFeature(userInfo?.selected_plan as PlanName, 'fax') && (
+                <TooltipStandalone content="Send Fax">
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    type="button"
+                    onClick={() => setShowFaxDialog(true)}
+                  >
+                    <Printer />
+                  </Button>
+                </TooltipStandalone>
+              )}
+              {hasFeature(
+                userInfo?.selected_plan as PlanName,
+                'video_calls'
+              ) && (
+                <TooltipStandalone content="Initiate Video Call">
+                  <Button
+                    variant={'outline'}
+                    size={'icon'}
+                    onClick={async () => {
+                      setCurrentCallContactId(contact?.id as string);
+                      await createRoom(contactId);
+                      setActiveVideoCallDialogShown(true);
+                    }}
+                  >
+                    <Video />
+                  </Button>
+                </TooltipStandalone>
+              )}
               <TooltipStandalone content="Initiate Voice Call">
                 <Button
                   variant={'outline'}
@@ -475,16 +489,18 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
       )}
       <div className="flex gap-2 px-5 py-5 items-center">
         {/* NON-FORM BUTTONS */}
-        <TooltipStandalone content="Add Attachment">
-          <Button
-            size="icon"
-            variant="outline"
-            type="button"
-            onClick={() => inputRef.current?.click()}
-          >
-            <Paperclip />
-          </Button>
-        </TooltipStandalone>
+        {hasFeature(userInfo?.selected_plan as PlanName, 'mms') && (
+          <TooltipStandalone content="Add Attachment">
+            <Button
+              size="icon"
+              variant="outline"
+              type="button"
+              onClick={() => inputRef.current?.click()}
+            >
+              <Paperclip />
+            </Button>
+          </TooltipStandalone>
+        )}
 
         <input
           ref={inputRef}

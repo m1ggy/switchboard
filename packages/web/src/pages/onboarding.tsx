@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Check,
   Crown,
+  LoaderCircle,
   Phone,
   Settings,
   Star,
@@ -52,7 +53,7 @@ export default function Onboarding() {
   const navigate = useNavigate();
 
   const { data: user } = useQuery(trpc.users.getUser.queryOptions());
-  const { mutateAsync } = useMutation(
+  const { mutateAsync, isPending } = useMutation(
     trpc.onboarding.finishOnboarding.mutationOptions()
   );
   console.log({ user });
@@ -657,9 +658,10 @@ export default function Onboarding() {
             )}
             <Button
               onClick={handleNext}
-              disabled={!canProceed()}
+              disabled={!canProceed() || isPending}
               className="flex items-center gap-2"
             >
+              {isPending && <LoaderCircle className="animate-spin h-4 w-4" />}
               {currentStep === steps.length ? 'Get Started' : 'Next'}
               {currentStep !== steps.length && (
                 <ArrowRight className="w-4 h-4" />

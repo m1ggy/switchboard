@@ -135,4 +135,22 @@ export const PlansRepository = {
     );
     return res.rows[0] || null;
   },
+  async getFeaturesByPlanId(plan_id: string): Promise<
+    Array<{
+      id: string;
+      key: string;
+      name: string;
+      description: string | null;
+    }>
+  > {
+    const res = await pool.query(
+      `SELECT f.id, f.key, f.name, f.description
+         FROM plan_features pf
+         JOIN features f ON f.id = pf.feature_id
+        WHERE pf.plan_id = $1
+        ORDER BY f.name ASC`,
+      [plan_id]
+    );
+    return res.rows;
+  },
 };
