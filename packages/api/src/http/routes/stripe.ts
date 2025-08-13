@@ -142,26 +142,48 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
         );
 
         // Map: plan name + metric -> Stripe price id
-        const OVERAGE_PRICE_IDS: Record<
+        let OVERAGE_PRICE_IDS: Record<
           string,
           Record<'sms' | 'minutes' | 'fax', string | undefined>
-        > = {
-          starter: {
-            minutes: 'price_1RvEvSR329ZHknhOpBk9kaGK', // Starter Calls
-            sms: 'price_1RvEuDR329ZHknhOxTEm4Bih', // Starter SMS
-            fax: undefined, // no fax overage for Starter
-          },
-          professional: {
-            minutes: 'price_1RvEyoR329ZHknhOVKxfYjea', // Pro Calls
-            sms: 'price_1RvExtR329ZHknhOB3oDXsev', // Pro SMS
-            fax: undefined,
-          },
-          business: {
-            minutes: 'price_1RvFBWR329ZHknhOCsF9pIi4',
-            sms: 'price_1RvFArR329ZHknhO5wc0k1wE',
-            fax: 'price_1RvFDSR329ZHknhObb59lG0G',
-          },
-        };
+        > = {};
+
+        if (process.env.NODE_ENV === 'development') {
+          OVERAGE_PRICE_IDS = {
+            starter: {
+              minutes: 'price_1RvEvSR329ZHknhOpBk9kaGK', // Starter Calls
+              sms: 'price_1RvEuDR329ZHknhOxTEm4Bih', // Starter SMS
+              fax: undefined, // no fax overage for Starter
+            },
+            professional: {
+              minutes: 'price_1RvEyoR329ZHknhOVKxfYjea', // Pro Calls
+              sms: 'price_1RvExtR329ZHknhOB3oDXsev', // Pro SMS
+              fax: undefined,
+            },
+            business: {
+              minutes: 'price_1RvFBWR329ZHknhOCsF9pIi4',
+              sms: 'price_1RvFArR329ZHknhO5wc0k1wE',
+              fax: 'price_1RvFDSR329ZHknhObb59lG0G',
+            },
+          };
+        } else {
+          OVERAGE_PRICE_IDS = {
+            starter: {
+              minutes: 'price_1RvbYRJamzSiZX3vtrzzUzNx', // Starter Calls
+              sms: 'price_1RvbY2JamzSiZX3vKzYjn4xx', // Starter SMS
+              fax: undefined, // no fax overage for Starter
+            },
+            professional: {
+              minutes: 'price_1RvbZFJamzSiZX3vtJC8RKCz', // Pro Calls
+              sms: 'price_1RvbYuJamzSiZX3v3gj6NjR8', // Pro SMS
+              fax: undefined,
+            },
+            business: {
+              minutes: 'price_1Rvba5JamzSiZX3vxQ0jpdpm',
+              sms: 'price_1RvbZgJamzSiZX3ve8Nz2QlN',
+              fax: 'price_1RvbahJamzSiZX3viMztTk3p',
+            },
+          };
+        }
 
         const priceMap =
           OVERAGE_PRICE_IDS[userPlan.name as keyof typeof OVERAGE_PRICE_IDS] ||
