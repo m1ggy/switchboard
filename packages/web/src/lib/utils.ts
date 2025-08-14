@@ -80,3 +80,29 @@ export const getFeatureLabel = (feature: FeatureKey) => FEATURES[feature];
 
 export const listLabeledFeatures = (plan: PlanName): string[] =>
   PLAN_FEATURES[plan].map(getFeatureLabel);
+
+export type UserInfoLike = {
+  stripe_customer_id?: string | null;
+  subscription_status?: string | null; // 'active' | 'trialing' | 'past_due' | 'unpaid' | 'incomplete' | 'incomplete_expired' | 'canceled'
+  plan_ends_at?: string | null; // ISO
+  cancel_at_period_end?: boolean | null;
+};
+
+export function isAccountLocked(user?: UserInfoLike | null) {
+  if (!user) return false; // no decision yet; let skeletons show
+  if (user.stripe_customer_id === 'ADMIN') return false;
+
+  const status = (user.subscription_status ?? '').toLowerCase();
+  const endsAt = user.plan_ends_at ? new Date(user.plan_ends_at).getTime() : 0;
+  const now = Date.now();
+
+  // “Expired” cases
+  if (status === 'incomplete_expired') return true;
+  if (status === 'canceled' && endsAt && endsAt < now) return true;
+  if (status === 'unpaid' && endsAt && endsAt < now) return true;
+
+  // Optional: freeze when there’s an open/unpaid invoice (if you expose this in billing summary)
+  // caller can add a second flag from billing: hasOutstandingInvoice
+
+  return false;
+}

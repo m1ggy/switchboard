@@ -32,7 +32,7 @@ function Settings() {
     isFetching: isBillingFetching,
   } = useQuery({
     ...trpc.subscription.getBillingSummary.queryOptions(),
-    enabled: !isAdmin, // important: skip Stripe calls for admin
+    enabled: !isAdmin, // skip Stripe calls for admin
   });
 
   // Mutations
@@ -56,15 +56,42 @@ function Settings() {
         }),
     });
 
+  // NEW: resume (when cancel_at_period_end = true)
+  const { mutate: resumeSubscription, isPending: resumePending } = useMutation({
+    ...trpc.subscription.resumeSubscription.mutationOptions?.(),
+    onSuccess: () =>
+      qc.invalidateQueries({
+        queryKey: trpc.subscription.getBillingSummary.queryOptions().queryKey,
+      }),
+  });
+
+  // NEW: reactivate (when fully canceled / no sub) -> opens Stripe Checkout
+  const { mutate: reactivate, isPending: reactivatePending } = useMutation({
+    mutationFn: async () =>
+      trpc.subscription.createReactivateCheckout.mutate({
+        // you can pass a specific priceId here if you allow plan selection
+        successUrl: window.location.origin + '/settings?checkout=success',
+        cancelUrl: window.location.origin + '/settings?checkout=cancel',
+        allowPromotionCodes: true,
+      }),
+    onSuccess: ({ url }: { url: string }) => {
+      if (url) window.location.href = url;
+    },
+  });
+
   // Safe accessors (empty for admin)
   const sub = !isAdmin ? billing?.subscription : undefined;
   const defaultPm = !isAdmin
     ? billing?.payment_methods?.find((p) => p.is_default)
     : undefined;
 
+  // Optional: outstanding invoice handling (if your API returns it)
+  const outstanding = !isAdmin ? (billing as any)?.outstanding_invoice : null;
+  const hasOutstanding = Boolean(outstanding);
+
   // Helpers
-  const isQueryBusy = isUserLoading || (!isAdmin && isBillingLoading); // don't wait for billing if admin
-  const isRefetching = isUserFetching || (!isAdmin && isBillingFetching); // don't show spinner for billing if admin
+  const isQueryBusy = isUserLoading || (!isAdmin && isBillingLoading);
+  const isRefetching = isUserFetching || (!isAdmin && isBillingFetching);
 
   return (
     <div className="p-6 space-y-6">
@@ -117,7 +144,7 @@ function Settings() {
           ) : (
             // Normal (non-admin) view
             <>
-              <div className="text-sm">
+              <div className="text-sm space-y-1.5">
                 <div>
                   Plan: <strong>{sub?.plan_name ?? '—'}</strong>
                 </div>
@@ -140,24 +167,82 @@ function Settings() {
                 )}
               </div>
 
-              <div className="flex gap-2">
-                <Button
-                  variant="secondary"
-                  disabled={
-                    !sub ||
-                    sub.cancel_at_period_end ||
-                    sub.status === 'canceled' ||
-                    cancelAtPeriodEndPending
-                  }
-                  onClick={() => cancelAtPeriodEnd({ immediately: false })}
-                >
-                  {cancelAtPeriodEndPending && (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              {/* Optional: outstanding invoice notice */}
+              {hasOutstanding && (
+                <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                  You have an outstanding invoice of{' '}
+                  <strong>
+                    {new Intl.NumberFormat(undefined, {
+                      style: 'currency',
+                      currency: (
+                        (outstanding.currency ?? 'usd') as string
+                      ).toUpperCase(),
+                    }).format((outstanding.amount_due ?? 0) / 100)}
+                  </strong>
+                  . Please pay before changing your subscription.
+                  {outstanding.hosted_invoice_url && (
+                    <a
+                      href={outstanding.hosted_invoice_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="ml-2 underline"
+                    >
+                      Pay invoice
+                    </a>
                   )}
-                  {cancelAtPeriodEndPending
-                    ? 'Scheduling…'
-                    : 'Cancel Subscription'}
-                </Button>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex flex-wrap gap-2">
+                {/* Resume if cancel is scheduled */}
+                {sub?.cancel_at_period_end && sub.status !== 'canceled' && (
+                  <Button
+                    variant="default"
+                    disabled={resumePending || hasOutstanding}
+                    onClick={() => resumeSubscription()}
+                  >
+                    {resumePending && (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
+                    Resume subscription
+                  </Button>
+                )}
+
+                {/* Reactivate if canceled or there is no subscription */}
+                {(!sub || sub.status === 'canceled') && (
+                  <Button
+                    variant="default"
+                    disabled={reactivatePending || hasOutstanding}
+                    onClick={() => reactivate()}
+                  >
+                    {reactivatePending && (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
+                    Reactivate
+                  </Button>
+                )}
+
+                {/* Cancel at period end for active subs */}
+                {sub && sub.status !== 'canceled' && (
+                  <Button
+                    variant="secondary"
+                    disabled={
+                      hasOutstanding ||
+                      sub.cancel_at_period_end ||
+                      sub.status === 'canceled' ||
+                      cancelAtPeriodEndPending
+                    }
+                    onClick={() => cancelAtPeriodEnd({ immediately: false })}
+                  >
+                    {cancelAtPeriodEndPending && (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
+                    {cancelAtPeriodEndPending
+                      ? 'Scheduling…'
+                      : 'Cancel Subscription'}
+                  </Button>
+                )}
               </div>
 
               {confirmImmediate && (
