@@ -2,17 +2,18 @@ import { UserCompaniesRepository } from '@/db/repositories/companies';
 import { ShortenUrlRepository } from '@/db/repositories/shorten_urls';
 import { createJitsiToken } from '@/lib/jitsi';
 import { z } from 'zod';
-import { protectedProcedure, t } from '../trpc';
+import { paidProcedure } from '../context';
+import { t } from '../trpc';
 import { createCaller } from './app';
 
 export const jitsiRouter = t.router({
-  token: protectedProcedure
+  token: paidProcedure
     .input(z.object({ roomName: z.string() }))
     .query(async ({ ctx, input }) => {
       return createJitsiToken(ctx.user, input.roomName);
     }),
 
-  getClientCallURL: protectedProcedure
+  getClientCallURL: paidProcedure
     .input(
       z.object({
         contactId: z.string(),

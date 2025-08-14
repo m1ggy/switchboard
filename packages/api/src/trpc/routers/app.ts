@@ -40,4 +40,4 @@ export type AppRouter = typeof appRouter;
 
 export const createCaller = t.createCallerFactory(appRouter);
 
-export const caller = createCaller({ user: null });
+export const caller = createCaller({ user: null, userInfo: null });

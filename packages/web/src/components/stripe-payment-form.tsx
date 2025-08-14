@@ -62,15 +62,26 @@ function StripeElementsForm({
   };
 
   const getPriceId = (plan: string) => {
-    switch (plan) {
-      case 'business':
-        return 'price_1RnzeCR329ZHknhO6LKUSMnZ';
-      case 'professional':
-        return 'price_1RnzdUR329ZHknhOrItXwc2w';
-      case 'starter':
-        return 'price_1RnzbsR329ZHknhOHiTusZmW';
-      default:
-        throw new Error('Unsupported plan selected');
+    if (process.env.NODE_ENV === 'developmentt') {
+      switch (plan) {
+        case 'business':
+          return 'price_1RnzeCR329ZHknhO6LKUSMnZ';
+        case 'professional':
+          return 'price_1RnzdUR329ZHknhOrItXwc2w';
+        case 'starter':
+          return 'price_1RnzbsR329ZHknhOHiTusZmW';
+        default:
+          throw new Error('Unsupported plan selected');
+      }
+    } else {
+      switch (plan) {
+        case 'starter':
+          return 'price_1RvbWkJamzSiZX3vLeZXrVLj';
+        case 'business':
+          return 'price_1RvbXZJamzSiZX3vb7qg9G0f';
+        case 'professional':
+          return 'price_1RvbXDJamzSiZX3vtWAgAwzG';
+      }
     }
   };
 

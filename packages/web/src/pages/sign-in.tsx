@@ -194,8 +194,8 @@ function SignIn() {
               </div>
 
               <div className="mt-5 text-center">
-                <span>
-                  Need an account? <Link to={'/sign-up'}>Create one!</Link>
+                <span className="underline">
+                  <Link to={'/sign-up'}>Need an account? Create one!</Link>
                 </span>
               </div>
             </CardDescription>

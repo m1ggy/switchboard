@@ -57,7 +57,7 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TRPCProvider trpcClient={trpcClient} queryClient={queryClient}>
-        <ThemeProvider defaultTheme="dark" storageKey="switchboard-ui-theme">
+        <ThemeProvider defaultTheme="light" storageKey="switchboard-ui-theme">
           <AuthProvider>
             <BrowserRouter>
               <Routes>

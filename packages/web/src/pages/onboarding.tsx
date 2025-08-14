@@ -52,7 +52,9 @@ export default function Onboarding() {
   const trpc = useTRPC();
   const navigate = useNavigate();
 
-  const { data: user } = useQuery(trpc.users.getUser.queryOptions());
+  const { data: user, refetch: refetchUser } = useQuery(
+    trpc.users.getUser.queryOptions()
+  );
   const { mutateAsync, isPending } = useMutation(
     trpc.onboarding.finishOnboarding.mutationOptions()
   );
@@ -121,6 +123,7 @@ export default function Onboarding() {
         })),
       });
 
+      await refetchUser();
       toast.success('Companies created!');
       navigate('/dashboard');
     }

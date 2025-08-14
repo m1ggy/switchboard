@@ -13,6 +13,7 @@ import crypto, { randomUUID } from 'crypto';
 import dotenv from 'dotenv';
 import path from 'path';
 import { z } from 'zod';
+import { paidProcedure } from '../context';
 import { protectedProcedure, router } from '../trpc';
 
 dotenv.config();
@@ -29,7 +30,7 @@ const tw = new TwilioClient(
 );
 
 export const twilioRouter = router({
-  token: protectedProcedure
+  token: paidProcedure
     .input(z.object({ identity: z.string().optional() }))
     .query(({ input }) => {
       console.log({ input });
@@ -81,7 +82,7 @@ export const twilioRouter = router({
 
       return { ok: true };
     }),
-  sendSMS: protectedProcedure
+  sendSMS: paidProcedure
     .input(
       z.object({
         numberId: z.string(),
