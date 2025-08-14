@@ -18,6 +18,7 @@ import Draft from './pages/draft';
 import Inbox from './pages/inbox';
 import Onboarding from './pages/onboarding';
 import Sent from './pages/sent';
+import Settings from './pages/settings';
 import ShortUrl from './pages/short-url';
 import SignIn from './pages/sign-in';
 import SignUp from './pages/sign-up';
@@ -95,6 +96,7 @@ function App() {
                   <Route path="call-history" element={<CallHistory />} />
                   <Route path="add-contact" element={<AddContact />} />
                   <Route path="all-contacts" element={<AllContacts />} />
+                  <Route path="settings" element={<Settings />} />
                 </Route>
               </Routes>
             </BrowserRouter>

@@ -12,7 +12,6 @@ import Notifications from './notifications';
 import { Button } from './ui/button';
 import { NotificationBadge } from './ui/notification-badge';
 import { SidebarTrigger } from './ui/sidebar';
-import { ModeToggle } from './ui/toggle-mode';
 import TooltipStandalone from './ui/tooltip-standalone';
 
 type HeaderProps = {
@@ -64,7 +63,7 @@ export default function Header({ isLoggedIn }: HeaderProps) {
   //   // Fallback if you prefer the mutationOptions() pattern:
   //   useMutation(trpc.stripe.createBillingPortalSession.mutationOptions());
 
-  // Stripe-like statuses you store in DB via webhooks or subscription flows
+  /// Stripe-like statuses you store in DB via webhooks or subscription flows
   const subStatus = (userInfo?.subscription_status ?? 'active') as
     | 'active'
     | 'trialing'
@@ -80,13 +79,29 @@ export default function Header({ isLoggedIn }: HeaderProps) {
     : null;
   const daysLeft = daysUntil(planEndsAt);
 
+  // Prefer explicit flag from your DB if you store it (recommended via webhook sync)
+  const cancelAtPeriodEndFlag =
+    (userInfo as any)?.cancel_at_period_end === true ||
+    // Heuristic fallback: has a future end date while not already fully canceled
+    (!!planEndsAt &&
+      planEndsAt.getTime() > Date.now() &&
+      subStatus !== 'canceled');
+
+  // Show banner if billing problem OR cancel scheduled OR truly ended
+  const hasBillingIssue =
+    subStatus === 'past_due' ||
+    subStatus === 'unpaid' ||
+    subStatus === 'incomplete' ||
+    subStatus === 'incomplete_expired';
+
+  console.log({ userInfo, subStatus, hasBillingIssue, cancelAtPeriodEndFlag });
+
+  const isEnded =
+    subStatus === 'canceled' &&
+    (!planEndsAt || planEndsAt.getTime() <= Date.now());
+
   const showBanner =
-    isLoggedIn &&
-    (subStatus === 'past_due' ||
-      subStatus === 'unpaid' ||
-      subStatus === 'incomplete' ||
-      subStatus === 'incomplete_expired' ||
-      subStatus === 'canceled');
+    isLoggedIn && (hasBillingIssue || cancelAtPeriodEndFlag || isEnded);
 
   // Banner content
   let bannerClass = 'bg-black text-white';
@@ -94,38 +109,41 @@ export default function Header({ isLoggedIn }: HeaderProps) {
   let message = '';
   let showEnd = false;
 
-  switch (subStatus) {
-    case 'past_due':
-      bannerClass = 'bg-red-600 text-white';
-      title = 'Payment issue: Your subscription is past due';
-      message = 'Please update your payment method to avoid interruption.';
-      break;
-    case 'unpaid':
-      bannerClass = 'bg-red-700 text-white';
-      title = 'Payment failed: Subscription is unpaid';
-      message = 'Update your card to restore service.';
-      break;
-    case 'incomplete':
-    case 'incomplete_expired':
-      bannerClass = 'bg-red-600 text-white';
-      title = 'Action needed to start your subscription';
-      message = 'Finish payment authorization or update your card.';
-      break;
-    case 'canceled':
-      bannerClass = 'bg-amber-500 text-white';
-      if (planEndsAt && planEndsAt.getTime() > Date.now()) {
-        title = 'Your subscription will end soon';
-        message = `Access ends on ${formatDate(planEndsAt)}${
+  if (cancelAtPeriodEndFlag) {
+    bannerClass = 'bg-amber-500 text-white';
+    title = 'Your subscription will end soon';
+    message = planEndsAt
+      ? `Access ends on ${formatDate(planEndsAt)}${
           daysLeft && daysLeft > 0
             ? ` (${daysLeft} day${daysLeft === 1 ? '' : 's'} left)`
             : ''
-        }. You can resume your plan anytime.`;
-        showEnd = true;
-      } else {
+        }. You can resume your plan anytime.`
+      : 'Your plan is set to cancel at the period end.';
+    showEnd = Boolean(planEndsAt);
+  } else {
+    switch (subStatus) {
+      case 'past_due':
+        bannerClass = 'bg-red-600 text-white';
+        title = 'Payment issue: Your subscription is past due';
+        message = 'Please update your payment method to avoid interruption.';
+        break;
+      case 'unpaid':
+        bannerClass = 'bg-red-700 text-white';
+        title = 'Payment failed: Subscription is unpaid';
+        message = 'Update your card to restore service.';
+        break;
+      case 'incomplete':
+      case 'incomplete_expired':
+        bannerClass = 'bg-red-600 text-white';
+        title = 'Action needed to start your subscription';
+        message = 'Finish payment authorization or update your card.';
+        break;
+      case 'canceled':
+        bannerClass = 'bg-amber-600 text-white';
         title = 'Your subscription has ended';
         message = 'Reactivate to regain access.';
-      }
-      break;
+        break;
+    }
   }
 
   const handleBillingPortal = async () => {
@@ -216,7 +234,7 @@ export default function Header({ isLoggedIn }: HeaderProps) {
             </TooltipStandalone>
           )}
 
-          <ModeToggle />
+          {/* <ModeToggle /> */}
 
           {isLoggedIn && (
             <TooltipStandalone content={<p>Logout</p>}>

@@ -300,9 +300,14 @@ function BaseSidebar() {
             <SidebarGroupContent>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton>
-                    <Settings />
-                    Settings
+                  <SidebarMenuButton
+                    asChild
+                    isActive={location.pathname === '/dashboard/settings'}
+                  >
+                    <Link to={'/dashboard/settings'}>
+                      <Settings />
+                      Settings
+                    </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
