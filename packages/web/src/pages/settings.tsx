@@ -104,6 +104,16 @@ function Settings() {
   const isQueryBusy = isUserLoading || (!isAdmin && isBillingLoading);
   const isRefetching = isUserFetching || (!isAdmin && isBillingFetching);
 
+  const companyCount = companies?.length ?? 0;
+  const planHasFiniteLimit = Number.isFinite(maxCompanies);
+  const remainingSlots = isAdmin
+    ? Infinity
+    : planHasFiniteLimit
+      ? Math.max(0, (maxCompanies as number) - companyCount)
+      : 0; // if plan unknown, show 0 remaining to be safe
+
+  const canAddCompany = isAdmin || remainingSlots > 0;
+
   return (
     <div className="p-6 space-y-6">
       {/* SUBSCRIPTION CARD */}
@@ -304,7 +314,7 @@ function Settings() {
       </Card>
 
       {/* PAYMENT METHOD CARD */}
-      <Card>
+      {/* <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Payment Method</CardTitle>
           {isRefetching && !isAdmin && (
@@ -371,11 +381,121 @@ function Settings() {
             </>
           )}
         </CardContent>
-      </Card>
+      </Card> */}
+      {/* COMPANIES CARD */}
       <Card>
-        <CardHeader>
-          <CardTitle>Companies</CardTitle>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            Companies
+            <span className="text-xs rounded bg-muted px-2 py-0.5">
+              {isAdmin
+                ? `${companyCount} / ∞`
+                : planHasFiniteLimit
+                  ? `${companyCount} / ${maxCompanies}`
+                  : `${companyCount}`}
+            </span>
+          </CardTitle>
+
+          {isFetching && (
+            <span className="inline-flex items-center text-xs text-muted-foreground">
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+            </span>
+          )}
         </CardHeader>
+
+        <CardContent className="space-y-3">
+          {/* Loading state */}
+          {isFetching ? (
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-56" />
+              <Skeleton className="h-4 w-40" />
+              <Skeleton className="h-4 w-64" />
+            </div>
+          ) : (
+            <>
+              {/* Capacity notice */}
+              {isAdmin ? (
+                <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+                  Admin accounts can create unlimited companies.
+                </div>
+              ) : planHasFiniteLimit ? (
+                <div
+                  className={
+                    'rounded-md p-3 text-sm ' +
+                    (canAddCompany
+                      ? 'border bg-muted/40 text-muted-foreground'
+                      : 'border border-amber-300 bg-amber-50 text-amber-900')
+                  }
+                >
+                  {canAddCompany ? (
+                    <>
+                      You can add{' '}
+                      <strong>
+                        {remainingSlots} more compan
+                        {remainingSlots === 1 ? 'y' : 'ies'}
+                      </strong>{' '}
+                      on your current plan.
+                    </>
+                  ) : (
+                    <>
+                      You’ve reached your plan’s company limit (
+                      <strong>{maxCompanies}</strong>). Remove a company or
+                      upgrade your plan to add more.
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+                  We couldn’t determine your plan’s company limit.
+                </div>
+              )}
+
+              {/* List of companies */}
+              {companyCount ? (
+                <ul className="divide-y rounded-md border">
+                  {companies!.map((c: any) => (
+                    <li
+                      key={c.id}
+                      className="p-3 flex items-center justify-between"
+                    >
+                      <div className="min-w-0">
+                        <div className="font-medium truncate">
+                          {c.name ?? 'Untitled company'}
+                        </div>
+                        {c.domain && (
+                          <div className="text-xs text-muted-foreground truncate">
+                            {c.domain}
+                          </div>
+                        )}
+                      </div>
+                      {/* Example: link to manage page if you have one */}
+                      <Button variant="outline" size="sm" asChild>
+                        <a href={`/dashboard/companies/${c.id}`}>Manage</a>
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-sm text-muted-foreground">
+                  You don’t have any companies yet.
+                </div>
+              )}
+
+              {/* (Optional) Add button — disabled if at limit */}
+              <div className="pt-2">
+                <Button
+                  disabled={!canAddCompany}
+                  onClick={() => {
+                    // navigate to your create-company flow
+                    window.location.href = '/dashboard/companies/new';
+                  }}
+                >
+                  {canAddCompany ? 'Add company' : 'Company limit reached'}
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
       </Card>
     </div>
   );

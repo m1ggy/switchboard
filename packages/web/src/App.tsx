@@ -10,6 +10,7 @@ import { ThemeProvider } from './components/theme-provider';
 import { AuthProvider } from './hooks/auth-provider';
 import { auth } from './lib/firebase';
 import { TRPCProvider } from './lib/trpc';
+import NotFound from './pages/404';
 import AddContact from './pages/add-contact';
 import AllContacts from './pages/all-contacts';
 import CallHistory from './pages/call-history';
@@ -97,9 +98,10 @@ function App() {
                   <Route path="add-contact" element={<AddContact />} />
                   <Route path="all-contacts" element={<AllContacts />} />
                   <Route path="settings" element={<Settings />} />
+                  <Route path="*" element={<NotFound />} />
                 </Route>
-
-                <Route path="*" element={<SignIn />} />
+                {/* APP-WIDE 404 (no layout) */}
+                <Route path="*" element={<NotFound />} />
               </Routes>
             </BrowserRouter>
             <Toaster />

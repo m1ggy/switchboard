@@ -7,45 +7,100 @@ import Stripe from 'stripe';
 
 const stripe = new Stripe(process.env.STRIPE_API_KEY!);
 
-// Centralize how we persist subscription -> Users row
+// ---------- helpers ----------
+
+function toISO(sec?: number | null) {
+  return sec ? new Date(sec * 1000).toISOString() : null;
+}
+
+function toInt(v: string | number | null | undefined) {
+  return Number.isFinite(v)
+    ? Number(v)
+    : parseInt(String(v ?? '0').split('.')[0], 10) || 0;
+}
+
+function isPreferredStatus(status: Stripe.Subscription.Status) {
+  return status === 'active' || status === 'trialing';
+}
+
+function newer(first?: number | null, second?: number | null) {
+  return (first ?? 0) > (second ?? 0);
+}
+
+/**
+ * Choose the "best" subscription from a list:
+ *   1) active/trialing, newest by created
+ *   2) otherwise newest by created
+ */
+function pickBestSubscription(
+  list: Stripe.Subscription[]
+): Stripe.Subscription | undefined {
+  const good = list.filter((s) => isPreferredStatus(s.status));
+  const pool = good.length ? good : list;
+  return pool.sort((a, b) => (b.created ?? 0) - (a.created ?? 0))[0];
+}
+
+/**
+ * Write the user row from a subscription, but DO NOT let an older/other subscription
+ * clobber the current one.
+ */
 async function saveFromSubscription(sub: Stripe.Subscription) {
   const customerId = sub.customer as string;
-  const currentPeriodEnd = sub.current_period_end
-    ? new Date(sub.current_period_end * 1000).toISOString()
-    : null;
-  const startedAt = sub.start_date
-    ? new Date(sub.start_date * 1000).toISOString()
-    : null;
+  const user = await UsersRepository.findByStripeCustomerId(customerId);
+  const currentId = user?.stripe_subscription_id ?? null;
 
-  // Optional: capture active price id (first item)
-  const priceId = sub.items?.data?.[0]?.price?.id ?? null;
+  // If we have a different current subscription, only switch when the incoming one
+  // is newer and has a preferred status. Otherwise ignore the event.
+  if (currentId && currentId !== sub.id) {
+    try {
+      const current = await stripe.subscriptions.retrieve(currentId);
+      const incomingIsNewerAndGood =
+        newer(sub.created, current.created) && isPreferredStatus(sub.status);
 
-  // Optional: map price -> plan name in your DB
-  // const plan = priceId ? await PlansRepository.findByStripePriceId(priceId) : null;
+      if (!incomingIsNewerAndGood) {
+        // Ignore noisy/older events from other subs
+        return;
+      }
+      // Optional: enforce single-sub invariant by canceling the old one here.
+      // await stripe.subscriptions.cancel(currentId);
+    } catch (e) {
+      // If the current sub no longer exists (404), proceed with the new one.
+    }
+  }
 
   await UsersRepository.updateByStripeCustomerId(customerId, {
     stripe_subscription_id: sub.id,
     subscription_status: sub.status,
-    plan_started_at: startedAt ?? undefined,
-    plan_ends_at: currentPeriodEnd ?? undefined,
-    // persist cancel flag so your banner/UI is correct
+    plan_started_at: toISO(sub.start_date) ?? undefined,
+    plan_ends_at: toISO(sub.current_period_end) ?? undefined,
     cancel_at_period_end: sub.cancel_at_period_end,
-    // selected_plan: plan?.name ?? undefined, // <-- enable if you want to sync plan from price
-    // last_price_id: priceId ?? undefined,    // <-- or store price id if you keep it
+    // selected_plan / last_price_id if you maintain them
   });
 }
 
+/** Fallback: find the best subscription for a customer and persist it. */
+async function saveBestSubscriptionForCustomer(customerId: string) {
+  const list = await stripe.subscriptions.list({
+    customer: customerId,
+    status: 'all',
+    limit: 100,
+  });
+  const best = pickBestSubscription(list.data);
+  if (best) await saveFromSubscription(best);
+}
+
+// ---------- webhook ----------
+
 async function stripeWebhookRoutes(app: FastifyInstance) {
   app.post('/webhook', async (req, reply) => {
-    const sig = req.headers['stripe-signature'] as string;
-    const rawBody = await req.rawBody();
+    const sig = req.headers['stripe-signature'] as string | undefined;
+    const rawBody = await (req as any).rawBody?.();
 
     let event: Stripe.Event;
-
     try {
       event = stripe.webhooks.constructEvent(
         rawBody,
-        sig,
+        sig!,
         process.env.STRIPE_WEBHOOK_SECRET!
       );
     } catch (err) {
@@ -54,29 +109,20 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
     }
 
     switch (event.type) {
-      // 🔵 Reactivation via Checkout lands here first
+      // Reactivation / new purchase via Checkout
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session;
         const customerId = session.customer as string | null;
         const subscriptionId = session.subscription as string | null;
 
-        // If we got a sub id, fetch it and persist
         if (subscriptionId) {
           const sub = await stripe.subscriptions.retrieve(subscriptionId, {
             expand: ['latest_invoice.payment_intent'],
           });
           await saveFromSubscription(sub);
         } else if (customerId) {
-          // Fallback: pull latest sub for the customer
-          const list = await stripe.subscriptions.list({
-            customer: customerId,
-            status: 'all',
-            limit: 1,
-            expand: ['data.latest_invoice.payment_intent'],
-          });
-          if (list.data[0]) await saveFromSubscription(list.data[0]);
+          await saveBestSubscriptionForCustomer(customerId);
         }
-
         break;
       }
 
@@ -91,20 +137,25 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
         const subscription = event.data.object as Stripe.Subscription;
         const customerId = subscription.customer as string;
 
-        const currentPeriodEndISO = subscription.current_period_end
-          ? new Date(subscription.current_period_end * 1000).toISOString()
-          : new Date().toISOString();
+        // Only clear the user if the deleted sub matches what we currently store.
+        const user = await UsersRepository.findByStripeCustomerId(customerId);
+        if (user?.stripe_subscription_id === subscription.id) {
+          const currentPeriodEndISO =
+            toISO(subscription.current_period_end) ?? new Date().toISOString();
+          await UsersRepository.updateByStripeCustomerId(customerId, {
+            stripe_subscription_id: undefined,
+            subscription_status: 'canceled',
+            plan_ends_at: currentPeriodEndISO,
+            cancel_at_period_end: false,
+          });
 
-        await UsersRepository.updateByStripeCustomerId(customerId, {
-          stripe_subscription_id: undefined, // sub is gone
-          subscription_status: 'canceled',
-          plan_ends_at: currentPeriodEndISO,
-          cancel_at_period_end: false,
-        });
+          // Optional: if there are other active subs, re-persist the best one.
+          await saveBestSubscriptionForCustomer(customerId);
+        }
         break;
       }
 
-      // When invoices get paid, subscriptions typically become 'active'
+      // Paid → usually means the sub is active; prefer saving the sub state
       case 'invoice.paid':
       case 'invoice.payment_succeeded': {
         const invoice = event.data.object as Stripe.Invoice;
@@ -115,10 +166,7 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
           const sub = await stripe.subscriptions.retrieve(subId);
           await saveFromSubscription(sub);
         } else {
-          // No sub on invoice? keep it light: just mark status if you want
-          await UsersRepository.updateByStripeCustomerId(customerId, {
-            subscription_status: 'active',
-          });
+          await saveBestSubscriptionForCustomer(customerId);
         }
         break;
       }
@@ -126,13 +174,30 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
       case 'invoice.payment_failed': {
         const invoice = event.data.object as Stripe.Invoice;
         const customerId = invoice.customer as string;
-        await UsersRepository.updateByStripeCustomerId(customerId, {
-          subscription_status: 'past_due',
-        });
+        const subId = invoice.subscription as string | null;
+
+        if (subId) {
+          const sub = await stripe.subscriptions.retrieve(subId);
+          // Only downgrade if this event pertains to the stored subscription
+          const user = await UsersRepository.findByStripeCustomerId(customerId);
+          if (
+            !user?.stripe_subscription_id ||
+            user.stripe_subscription_id === sub.id
+          ) {
+            await UsersRepository.updateByStripeCustomerId(customerId, {
+              subscription_status: 'past_due',
+            });
+          }
+        } else {
+          // No sub on invoice — keep it minimal
+          await UsersRepository.updateByStripeCustomerId(customerId, {
+            subscription_status: 'past_due',
+          });
+        }
         break;
       }
 
-      // ⚠️ Your overage builder (kept as-is, with two tiny nits below)
+      // Overage preview / builder
       case 'invoice.upcoming': {
         const invoice = event.data.object as Stripe.Invoice;
         const customerId = invoice.customer as string;
@@ -165,11 +230,6 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
             included_quantity: string | number;
           }>;
 
-        const toInt = (v: string | number | null | undefined) =>
-          Number.isFinite(v)
-            ? Number(v)
-            : parseInt(String(v ?? '0').split('.')[0], 10) || 0;
-
         const limits = new Map<string, number>();
         for (const r of planLimits ?? [])
           limits.set(r.metric_key, toInt(r.included_quantity));
@@ -197,7 +257,7 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
             .map((li) => li.metadata?.overage_type)
         );
 
-        // Map: plan name + metric -> Stripe price id (your env map)
+        // Map: plan name + metric -> Stripe price id
         let OVERAGE_PRICE_IDS: Record<
           string,
           Record<'sms' | 'minutes' | 'fax', string | undefined>
@@ -261,12 +321,10 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
             return;
           }
 
-          // NOTE: In recent Stripe API versions you set `price` at top-level, not `pricing:{price}`
+          // Use top-level `price`
           await stripe.invoiceItems.create({
             customer: customerId,
-            pricing: {
-              price,
-            },
+            price, // <-- fixed
             quantity: qty,
             description: `Overage: ${qty} ${label}`,
             metadata: {
