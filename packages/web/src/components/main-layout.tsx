@@ -75,7 +75,7 @@ function Layout() {
   }
 
   // ---- NEW: compute locked + allowlist
-  const locked = true ?? isAccountLocked(userInfo);
+  const locked = isAccountLocked(userInfo);
   const isAllowlisted = ALLOWLIST_PREFIXES.some((p) =>
     location.pathname.startsWith(p)
   );
