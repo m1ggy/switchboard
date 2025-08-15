@@ -3,6 +3,7 @@ import { UsageRepository } from '@/db/repositories/usage';
 import { PlanUsageLimitsRepository } from '@/db/repositories/usage_limits';
 import { UsersRepository } from '@/db/repositories/users';
 import { FastifyInstance } from 'fastify';
+import fastifyRawBody from 'fastify-raw-body';
 import Stripe from 'stripe';
 
 const stripe = new Stripe(process.env.STRIPE_API_KEY!);
@@ -92,6 +93,13 @@ async function saveBestSubscriptionForCustomer(customerId: string) {
 // ---------- webhook ----------
 
 async function stripeWebhookRoutes(app: FastifyInstance) {
+  await app.register(fastifyRawBody, {
+    field: 'rawBody', // the property on req
+    global: false, // only when we opt-in per route
+    encoding: false, // false => give me a Buffer
+    runFirst: true, // get raw body before any other parser
+  });
+
   app.post('/webhook', async (req, reply) => {
     const sig = req.headers['stripe-signature'] as string | undefined;
     const rawBody = await (req as any).rawBody?.();
