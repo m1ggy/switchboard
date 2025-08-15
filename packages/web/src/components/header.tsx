@@ -2,10 +2,10 @@ import { useAuth } from '@/hooks/auth-provider';
 import { auth } from '@/lib/firebase';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query'; // 🔹 added useMutation
 import clsx from 'clsx';
 import { signOut } from 'firebase/auth';
-import { AlertTriangle, Bell, LogOut } from 'lucide-react';
+import { AlertTriangle, Bell, Loader2, LogOut } from 'lucide-react'; // 🔹 added Loader2
 import { useLocation, useNavigate } from 'react-router';
 import AudioSettingsHoverCard from './audio-settings-dialog';
 import Notifications from './notifications';
@@ -57,11 +57,14 @@ export default function Header({ isLoggedIn }: HeaderProps) {
   );
   const { data: userInfo } = useQuery(trpc.users.getUser.queryOptions());
 
-  // // Stripe Billing Portal
-  // const { mutateAsync: openBillingPortal, isPending: openingPortal } =
-  //   trpc.stripe.createBillingPortalSession.useMutation?.() ??
-  //   // Fallback if you prefer the mutationOptions() pattern:
-  //   useMutation(trpc.stripe.createBillingPortalSession.mutationOptions());
+  // Billing summary (for outstanding invoice / banner CTAs); skip for ADMIN
+  const isAdmin = userInfo?.stripe_subscription_id === 'ADMIN';
+  const { data: billing } = useQuery({
+    ...trpc.subscription.getBillingSummary.queryOptions(),
+    enabled: Boolean(isLoggedIn && !isAdmin && userInfo?.stripe_customer_id),
+  });
+  const outstanding = (billing as any)?.outstanding_invoice ?? null;
+  const hasOutstanding = Boolean(outstanding?.hosted_invoice_url);
 
   /// Stripe-like statuses you store in DB via webhooks or subscription flows
   const subStatus = (userInfo?.subscription_status ?? 'active') as
@@ -79,29 +82,48 @@ export default function Header({ isLoggedIn }: HeaderProps) {
     : null;
   const daysLeft = daysUntil(planEndsAt);
 
-  // Prefer explicit flag from your DB if you store it (recommended via webhook sync)
   const cancelAtPeriodEndFlag =
     (userInfo as any)?.cancel_at_period_end === true ||
-    // Heuristic fallback: has a future end date while not already fully canceled
     (!!planEndsAt &&
       planEndsAt.getTime() > Date.now() &&
       subStatus !== 'canceled');
 
-  // Show banner if billing problem OR cancel scheduled OR truly ended
   const hasBillingIssue =
     subStatus === 'past_due' ||
     subStatus === 'unpaid' ||
     subStatus === 'incomplete' ||
     subStatus === 'incomplete_expired';
 
-  console.log({ userInfo, subStatus, hasBillingIssue, cancelAtPeriodEndFlag });
-
   const isEnded =
     subStatus === 'canceled' &&
     (!planEndsAt || planEndsAt.getTime() <= Date.now());
 
   const showBanner =
-    isLoggedIn && (hasBillingIssue || cancelAtPeriodEndFlag || isEnded);
+    isLoggedIn &&
+    (hasBillingIssue || cancelAtPeriodEndFlag || isEnded || hasOutstanding);
+
+  // 🔹 Reactivate (Checkout) mutation — same style you used in Settings
+  const { mutateAsync: reactivate, isPending: reactivatePending } = useMutation(
+    trpc.subscription.createReactivateCheckout.mutationOptions()
+  );
+
+  const handleReactivate = async () => {
+    const data = await reactivate({
+      successUrl:
+        window.location.origin + '/dashboard/settings?checkout=success',
+      cancelUrl: window.location.origin + '/dashboard/settings?checkout=cancel',
+      allowPromotionCodes: true,
+    });
+    if ((data as any)?.ok) {
+      window.location.href = (data as any).url;
+    }
+  };
+
+  // 🔹 Only show Reactivate when fully ended or incomplete_expired, and no outstanding invoice
+  const shouldShowReactivate =
+    !isAdmin &&
+    !hasOutstanding &&
+    (isEnded || subStatus === 'incomplete_expired');
 
   // Banner content
   let bannerClass = 'bg-black text-white';
@@ -175,21 +197,44 @@ export default function Header({ isLoggedIn }: HeaderProps) {
               </div>
             </div>
             <div className="ml-auto flex gap-2">
+              {/* Pay invoice (if present) */}
+              {hasOutstanding && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    const url =
+                      (outstanding?.hosted_invoice_url as string) || '';
+                    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+                  }}
+                >
+                  Pay invoice
+                </Button>
+              )}
+
+              {/* 🔹 Reactivate / Resubscribe */}
+              {shouldShowReactivate && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={reactivatePending}
+                  onClick={handleReactivate}
+                >
+                  {reactivatePending && (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  )}
+                  Reactivate
+                </Button>
+              )}
+
               <Button
                 size="sm"
                 variant="secondary"
                 className="text-black"
-                onClick={handleBillingPortal}
-                // disabled={openingPortal}
+                onClick={() => navigate('/dashboard/settings')}
               >
-                {planEndsAt ? 'Opening…' : 'Manage billing'}
+                Manage billing
               </Button>
-              {/* Optional: “Reactivate” CTA if already ended and you want to send them to Checkout
-              {subStatus === 'canceled' && (!planEndsAt || planEndsAt < new Date()) && (
-                <Button size="sm" variant="outline" onClick={handleReactivate}>
-                  Reactivate
-                </Button>
-              )} */}
             </div>
           </div>
         </div>

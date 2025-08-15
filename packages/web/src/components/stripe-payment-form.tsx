@@ -62,7 +62,7 @@ function StripeElementsForm({
   };
 
   const getPriceId = (plan: string) => {
-    if (process.env.NODE_ENV === 'developmentt') {
+    if (process.env.NODE_ENV === 'development') {
       switch (plan) {
         case 'business':
           return 'price_1RnzeCR329ZHknhO6LKUSMnZ';

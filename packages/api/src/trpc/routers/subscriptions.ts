@@ -423,4 +423,68 @@ export const subscriptionRouter = t.router({
       message: 'Subscription is not scheduled to cancel; nothing to resume.',
     } as const;
   }),
+  createReactivateCheckout: protectedProcedure
+    .input(
+      z.object({
+        priceId: z.string().optional(), // optional: override plan price
+        successUrl: z.string().url(), // where to return after success
+        cancelUrl: z.string().url(), // where to return if user cancels
+        allowPromotionCodes: z.boolean().optional().default(true),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const user = await UsersRepository.findByFirebaseUid(ctx.user!.uid);
+      if (!user?.stripe_customer_id) {
+        return { ok: false, reason: 'NO_STRIPE_CUSTOMER' } as const;
+      }
+
+      // Prevents accidental double-billing if they already have an active/trialing sub.
+      // You can relax this if you want to allow multiple subs.
+      if (user.stripe_subscription_id) {
+        try {
+          const current = await stripe.subscriptions.retrieve(
+            user.stripe_subscription_id
+          );
+          if (current.status === 'active' || current.status === 'trialing') {
+            return { ok: false, reason: 'ALREADY_ACTIVE' } as const;
+          }
+        } catch {
+          // if stored ID is stale, continue and create a new one
+        }
+      }
+
+      // Resolve price id: either use the one passed in, or map from the user's selected plan
+      let priceId = input.priceId;
+      if (!priceId) {
+        if (!user.selected_plan) {
+          return { ok: false, reason: 'NO_SELECTED_PLAN' } as const;
+        }
+        const plan = await PlansRepository.findByPlanName(user.selected_plan);
+        if (!plan?.stripe_price_id) {
+          return { ok: false, reason: 'PLAN_PRICE_NOT_CONFIGURED' } as const;
+        }
+        priceId = plan.stripe_price_id;
+      }
+
+      // Create Checkout Session for a subscription
+      const session = await stripe.checkout.sessions.create({
+        mode: 'subscription',
+        customer: user.stripe_customer_id,
+        line_items: [{ price: priceId, quantity: 1 }],
+        allow_promotion_codes: input.allowPromotionCodes,
+        success_url: input.successUrl,
+        cancel_url: input.cancelUrl,
+        // Optional knobs you can uncomment if needed:
+        // subscription_data: {
+        //   trial_from_plan: true,
+        //   // billing_cycle_anchor: 'now' | unix_timestamp,
+        //   // proration_behavior: 'create_prorations',
+        //   metadata: { user_id: String(user.user_id) },
+        // },
+        client_reference_id: String(user.user_id),
+        metadata: { user_id: String(user.user_id), action: 'reactivate' },
+      });
+
+      return { ok: true, url: session.url! } as const;
+    }),
 });

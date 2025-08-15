@@ -12,12 +12,32 @@ function Settings() {
   const trpc = useTRPC();
   const qc = useQueryClient();
 
+  const { data: companies, isFetching } = useQuery({
+    ...trpc.companies.getUserCompanies.queryOptions(),
+    refetchOnWindowFocus: false,
+  });
+
   // Fetch user
   const {
     data: userInfo,
     isLoading: isUserLoading,
     isFetching: isUserFetching,
   } = useQuery(trpc.users.getUser.queryOptions());
+
+  const maxCompanies = useMemo(() => {
+    switch (userInfo?.selected_plan) {
+      case 'starter':
+        return 1;
+      case 'professional':
+        return 3;
+      case 'business':
+        return 10;
+      default:
+        return NaN;
+    }
+  }, [userInfo]);
+
+  console.log({ companies, maxCompanies });
 
   // Derive admin flag from user record
   const isAdmin = useMemo(
@@ -66,18 +86,9 @@ function Settings() {
   });
 
   // NEW: reactivate (when fully canceled / no sub) -> opens Stripe Checkout
-  const { mutate: reactivate, isPending: reactivatePending } = useMutation({
-    mutationFn: async () =>
-      trpc.subscription.createReactivateCheckout.mutate({
-        // you can pass a specific priceId here if you allow plan selection
-        successUrl: window.location.origin + '/settings?checkout=success',
-        cancelUrl: window.location.origin + '/settings?checkout=cancel',
-        allowPromotionCodes: true,
-      }),
-    onSuccess: ({ url }: { url: string }) => {
-      if (url) window.location.href = url;
-    },
-  });
+  const { mutateAsync: reactivate, isPending: reactivatePending } = useMutation(
+    trpc.subscription.createReactivateCheckout.mutationOptions()
+  );
 
   // Safe accessors (empty for admin)
   const sub = !isAdmin ? billing?.subscription : undefined;
@@ -214,7 +225,21 @@ function Settings() {
                   <Button
                     variant="default"
                     disabled={reactivatePending || hasOutstanding}
-                    onClick={() => reactivate()}
+                    onClick={() =>
+                      reactivate({
+                        successUrl:
+                          window.location.origin +
+                          '/dashboard/settings?checkout=success',
+                        cancelUrl:
+                          window.location.origin +
+                          '/dashboard/settings?checkout=cancel',
+                        allowPromotionCodes: true,
+                      }).then((data) => {
+                        if (data.ok) {
+                          window.location.href = data.url;
+                        }
+                      })
+                    }
                   >
                     {reactivatePending && (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -346,6 +371,11 @@ function Settings() {
             </>
           )}
         </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Companies</CardTitle>
+        </CardHeader>
       </Card>
     </div>
   );

@@ -98,6 +98,8 @@ function App() {
                   <Route path="all-contacts" element={<AllContacts />} />
                   <Route path="settings" element={<Settings />} />
                 </Route>
+
+                <Route path="*" element={<SignIn />} />
               </Routes>
             </BrowserRouter>
             <Toaster />
