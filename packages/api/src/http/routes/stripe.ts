@@ -102,13 +102,20 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
 
   app.post('/webhook', async (req, reply) => {
     const sig = req.headers['stripe-signature'] as string | undefined;
-    const rawBody = await (req as any).rawBody?.();
+    const raw = (req as any).rawBody as Buffer | undefined;
+
+    if (!sig || !raw) {
+      // This is what Stripe was complaining about
+      return reply
+        .status(400)
+        .send('Webhook Error: No webhook payload was provided.');
+    }
 
     let event: Stripe.Event;
     try {
       event = stripe.webhooks.constructEvent(
-        rawBody,
-        sig!,
+        raw, // IMPORTANT: raw Buffer, not JSON
+        sig,
         process.env.STRIPE_WEBHOOK_SECRET!
       );
     } catch (err) {
