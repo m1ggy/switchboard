@@ -49,6 +49,8 @@ export const UsersRepository = {
       `SELECT * FROM users WHERE user_id = $1`,
       [uid]
     );
+
+    console.log({ res });
     return res.rows[0] || null;
   },
 

@@ -6,17 +6,21 @@ import PageLoader from './pages/loader';
 
 function AppRoot() {
   const trpc = useTRPC();
-  const { data: userInfo } = useQuery(trpc.users.getUser.queryOptions());
+  const { data: userInfo, isLoading } = useQuery(
+    trpc.users.getUser.queryOptions()
+  );
   const navigate = useNavigate();
 
   useEffect(() => {
     console.log({ userInfo });
-    if (!userInfo) {
-      navigate('/sign-in');
-    } else {
-      navigate('/dashboard');
+    if (!isLoading) {
+      if (!userInfo) {
+        navigate('/sign-in');
+      } else {
+        navigate('/dashboard');
+      }
     }
-  }, [userInfo, navigate]);
+  }, [userInfo, navigate, isLoading]);
   return <PageLoader />;
 }
 

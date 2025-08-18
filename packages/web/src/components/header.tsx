@@ -2,10 +2,10 @@ import { useAuth } from '@/hooks/auth-provider';
 import { auth } from '@/lib/firebase';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
-import { useMutation, useQuery } from '@tanstack/react-query'; // 🔹 added useMutation
+import { useMutation, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { signOut } from 'firebase/auth';
-import { AlertTriangle, Bell, Loader2, LogOut } from 'lucide-react'; // 🔹 added Loader2
+import { AlertTriangle, Bell, Loader2, LogOut } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router';
 import AudioSettingsHoverCard from './audio-settings-dialog';
 import Notifications from './notifications';
@@ -86,7 +86,8 @@ export default function Header({ isLoggedIn }: HeaderProps) {
     (userInfo as any)?.cancel_at_period_end === true ||
     (!!planEndsAt &&
       planEndsAt.getTime() > Date.now() &&
-      subStatus !== 'canceled');
+      subStatus !== 'canceled' &&
+      subStatus !== 'active');
 
   const hasBillingIssue =
     subStatus === 'past_due' ||

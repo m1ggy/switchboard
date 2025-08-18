@@ -58,6 +58,13 @@ function Layout() {
   }, [rootSocket]);
 
   useEffect(() => {
+    console.log({
+      flag:
+        (userInfo && !userInfo.onboarding_completed) ||
+        (!userLoading && !userInfo),
+      userInfo,
+      userLoading,
+    });
     if (
       (userInfo && !userInfo.onboarding_completed) ||
       (!userLoading && !userInfo)
