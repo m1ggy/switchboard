@@ -320,7 +320,8 @@ function Dashboard() {
                   }
                 />
                 <Badge>
-                  {voiceCallsUsage} / {maxVoiceMinutes?.included_quantity}
+                  {voiceCallsUsage?.toFixed(2)} /{' '}
+                  {maxVoiceMinutes?.included_quantity}
                 </Badge>
               </div>
             </div>

@@ -23,6 +23,7 @@ export interface User {
   plan_started_at: string;
   plan_ends_at: string;
   email: string;
+  cancel_at_period_end: boolean;
 }
 
 export interface UserCompany {
