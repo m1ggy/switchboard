@@ -62,7 +62,7 @@ function StripeElementsForm({
   };
 
   const getPriceId = (plan: string) => {
-    if (process.env.STRIPE_API_KEY?.includes('test')) {
+    if (import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY?.includes('test')) {
       switch (plan) {
         case 'business':
           return 'price_1RnzeCR329ZHknhO6LKUSMnZ';
