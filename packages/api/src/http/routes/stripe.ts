@@ -278,7 +278,7 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
           Record<'sms' | 'minutes' | 'fax', string | undefined>
         > = {};
 
-        if (process.env.NODE_ENV === 'development') {
+        if (process.env.STRIPE_API_KEY?.includes('test')) {
           OVERAGE_PRICE_IDS = {
             starter: {
               minutes: 'price_1RvEvSR329ZHknhOpBk9kaGK',
@@ -336,10 +336,9 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
             return;
           }
 
-          // Use top-level `price`
           await stripe.invoiceItems.create({
             customer: customerId,
-            price, // <-- fixed
+            price,
             quantity: qty,
             description: `Overage: ${qty} ${label}`,
             metadata: {
