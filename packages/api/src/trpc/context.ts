@@ -29,7 +29,6 @@ export async function createContext({
     : null;
 
   if (!user) throw new Error('User does not exist');
-  if (!userInfo) throw new Error('User info does not exists');
 
   return { user, userInfo };
 }
