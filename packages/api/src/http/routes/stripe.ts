@@ -100,7 +100,7 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
     runFirst: true, // get raw body before any other parser
   });
 
-  app.post('/webhook', async (req, reply) => {
+  app.post('/webhook', { config: { rawBody: true } }, async (req, reply) => {
     const sig = req.headers['stripe-signature'] as string | undefined;
     const raw = (req as any).rawBody as Buffer | undefined;
 
@@ -114,7 +114,7 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
     let event: Stripe.Event;
     try {
       event = stripe.webhooks.constructEvent(
-        raw, // IMPORTANT: raw Buffer, not JSON
+        raw,
         sig,
         process.env.STRIPE_WEBHOOK_SECRET!
       );
