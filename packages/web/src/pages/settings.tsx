@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, ShieldCheck } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
+import CreateCompanyDialog from '@/components/create-company-dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -92,9 +93,6 @@ function Settings() {
 
   // Safe accessors (empty for admin)
   const sub = !isAdmin ? billing?.subscription : undefined;
-  const defaultPm = !isAdmin
-    ? billing?.payment_methods?.find((p) => p.is_default)
-    : undefined;
 
   // Optional: outstanding invoice handling (if your API returns it)
   const outstanding = !isAdmin ? (billing as any)?.outstanding_invoice : null;
@@ -450,7 +448,6 @@ function Settings() {
                 </div>
               )}
 
-              {/* List of companies */}
               {companyCount ? (
                 <ul className="divide-y rounded-md border">
                   {companies!.map((c: any) => (
@@ -468,10 +465,6 @@ function Settings() {
                           </div>
                         )}
                       </div>
-                      {/* Example: link to manage page if you have one */}
-                      <Button variant="outline" size="sm" asChild>
-                        <a href={`/dashboard/companies/${c.id}`}>Manage</a>
-                      </Button>
                     </li>
                   ))}
                 </ul>
@@ -481,17 +474,8 @@ function Settings() {
                 </div>
               )}
 
-              {/* (Optional) Add button — disabled if at limit */}
               <div className="pt-2">
-                <Button
-                  disabled={!canAddCompany}
-                  onClick={() => {
-                    // navigate to your create-company flow
-                    window.location.href = '/dashboard/companies/new';
-                  }}
-                >
-                  {canAddCompany ? 'Add company' : 'Company limit reached'}
-                </Button>
+                {canAddCompany ? <CreateCompanyDialog /> : null}
               </div>
             </>
           )}
