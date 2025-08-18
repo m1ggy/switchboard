@@ -287,12 +287,19 @@ export default function Header({ isLoggedIn }: HeaderProps) {
               <Button
                 variant="outline"
                 size="icon"
-                onClick={() => {
-                  authContext.setUser(null);
-                  store.setActiveCompany(null);
-                  store.setActiveNumber(null);
-                  store.setUser(null);
-                  signOut(auth);
+                onClick={async () => {
+                  const { setUser, setActiveCompany, setActiveNumber } =
+                    useMainStore.getState();
+
+                  setUser(null);
+
+                  setActiveCompany(undefined as any);
+                  setActiveNumber(undefined as any);
+
+                  useMainStore.persist.clearStorage();
+                  await useMainStore.persist.rehydrate();
+
+                  await signOut(auth);
                 }}
               >
                 <LogOut className="h-[1.2rem] w-[1.2rem]" />

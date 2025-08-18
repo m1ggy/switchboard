@@ -95,6 +95,8 @@ function BaseSidebar() {
   const location = useLocation();
   const trpc = useTRPC();
   const {
+    _rehydrated,
+    user,
     activeCompany,
     activeNumber,
     setActiveCompany,
@@ -102,13 +104,38 @@ function BaseSidebar() {
     setCompanySwitcherDialogShown,
   } = useMainStore();
 
+  // Fetch companies when there is a user (not based on activeCompany)
   const { data: companies, isFetching: companiesLoading } = useQuery({
     ...trpc.companies.getUserCompanies.queryOptions(),
     refetchOnWindowFocus: false,
     refetchOnMount: false,
-    enabled: !!activeCompany,
+    enabled: !!user,
   });
 
+  // Normalize/validate activeCompany against the fetched list
+  useEffect(() => {
+    if (!companiesLoading && companies) {
+      const activeIsValid = activeCompany
+        ? companies.some((c) => c.id === activeCompany.id)
+        : false;
+
+      if (!activeIsValid) {
+        // Replace with first available or null
+        const next = companies[0] ?? null;
+        setActiveCompany(next);
+        // Ensure numbers will be recomputed for the newly selected company
+        setActiveNumber(null);
+      }
+    }
+  }, [
+    companies,
+    companiesLoading,
+    activeCompany,
+    setActiveCompany,
+    setActiveNumber,
+  ]);
+
+  // Fetch numbers for whichever company is active (after normalization)
   const { data: numbers, isFetching: numbersLoading } = useQuery({
     ...trpc.numbers.getCompanyNumbers.queryOptions({
       companyId: activeCompany?.id as string,
@@ -117,17 +144,22 @@ function BaseSidebar() {
     refetchOnWindowFocus: false,
   });
 
+  // Normalize/validate activeNumber against the fetched numbers
   useEffect(() => {
-    if (companies?.length && !activeCompany) {
-      setActiveCompany(companies?.[0]);
-    }
-  }, [companies, setActiveCompany, activeCompany]);
+    if (!numbersLoading && numbers) {
+      const activeIsValid = activeNumber
+        ? numbers.some((n) => n.id === activeNumber.id)
+        : false;
 
-  useEffect(() => {
-    if (numbers?.length && !activeNumber) {
-      setActiveNumber(numbers?.[0]);
+      if (!activeIsValid) {
+        setActiveNumber(numbers[0] ?? null);
+      }
     }
-  }, [setActiveNumber, numbers, activeNumber]);
+  }, [numbers, numbersLoading, activeNumber, setActiveNumber]);
+
+  // Use the object coming from the numbers list to avoid identity mismatches
+  const activeNumberFromList =
+    numbers?.find((n) => n.id === activeNumber?.id) ?? null;
 
   const { data: inboxUnreadCount } = useQuery(
     trpc.inboxes.getUnreadInboxesCount.queryOptions({
@@ -140,6 +172,25 @@ function BaseSidebar() {
     : null;
 
   const theme = useTheme();
+
+  // ------------- IMPORTANT GUARD: wait for hydration -------------
+  if (!_rehydrated) {
+    return (
+      <Sidebar>
+        <SidebarContent className="overflow-x-hidden p-2">
+          <SidebarHeader className="my-2 px-2">
+            <Skeleton className="w-[160px] h-[28px]" />
+          </SidebarHeader>
+          <SidebarSeparator />
+          <Skeleton className="w-[200px] h-[20px] rounded-full" />
+          <div className="mt-2 space-y-2">
+            <Skeleton className="w-full h-[36px]" />
+            <Skeleton className="w-full h-[36px]" />
+          </div>
+        </SidebarContent>
+      </Sidebar>
+    );
+  }
 
   return (
     <Sidebar>
@@ -163,16 +214,18 @@ function BaseSidebar() {
             onClick={() => setCompanySwitcherDialogShown(true)}
           >
             <p className="text-muted-foreground font-semibold">
-              {activeCompany?.name}
+              {activeCompany?.name ?? 'No company'}
             </p>
             <ChevronsUpDown size={18} />
           </div>
         )}
+
         <NumberSwitcher
           numbers={numbers ?? []}
           isLoading={numbersLoading}
-          defaultValue={activeNumber}
+          defaultValue={activeNumberFromList}
         />
+
         <SidebarSeparator />
 
         <SidebarMenu>
@@ -188,6 +241,7 @@ function BaseSidebar() {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
+
         {smsItems.length ? (
           <SidebarGroup>
             <SidebarGroupLabel>Messages</SidebarGroupLabel>
@@ -232,6 +286,7 @@ function BaseSidebar() {
             </SidebarGroupContent>
           </SidebarGroup>
         ) : null}
+
         <SidebarGroup>
           <SidebarGroupLabel>Calls</SidebarGroupLabel>
           <SidebarGroupContent>
@@ -263,6 +318,7 @@ function BaseSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
         <SidebarGroup>
           <SidebarGroupLabel>Contacts</SidebarGroupLabel>
           <SidebarGroupContent>
@@ -294,6 +350,7 @@ function BaseSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
         <SidebarFooter>
           <SidebarGroup>
             <SidebarGroupLabel>Account</SidebarGroupLabel>
