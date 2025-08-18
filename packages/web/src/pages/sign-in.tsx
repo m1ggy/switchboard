@@ -17,7 +17,9 @@ import { Input } from '@/components/ui/input';
 import Loader from '@/components/ui/loader';
 import { auth } from '@/lib/firebase';
 import useMainStore from '@/lib/store';
+import { useTRPC } from '@/lib/trpc';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useMutation } from '@tanstack/react-query';
 import type { FirebaseError } from 'firebase/app';
 import {
   GoogleAuthProvider,
@@ -40,10 +42,12 @@ function SignIn() {
   const form = useForm<Schema>({
     resolver: zodResolver(signInSchema),
   });
+  const trpc = useTRPC();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
   const setUser = useMainStore((state) => state.setUser);
+  const createUser = useMutation(trpc.users.createUser.mutationOptions());
 
   const onSubmit = async (data: Schema) => {
     setLoading(true);
@@ -93,7 +97,23 @@ function SignIn() {
     try {
       const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(auth, provider);
-      setUser(result.user);
+
+      const { user } = result;
+      setUser(user);
+
+      const nameParts = (user.displayName ?? '').split(' ');
+      const first_name = nameParts[0] ?? '';
+      const last_name = nameParts.slice(1).join(' ') || '';
+
+      await createUser
+        .mutateAsync({
+          email: user.email ?? '',
+          first_name,
+          last_name,
+          uid: user.uid,
+        })
+        .catch();
+
       navigate('/dashboard');
     } catch (error) {
       const firebaseError = error as FirebaseError;
@@ -167,7 +187,7 @@ function SignIn() {
                   />
 
                   <div className="flex justify-center">
-                    <Button type="submit" disabled={loading} className="w-auto">
+                    <Button type="submit" disabled={loading} className="w-full">
                       {loading ? <Loader /> : 'Sign In'}
                     </Button>
                   </div>
@@ -188,6 +208,7 @@ function SignIn() {
                   variant="outline"
                   onClick={handleGoogleSignIn}
                   disabled={loading}
+                  className="w-full"
                 >
                   {loading ? <Loader /> : 'Continue with Google'}
                 </Button>

@@ -82,6 +82,7 @@ export const onboardingRouter = t.router({
           companyId: dbCompany.id,
           createdAt: new Date(),
           number: company.companyNumber,
+          label: 'Main',
         });
       }
       await UsersRepository.update(ctx.user.uid, {

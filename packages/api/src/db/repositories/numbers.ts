@@ -10,17 +10,19 @@ export const NumbersRepository = {
     companyId,
     number,
     createdAt,
+    label,
   }: {
     id: string;
     companyId: string;
     number: string;
     createdAt: Date;
+    label: string;
   }): Promise<NumberEntry> {
     const res = await pool.query<NumberEntry>(
-      `INSERT INTO numbers (id, company_id, number, created_at)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO numbers (id, company_id, number, created_at, label)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [id, companyId, number, createdAt]
+      [id, companyId, number, createdAt, label]
     );
     return res.rows[0];
   },
