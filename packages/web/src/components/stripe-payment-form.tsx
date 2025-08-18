@@ -53,7 +53,7 @@ function StripeElementsForm({
       case 'starter':
         return '$29';
       case 'professional':
-        return '$79';
+        return '$59';
       case 'business':
         return '$99';
       default:
