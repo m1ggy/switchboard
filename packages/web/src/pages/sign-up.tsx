@@ -233,8 +233,8 @@ function SignUp() {
               </Form>
 
               <div className="mt-5 text-center">
-                <span>
-                  Already have an account? <Link to={'/signin'}>Sign in</Link>
+                <span className="underline">
+                  <Link to={'/sign-in'}>Already have an account? Sign in</Link>
                 </span>
               </div>
             </CardDescription>

@@ -34,8 +34,10 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
+import { auth } from '@/lib/firebase';
 import { useTRPC } from '@/lib/trpc';
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { signOut } from 'firebase/auth';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 
@@ -630,6 +632,17 @@ export default function Onboarding() {
     <div className="min-h-screen bg-accent flex items-center justify-center p-4">
       <Card className="w-full max-w-4xl">
         <CardHeader className="space-y-4">
+          <div className="flex justify-end">
+            <Button
+              variant={'outline'}
+              onClick={() => {
+                console.log('SIGNOUT');
+                signOut(auth).then(() => navigate('/sign-in'));
+              }}
+            >
+              Sign Out
+            </Button>
+          </div>
           <div className="flex items-center justify-between">
             <div className="space-y-1">
               <CardTitle className="text-lg">
