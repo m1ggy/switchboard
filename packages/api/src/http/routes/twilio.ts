@@ -255,12 +255,55 @@ async function routes(app: FastifyInstance) {
           queueRoom
         );
 
+        const VOICEMAIL_TIMEOUT_MS = 120_000; // 2 minutes
+
+        const timerId = setTimeout(async () => {
+          try {
+            // Only redirect if still held (not bridged yet)
+            const held = activeCallStore.isHeld(CallSid);
+            if (!held) return;
+
+            // Recheck presence to avoid false positive
+            const stillBusy = !presenceStore.isAvailable(agentIdentity);
+            if (!stillBusy) return;
+
+            await twilioClient.client.calls(CallSid).update({
+              method: 'POST',
+              url: `${SERVER_DOMAIN}/voice/voicemail?to=${encodeURIComponent(To)}`,
+            });
+          } catch (err) {
+            console.error('Voicemail redirect failed', err);
+          }
+        }, VOICEMAIL_TIMEOUT_MS);
+
+        // track timer in your activeCallStore so you can cancel it
+        activeCallStore.attachTimer(CallSid, timerId);
+
         activeCallStore.updateStatus(CallSid, 'held', agentIdentity);
       }
 
       return reply.type('text/xml').status(200).send(response.toString());
     }
   );
+
+  app.post('/voice/voicemail', async (req, reply) => {
+    const response = new twiml.VoiceResponse();
+
+    response.say(
+      'Sorry, all our agents are busy. Please leave a message after the tone.'
+    );
+    response.record({
+      playBeep: true,
+      maxLength: 120,
+      action: `${SERVER_DOMAIN}/voice/voicemail-done`,
+      recordingStatusCallback: `${SERVER_DOMAIN}/voice/voicemail-status`,
+      recordingStatusCallbackMethod: 'POST',
+    });
+    response.say('We did not receive a recording. Goodbye.');
+    response.hangup();
+
+    return reply.type('text/xml').status(200).send(response.toString());
+  });
 
   // POST /voice/voicemail-done (TwiML "action" after <Record>)
   app.post('/voice/voicemail-done', async (req, reply) => {
@@ -315,7 +358,7 @@ async function routes(app: FastifyInstance) {
       to: To,
       recordingSid: RecordingSid,
       recordingUrl: RecordingUrl,
-      durationSecs: RecordingDuration,
+      durationSecs: parseInt(RecordingDuration),
       callSid: CallSid,
     });
     return reply.status(204).send();

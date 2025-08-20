@@ -1,3 +1,4 @@
+// ——— Call / Presence types ———
 type CallStatus = 'initiated' | 'bridged' | 'held' | 'completed';
 
 interface ActiveCall {
@@ -8,8 +9,11 @@ interface ActiveCall {
   agent?: string;
   startedAt: Date;
   conferenceSid?: string;
+  /** internal: voicemail redirect timer, if any */
+  _timer?: NodeJS.Timeout | null;
 }
 
+// ——— ActiveCallStore ———
 export class ActiveCallStore {
   private calls = new Map<string, ActiveCall>();
 
@@ -21,15 +25,67 @@ export class ActiveCallStore {
     return this.calls.get(callSid);
   }
 
-  updateStatus(callSid: string, status: CallStatus, agent?: string) {
+  /** Convenience: mark a call as held and (optionally) assign agent */
+  markHeld(callSid: string, agentId?: string) {
     const call = this.calls.get(callSid);
-    if (call) {
-      call.status = status;
-      if (agent) call.agent = agent;
+    if (!call) return;
+    call.status = 'held';
+    if (agentId) call.agent = agentId;
+  }
+
+  /** True if call exists and is currently in 'held' state */
+  isHeld(callSid: string): boolean {
+    const call = this.calls.get(callSid);
+    return !!call && call.status === 'held';
+  }
+
+  /**
+   * Attach a timeout (e.g., voicemail fallback) to a call.
+   * Replaces any existing timer to avoid duplicates.
+   */
+  attachTimer(callSid: string, timer: NodeJS.Timeout) {
+    const call = this.calls.get(callSid);
+    if (!call) return;
+    if (call._timer) clearTimeout(call._timer);
+    call._timer = timer;
+  }
+
+  /**
+   * Detach (and return) a pending timer without clearing it.
+   * Typical usage: const t = detachTimer(sid); if (t) clearTimeout(t);
+   */
+  detachTimer(callSid: string): NodeJS.Timeout | null {
+    const call = this.calls.get(callSid);
+    if (!call || !call._timer) return null;
+    const t = call._timer;
+    call._timer = null;
+    return t;
+  }
+
+  /** Internal helper: clear & null any timer if present */
+  private clearTimer(callSid: string) {
+    const call = this.calls.get(callSid);
+    if (call?.['_timer']) {
+      clearTimeout(call._timer as NodeJS.Timeout);
+      call._timer = null;
     }
   }
 
+  updateStatus(callSid: string, status: CallStatus, agent?: string) {
+    const call = this.calls.get(callSid);
+    if (!call) return;
+
+    // Leaving 'held'? clear any voicemail timer
+    const leavingHeld = call.status === 'held' && status !== 'held';
+    call.status = status;
+    if (agent) call.agent = agent;
+
+    if (leavingHeld) this.clearTimer(callSid);
+  }
+
   remove(callSid: string) {
+    // prevent timer leaks
+    this.clearTimer(callSid);
     this.calls.delete(callSid);
   }
 
@@ -59,6 +115,7 @@ export class ActiveCallStore {
   }
 }
 
+// ——— Presence ———
 type PresenceStatus = 'idle' | 'on-call';
 
 interface PresenceRecord {
