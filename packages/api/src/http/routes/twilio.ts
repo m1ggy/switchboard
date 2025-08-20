@@ -105,29 +105,6 @@ async function routes(app: FastifyInstance) {
         return reply.type('text/xml').send(response.toString());
       }
 
-      // 🆕 Create/find contact and inbox
-      if (isInbound) {
-        const contact = await ContactsRepository.findOrCreate({
-          number: callerId,
-          companyId: numberRecord.company_id,
-        });
-
-        const inbox = await InboxesRepository.findOrCreate({
-          numberId: numberRecord.id,
-          contactId: contact.id,
-        });
-
-        const call = await CallsRepository.create({
-          id: crypto.randomUUID() as string,
-          contact_id: contact.id,
-          call_sid: CallSid,
-          number_id: numberRecord.id,
-          meta: { status: 'ONGOING' },
-        });
-
-        await InboxesRepository.updateLastCall(inbox.id, call.id);
-      }
-
       if (isInbound && !hasPassedIVR) {
         response
           .gather({
@@ -145,6 +122,29 @@ async function routes(app: FastifyInstance) {
       }
 
       if (hasPassedIVR) {
+        const existing = await CallsRepository.findBySID(CallSid);
+        if (!existing) {
+          const contact = await ContactsRepository.findOrCreate({
+            number: callerId,
+            companyId: numberRecord.company_id,
+          });
+
+          const inbox = await InboxesRepository.findOrCreate({
+            numberId: numberRecord.id,
+            contactId: contact.id,
+          });
+
+          const call = await CallsRepository.create({
+            id: crypto.randomUUID() as string,
+            contact_id: contact.id,
+            call_sid: CallSid,
+            number_id: numberRecord.id,
+            meta: { status: 'ONGOING' },
+          });
+
+          await InboxesRepository.updateLastCall(inbox.id, call.id);
+        }
+
         // Track active call
         activeCallStore.add({
           sid: CallSid,
