@@ -269,7 +269,7 @@ async function routes(app: FastifyInstance) {
 
             await twilioClient.client.calls(CallSid).update({
               method: 'POST',
-              url: `${SERVER_DOMAIN}/voice/voicemail?to=${encodeURIComponent(To)}`,
+              url: `${SERVER_DOMAIN}/twilio/voice/voicemail?to=${encodeURIComponent(To)}`,
             });
           } catch (err) {
             console.error('Voicemail redirect failed', err);
