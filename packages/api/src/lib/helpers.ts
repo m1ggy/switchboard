@@ -120,6 +120,100 @@ async function notifyNewMessage({
   }
 }
 
+type NotifyVoicemailArgs = {
+  from: string;
+  toNumber: string;
+  recordingUrl: string;
+  durationSecs: number;
+  voicemailId: string;
+  callSid?: string | null;
+  transcriptionText?: string | null;
+  app: FastifyInstance;
+  meta?: Record<string, unknown>;
+};
+
+function formatDuration(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${m}:${sec.toString().padStart(2, '0')}`;
+}
+
+export async function notifyNewVoicemail({
+  from,
+  toNumber,
+  recordingUrl,
+  durationSecs,
+  voicemailId,
+  callSid = null,
+  transcriptionText = null,
+  app,
+  meta = {},
+}: NotifyVoicemailArgs) {
+  try {
+    const existingNumber = await NumbersRepository.findByNumber(toNumber);
+    if (!existingNumber) {
+      console.warn(`❌ No number record found for: ${toNumber}`);
+      return;
+    }
+
+    const existingCompany = await UserCompaniesRepository.findCompanyById(
+      existingNumber.company_id
+    );
+    if (!existingCompany) {
+      console.warn(`❌ No company found for number: ${toNumber}`);
+      return;
+    }
+
+    const userCompany = await UserCompaniesRepository.findUserIdById(
+      existingCompany.id
+    );
+    if (!userCompany) {
+      console.warn(`⚠️ No user found for company ID: ${existingCompany.id}`);
+      return;
+    }
+
+    const durationDisplay = formatDuration(durationSecs);
+
+    const notif = await NotificationsRepository.create({
+      id: crypto.randomUUID(),
+      // Keep it short for list previews
+      message: `New voicemail from ${from} (${durationDisplay})`,
+      createdAt: new Date(),
+      userId: userCompany.user_id,
+      meta: {
+        type: 'voicemail',
+        companyId: existingCompany.id,
+        numberId: existingNumber.id,
+        from,
+        to: toNumber,
+        voicemailId,
+        callSid,
+        recordingUrl,
+        durationSecs,
+        durationDisplay,
+        transcriptionPreview: (transcriptionText ?? '').slice(0, 140) || null,
+        ...meta,
+      },
+    });
+
+    // Generic notifications stream
+    const notifChannel = `${userCompany.user_id}-notif`;
+    app.io.emit(notifChannel, notif);
+    console.log(`📢 Voicemail notification emitted to: ${notifChannel}`);
+
+    // Optional: a dedicated real-time stream for voicemail UIs
+    const vmChannel = `${userCompany.user_id}-voicemail`;
+    app.io.emit(vmChannel, {
+      event: 'voicemail.created',
+      data: notif, // or shape it differently if you prefer
+    });
+    console.log(`📢 Voicemail event emitted to: ${vmChannel}`);
+  } catch (error) {
+    console.error(`❗ Error in notifyNewVoicemail for ${toNumber}:`, error);
+  }
+}
+
 async function notifyUser({
   userId,
   message,

@@ -346,7 +346,7 @@ export default function Onboarding() {
                     </li>
                     <li className="flex items-center gap-2">
                       <Check className="w-4 h-4 text-green-500" />
-                      Slack notifications per profile
+                      MMS Feature
                     </li>
                     <li className="flex items-center gap-2">
                       <Check className="w-4 h-4 text-green-500" />
@@ -398,6 +398,14 @@ export default function Onboarding() {
                     <li className="flex items-center gap-2">
                       <Check className="w-4 h-4 text-green-500" />
                       5,000 SMS messages
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <Check className="w-4 h-4 text-green-500" />
+                      MMS Feature
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <Check className="w-4 h-4 text-green-500" />
+                      Fax Feature
                     </li>
                     <li className="flex items-center gap-2">
                       <Check className="w-4 h-4 text-green-500" />
