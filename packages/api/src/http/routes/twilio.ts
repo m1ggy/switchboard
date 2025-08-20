@@ -295,8 +295,8 @@ async function routes(app: FastifyInstance) {
     response.record({
       playBeep: true,
       maxLength: 120,
-      action: `${SERVER_DOMAIN}/voice/voicemail-done`,
-      recordingStatusCallback: `${SERVER_DOMAIN}/voice/voicemail-status`,
+      action: `${SERVER_DOMAIN}/twilio/voice/voicemail-done`,
+      recordingStatusCallback: `${SERVER_DOMAIN}/twilio/voice/voicemail-status`,
       recordingStatusCallbackMethod: 'POST',
     });
     response.say('We did not receive a recording. Goodbye.');
