@@ -288,6 +288,18 @@ async function routes(app: FastifyInstance) {
     }
   );
 
+  app.get('/twilio/voice/hold-music', async (req, reply) => {
+    const r = new twiml.VoiceResponse();
+
+    r.play(
+      { loop: 1 },
+      `${process.env.SERVER_DOMAIN}/audio/marketing_audio.mp3`
+    );
+    r.play({ loop: 1 }, `${process.env.SERVER_DOMAIN}/audio/music1.mp3`);
+
+    return reply.type('text/xml').status(200).send(r.toString());
+  });
+
   app.post('/voice/voicemail', async (req, reply) => {
     const response = new twiml.VoiceResponse();
 
