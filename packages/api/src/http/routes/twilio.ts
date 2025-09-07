@@ -290,7 +290,7 @@ async function routes(app: FastifyInstance) {
     }
   );
 
-  app.get('/twilio/voice/hold-music', async (req, reply) => {
+  app.get('/voice/hold-music', async (req, reply) => {
     const r = new twiml.VoiceResponse();
 
     r.play(
