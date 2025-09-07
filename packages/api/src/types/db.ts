@@ -95,7 +95,12 @@ export type InboxWithDetails = {
   numberId: string;
   contactId: string;
   lastMessageId: string | null;
-  lastCallId: string | null;
+
+  // Replaces lastCallId
+  lastCallSid: string | null;
+
+  /** @deprecated use lastCallSid instead */
+  lastCallId?: string | null;
 
   contact: {
     id: string;
@@ -118,7 +123,9 @@ export type InboxWithDetails = {
   } | null;
 
   lastCall: {
-    id: string;
+    /** optional legacy DB id; prefer call_sid */
+    id?: string;
+    call_sid: string; // <-- new
     number_id: string;
     contact_id: string;
     initiated_at: string | null;

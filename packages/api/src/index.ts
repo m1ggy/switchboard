@@ -5,7 +5,9 @@ import fastifySocketIO from 'fastify-socket.io';
 import fastifyCors from '@fastify/cors';
 import formBody from '@fastify/formbody';
 import multipart from '@fastify/multipart';
+import fastifyStatic from '@fastify/static';
 import dotenv from 'dotenv';
+import fs from 'fs';
 import path from 'path';
 import faxRoutes from './http/routes/fax';
 import jitsiRoutes from './http/routes/jitsi';
@@ -14,7 +16,6 @@ import twilioRoutes from './http/routes/twilio';
 import { auth } from './lib/firebase';
 import { appRouter } from './trpc';
 import { createContext } from './trpc/context';
-
 dotenv.config();
 
 console.info('Starting Switchboard Server');
@@ -60,6 +61,30 @@ app.register(multipart, { attachFieldsToBody: true });
 app.register(fastifyTRPCPlugin, {
   prefix: '/trpc',
   trpcOptions: { router: appRouter, createContext, allowBatching: false },
+});
+
+// --- static audio hosting ---
+const audioRoot = path.join(__dirname, '..', 'public', 'audio');
+
+app.register(fastifyStatic, {
+  root: audioRoot,
+  prefix: '/audio/',
+  setHeaders(res, filePath) {
+    res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+    res.setHeader('Accept-Ranges', 'bytes');
+    if (filePath.endsWith('.mp3')) res.setHeader('Content-Type', 'audio/mpeg');
+    if (filePath.endsWith('.wav')) res.setHeader('Content-Type', 'audio/wav');
+  },
+});
+
+app.get('/audio', async (_, reply) => {
+  // optional: tiny index to confirm what's deployed
+  try {
+    const files = fs.readdirSync(audioRoot);
+    return reply.send({ files });
+  } catch {
+    return reply.code(500).send({ error: 'Audio folder not found' });
+  }
 });
 
 app.get('/', (_, reply) => {

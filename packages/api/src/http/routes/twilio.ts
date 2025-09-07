@@ -26,14 +26,12 @@ import twilio from 'twilio';
 import { authMiddleware } from '../middlewares/auth';
 
 const { twiml } = twilio;
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID as string;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN as string;
 
-const twilioClient = new TwilioClient(
-  process.env.TWILIO_ACCOUNT_SID as string,
-  process.env.TWILIO_AUTH_TOKEN as string
-);
+const twilioClient = new TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 const SERVER_DOMAIN = process.env.SERVER_DOMAIN;
-const AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN as string;
 
 function fullUrl(req: FastifyRequest) {
   const base = process.env.PUBLIC_BASE_URL?.replace(/\/$/, '');
@@ -55,7 +53,7 @@ export async function verifyTwilioRequest(
   const url = fullUrl(req);
   const params = (req.body || {}) as Record<string, string>;
 
-  const ok = twilio.validateRequest(AUTH_TOKEN, sig, url, params);
+  const ok = twilio.validateRequest(TWILIO_AUTH_TOKEN, sig, url, params);
   if (!ok) return reply.code(403).send('Invalid Twilio signature');
 }
 
@@ -242,8 +240,12 @@ async function routes(app: FastifyInstance) {
           from: slackMessageFromFormatted,
           to: slackMessageToFormatted,
         });
-
-        response.say('All agents are currently busy. Please hold.');
+        const company = await UserCompaniesRepository.findCompanyById(
+          number?.company_id as string
+        );
+        response.say(
+          `Welcome to ${company?.name} Hotline, please wait while we connect you to an agent`
+        );
         response.dial().conference(
           {
             startConferenceOnEnter: false,
@@ -305,40 +307,107 @@ async function routes(app: FastifyInstance) {
     return reply.type('text/xml').status(200).send(response.toString());
   });
 
-  // POST /voice/voicemail-done (TwiML "action" after <Record>)
   app.post('/voice/voicemail-done', async (req, reply) => {
-    const { RecordingSid, RecordingUrl, RecordingDuration, From, To, CallSid } =
-      req.body as Record<string, string>;
+    const {
+      RecordingSid,
+      RecordingUrl, // Twilio gives URL w/o extension
+      RecordingDuration,
+      From,
+      To,
+      CallSid,
+    } = req.body as Record<string, string>;
 
-    const recordingMp3 = `${RecordingUrl}.mp3`;
+    // Resolve number/company/contact for persistence
+    const numberRecord = await NumbersRepository.findByNumber(To);
+    if (!numberRecord) {
+      console.warn('❌ voicemail-done: no number for To:', To);
+      const r = new twiml.VoiceResponse();
+      r.say('Thanks. Your message has been recorded.');
+      r.hangup();
+      return reply.type('text/xml').status(200).send(r.toString());
+    }
+
+    const company = await UserCompaniesRepository.findCompanyById(
+      numberRecord.company_id
+    );
+
+    // (Optional) contact + call linkage if you have them
+    const contact = await ContactsRepository.findByNumber(From, company?.id);
+
+    // Build Twilio media URL with extension (mp3 is small & convenient)
+    const twilioMp3Url = `${RecordingUrl}.mp3`;
+
+    // 1) Download from Twilio, 2) Upload to GCS
+    let gcsUrl: string | null = null;
+    try {
+      const axRes = await axios.get<ArrayBuffer>(twilioMp3Url, {
+        responseType: 'arraybuffer',
+        // Twilio recordings require Basic Auth unless you’ve made them public
+        auth: {
+          username: TWILIO_ACCOUNT_SID,
+          password: TWILIO_AUTH_TOKEN,
+        },
+        // You can bump this if you expect long recordings
+        timeout: 25_000,
+        // Follow redirects just in case
+        maxRedirects: 3,
+      });
+
+      const buffer = Buffer.from(axRes.data as ArrayBuffer);
+
+      // Example filename: vm-{company}-{YYYYMMDD}-{RecordingSid}.mp3
+      const yyyymmdd = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const safeCompany = (company?.name || 'company')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-');
+      const filename = `voicemails/vm-${safeCompany}-${yyyymmdd}-${RecordingSid}.mp3`;
+
+      gcsUrl = await uploadAttachmentBuffer(buffer, filename);
+    } catch (err) {
+      console.error('❌ Failed to download/upload voicemail recording:', err);
+      // You can still continue and store the Twilio URL so nothing is lost
+    }
+
+    // Choose what you persist as primary URL:
+    // Prefer the GCS copy if available; fall back to Twilio URL
+    const primaryUrl = gcsUrl ?? twilioMp3Url;
+
+    // Save voicemail
     const voicemail = await VoicemailsRepository.create({
+      companyId: numberRecord.company_id,
+      numberId: numberRecord.id,
+      contactId: contact?.id ?? null,
       callSid: CallSid,
       from: From,
       to: To,
       recordingSid: RecordingSid,
-      recordingUrl: recordingMp3,
+      recordingUrl: primaryUrl,
       durationSecs: Number(RecordingDuration || 0),
-      companyId: (await NumbersRepository.findByNumber(To))
-        ?.company_id as string,
+      transcriptionText: null,
+      transcriptionStatus: 'pending',
     });
 
-    // Notify Slack (reuse your existing helper)
-    await sendCallAlertToSlack({
-      from: `${From} (voicemail)`,
-      to: To,
-    });
+    // If you added a separate GCS column in your schema, you could also update here:
+    // await VoicemailsRepository.setStorageUrls(voicemail.id, { gcsUrl, twilioUrl: twilioMp3Url });
 
-    await notifyNewVoicemail?.({
-      callSid: CallSid,
-      recordingUrl: recordingMp3,
+    // Notify UI
+    await notifyNewVoicemail({
       from: From,
-      voicemailId: voicemail.id,
       toNumber: To,
+      recordingUrl: primaryUrl,
+      durationSecs: Number(RecordingDuration || 0),
+      voicemailId: voicemail.id,
+      callSid: CallSid,
+      transcriptionText: null,
       app,
-      durationSecs: parseInt(RecordingDuration),
+      meta: {
+        storage: gcsUrl ? 'gcs' : 'twilio',
+        twilioUrl: twilioMp3Url,
+        gcsUrl: gcsUrl ?? null,
+      },
     });
 
-    // Close out to caller
+    // Close out the call nicely
     const response = new twiml.VoiceResponse();
     response.say('Thanks. Your message has been recorded. Goodbye.');
     response.hangup();

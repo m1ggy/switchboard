@@ -125,11 +125,20 @@ export const InboxesRepository = {
       duration?: number;
       mediaUrl?: string;
       meta?: any;
+      // new: carry callSid on call items
+      callSid?: string;
       attachments?: {
         id: string;
         media_url: string;
         content_type: string;
         file_name: string | null;
+      }[];
+      voicemails?: {
+        id: string;
+        media_url: string;
+        transcription: string | null;
+        duration: number | null;
+        created_at: string;
       }[];
     }[]
   > {
@@ -148,7 +157,8 @@ export const InboxesRepository = {
         m.status::text AS status,
         NULL::integer AS duration,
         NULL::text AS "mediaUrl",
-        (m.meta)::json AS meta
+        (m.meta)::json AS meta,
+        NULL::text AS "callSid"                -- align UNION columns
       FROM messages m
       WHERE m.contact_id = $1
 
@@ -165,7 +175,8 @@ export const InboxesRepository = {
         NULL::text AS status,
         c.duration,
         NULL::text AS "mediaUrl",
-        (c.meta)::json AS meta
+        (c.meta)::json AS meta,
+        c.call_sid AS "callSid"                -- <- use call_sid
       FROM calls c
       WHERE c.contact_id = $1
 
@@ -182,7 +193,8 @@ export const InboxesRepository = {
         f.status::text AS status,
         NULL::integer AS duration,
         f.media_url AS "mediaUrl",
-        (f.meta)::json AS meta
+        (f.meta)::json AS meta,
+        NULL::text AS "callSid"                -- align UNION columns
       FROM faxes f
       WHERE f.contact_id = $1
     ) AS combined
@@ -197,19 +209,36 @@ export const InboxesRepository = {
       [contactId, cursorCreatedAt || null, cursorId || null, limit]
     );
 
-    const activity = result.rows;
+    const activity = result.rows as Array<{
+      type: 'message' | 'call' | 'fax';
+      id: string;
+      numberId: string;
+      createdAt: string;
+      direction?: 'inbound' | 'outbound';
+      message?: string;
+      status?: string;
+      duration?: number;
+      mediaUrl?: string;
+      meta?: any;
+      callSid?: string | null;
+    }>;
 
-    // 🧩 Collect message IDs for attachment lookup
+    // 🧩 Collect IDs for enrichment
     const messageIds = activity
       .filter((item) => item.type === 'message')
       .map((item) => item.id);
 
-    let attachmentsByMessageId: Record<string, any[]> = {};
+    // use callSid instead of id
+    const callSids = activity
+      .filter((item) => item.type === 'call' && item.callSid)
+      .map((item) => item.callSid!) as string[];
 
+    // === MMS attachments by message_id ===
+    let attachmentsByMessageId: Record<string, any[]> = {};
     if (messageIds.length > 0) {
       const res = await pool.query(
         `
-      SELECT *
+      SELECT id, message_id, media_url, content_type, file_name
       FROM media_attachments
       WHERE message_id = ANY($1::uuid[])
       `,
@@ -231,12 +260,55 @@ export const InboxesRepository = {
       );
     }
 
+    // === Voicemails by call_sid (NOT call id) ===
+    let voicemailsByCallSid: Record<string, any[]> = {};
+    if (callSids.length > 0) {
+      const res = await pool.query(
+        `
+      SELECT
+        v.id,
+        v.call_sid,
+        v.media_url,
+        v.transcription,
+        v.duration,
+        v.created_at
+      FROM voicemails v
+      WHERE v.call_sid = ANY($1::text[])
+      ORDER BY v.created_at DESC, v.id DESC
+      `,
+        [callSids]
+      );
+
+      voicemailsByCallSid = res.rows.reduce(
+        (acc, row) => {
+          if (!acc[row.call_sid]) acc[row.call_sid] = [];
+          acc[row.call_sid].push({
+            id: row.id,
+            media_url: row.media_url,
+            transcription: row.transcription ?? null,
+            duration: row.duration ?? null,
+            created_at: row.created_at,
+          });
+          return acc;
+        },
+        {} as Record<string, any[]>
+      );
+    }
+
     // 🔁 Normalize all results
     return activity.map((item) => {
       if (item.type === 'message') {
         return {
           ...item,
           attachments: attachmentsByMessageId[item.id] ?? [],
+        };
+      }
+      if (item.type === 'call') {
+        return {
+          ...item,
+          voicemails: item.callSid
+            ? (voicemailsByCallSid[item.callSid] ?? [])
+            : [],
         };
       }
       return item;
