@@ -16,6 +16,13 @@ import twilioRoutes from './http/routes/twilio';
 import { auth } from './lib/firebase';
 import { appRouter } from './trpc';
 import { createContext } from './trpc/context';
+
+import { dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 dotenv.config();
 
 console.info('Starting Switchboard Server');
