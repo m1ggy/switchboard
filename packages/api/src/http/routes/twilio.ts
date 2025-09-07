@@ -253,6 +253,8 @@ async function routes(app: FastifyInstance) {
             statusCallback: `${SERVER_DOMAIN}/twilio/voice/conference-events`,
             statusCallbackEvent: ['leave', 'join'],
             statusCallbackMethod: 'POST',
+            waitUrl: `${SERVER_DOMAIN}/twilio/voice/hold-music?companyId=${encodeURIComponent(numberRecord.company_id)}`,
+            waitMethod: 'GET',
           },
           queueRoom
         );
