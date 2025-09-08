@@ -269,8 +269,8 @@ export const InboxesRepository = {
         v.id,
         v.call_sid,
         v.recording_url,
-        v.transcription,
-        v.duration,
+        v.transcription_text,
+        v.duration_secs,
         v.created_at
       FROM voicemails v
       WHERE v.call_sid = ANY($1::text[])
