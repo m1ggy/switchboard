@@ -268,7 +268,7 @@ export const InboxesRepository = {
       SELECT
         v.id,
         v.call_sid,
-        v.media_url,
+        v.recording_url,
         v.transcription,
         v.duration,
         v.created_at
@@ -284,7 +284,7 @@ export const InboxesRepository = {
           if (!acc[row.call_sid]) acc[row.call_sid] = [];
           acc[row.call_sid].push({
             id: row.id,
-            media_url: row.media_url,
+            media_url: row.recording_url,
             transcription: row.transcription ?? null,
             duration: row.duration ?? null,
             created_at: row.created_at,
