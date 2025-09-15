@@ -12,7 +12,6 @@ on:
       - main
       - dev
 
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -59,13 +58,6 @@ jobs:
           echo "Github repository: \$REPO_URL"
           echo "🌍 Domain: \$DOMAIN"
           echo "🛠️ Preparing system dependencies..."
-
-          # === SETUP NODE/PNPM/PM2 ===
-          curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-          sudo apt-get install -y nodejs
-          corepack enable
-          corepack prepare pnpm@latest --activate
-          sudo npm install -g pm2
 
           echo "🔐 Installing Caddy..."
           sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl gnupg
