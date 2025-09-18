@@ -21,6 +21,7 @@ export const inboxesRouter = t.router({
             id: z.string(),
           })
           .nullish(),
+        numberId: z.string(),
       })
     )
     .query(async ({ input }) => {
@@ -32,6 +33,7 @@ export const inboxesRouter = t.router({
           limit,
           cursorCreatedAt: cursor?.createdAt,
           cursorId: cursor?.id,
+          numberId: input.numberId,
         }
       );
 

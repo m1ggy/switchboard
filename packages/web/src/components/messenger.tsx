@@ -96,6 +96,7 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
       {
         contactId: contactId as string,
         limit: 20,
+        numberId: activeNumber?.id as string,
       },
       {
         enabled: !!contactId && !!activeNumber?.id,
