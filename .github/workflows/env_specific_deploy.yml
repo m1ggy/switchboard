@@ -195,7 +195,7 @@ jobs:
 
                 # Make pnpm visible for THIS session
                 export PNPM_HOME="$HOME/.local/share/pnpm"
-                export PATH="$PNPM_HOME:$PATH"
+                export PATH="$PNPM_HOME:/usr/local/bin:/usr/bin:$PATH"
 
 
                 APP_DIR="\$HOME/apps/\$DEPLOY_ENV"
