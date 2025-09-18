@@ -52,13 +52,6 @@ jobs:
           export PNPM_HOME="$HOME/.local/share/pnpm"
           export PATH="$PNPM_HOME:$PATH"
 
-          # If you use Corepack/NVM:
-          command -v corepack >/dev/null || sudo npm i -g corepack
-          corepack enable
-          # optional: corepack prepare pnpm@9 --activate
-          # If Node is via nvm:
-          # . "$HOME/.nvm/nvm.sh"
-
 
           APP_DIR="\$HOME/apps/\$DEPLOY_ENV"
           WEB_ROOT='${{ secrets.WEB_ROOT }}'
