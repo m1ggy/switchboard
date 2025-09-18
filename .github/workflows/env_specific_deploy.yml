@@ -41,99 +41,142 @@ jobs:
 
       - name: Deploy via SSH
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} <<EOF
-          REPO_URL="https://github.com/${{ github.repository }}.git"
-          DEPLOY_ENV="${{ inputs.environment }}"
+          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} <<'EOF'
           set -euo pipefail
 
-          echo "🚀 Starting deployment to environment: \$DEPLOY_ENV"
+          # --- Bring the usual login PATH into this non-login shell (safe no-ops if files don't exist)
+          [ -f "$HOME/.profile" ] && . "$HOME/.profile"
+          [ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"
+          [ -f "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh" || true
 
-          # Make pnpm visible for THIS session
+          # --- Make pnpm shims resolvable even if no profile was sourced
           export PNPM_HOME="$HOME/.local/share/pnpm"
-          export PATH="$PNPM_HOME:$PATH"
+          export PATH="$PNPM_HOME:/usr/local/bin:/usr/bin:$PATH"
 
+          # --- Resolve repo/branch/env
+          REPO_URL="https://github.com/${{ github.repository }}.git"
+          BRANCH_NAME="${{ github.ref_name }}"
+          DEPLOY_ENV="${{ inputs.environment }}"
 
-          APP_DIR="\$HOME/apps/\$DEPLOY_ENV"
+          # Fallback for push events (no workflow_dispatch inputs)
+          if [ -z "${DEPLOY_ENV:-}" ]; then
+            case "$BRANCH_NAME" in
+              main) DEPLOY_ENV="calliya-prod" ;;
+              dev)  DEPLOY_ENV="development" ;;
+              *)    DEPLOY_ENV="development" ;;
+            esac
+          fi
+
+          echo "🚀 Starting deployment to environment: $DEPLOY_ENV"
+
+          APP_DIR="$HOME/apps/$DEPLOY_ENV"
           WEB_ROOT='${{ secrets.WEB_ROOT }}'
           DOMAIN='${{ secrets.DOMAIN_NAME }}'
           API_DOMAIN='${{ secrets.API_DOMAIN }}'
           WEB_DOMAIN='${{ secrets.WEB_DOMAIN }}'
 
-          echo "📦 App directory: \$APP_DIR"
-          echo "Github repository: \$REPO_URL"
-          echo "🌍 Domain: \$DOMAIN"
+          echo "📦 App directory: $APP_DIR"
+          echo "Github repository: $REPO_URL"
+          echo "🌍 Domain: $DOMAIN"
           echo "🛠️ Preparing system dependencies..."
-
           echo "📁 Checking application directory..."
 
-          # === CLONE OR PULL PROJECT ===
-          BRANCH_NAME="${{ github.ref_name }}"
-
-          if [ ! -d "\$APP_DIR/.git" ]; then
-            echo "📥 Cloning repository (branch: \$BRANCH_NAME)..."
-            rm -rf "\$APP_DIR"
-            mkdir -p "\$APP_DIR"
-            git clone --branch \$BRANCH_NAME \$REPO_URL \$APP_DIR
-          else
-            echo "🔄 Pulling latest code from \$BRANCH_NAME..."
-            cd "\$APP_DIR"
-            git fetch origin \$BRANCH_NAME
-            git checkout \$BRANCH_NAME
-            git pull origin \$BRANCH_NAME
+          # --- Ensure pnpm is actually callable in this session
+          if ! command -v pnpm >/dev/null 2>&1; then
+            if command -v corepack >/dev/null 2>&1; then
+              echo "🔧 Enabling Corepack and preparing pnpm…"
+              corepack enable || true
+              corepack prepare pnpm@9 --activate
+            fi
           fi
 
-          echo "🔐 Injecting environment files..."
+          # Final check: bail early with a clear message if still missing
+          if ! command -v pnpm >/dev/null 2>&1; then
+            echo "❌ pnpm not found in PATH for this session. Ensure Node/Corepack or pnpm is installed for user ${USER}, or add it to PATH."
+            echo "   Tried PNPM_HOME=$PNPM_HOME and sourced common profiles."
+            exit 1
+          fi
 
-          # Clean and write .env files
-          rm -f "\$APP_DIR/packages/api/.env"
-          echo '${{ secrets.API_ENV_FILE }}' > "\$APP_DIR/packages/api/.env"
+          # --- Ensure pm2 exists (user-space install, no sudo)
+          if ! command -v pm2 >/dev/null 2>&1; then
+            echo "🔧 Installing pm2 to user prefix with pnpm…"
+            pnpm add -g pm2
+            hash -r
+          fi
+          # If the shim didn't register in PATH yet, use absolute
+          PM2_BIN="$(command -v pm2 || true)"
+          if [ -z "$PM2_BIN" ] && [ -x "$PNPM_HOME/pm2" ]; then
+            PM2_BIN="$PNPM_HOME/pm2"
+          fi
+          if [ -z "$PM2_BIN" ]; then
+            echo "❌ pm2 could not be found even after install."
+            exit 1
+          fi
 
-          rm -f "\$APP_DIR/packages/web/.env"
-          echo "${{ secrets.WEB_ENV_FILE }}" > "\$APP_DIR/packages/web/.env"
-          echo '${{ secrets.FIREBASE_JSON }}' > "\$APP_DIR/packages/api/firebase.json"
-          echo '${{ secrets.BUCKET_GC_JSON }}' > "\$APP_DIR/packages/api/bucket.json"
+          # === CLONE OR PULL PROJECT ===
+          if [ ! -d "$APP_DIR/.git" ]; then
+            echo "📥 Cloning repository (branch: $BRANCH_NAME)…"
+            rm -rf "$APP_DIR"
+            mkdir -p "$APP_DIR"
+            git clone --branch "$BRANCH_NAME" "$REPO_URL" "$APP_DIR"
+          else
+            echo "🔄 Pulling latest code from $BRANCH_NAME…"
+            cd "$APP_DIR"
+            git fetch origin "$BRANCH_NAME"
+            git checkout "$BRANCH_NAME"
+            git pull origin "$BRANCH_NAME"
+          fi
 
-          echo "📦 Installing dependencies..."
-          cd "\$APP_DIR"
+          echo "🔐 Injecting environment files…"
+          rm -f "$APP_DIR/packages/api/.env"
+          echo '${{ secrets.API_ENV_FILE }}' > "$APP_DIR/packages/api/.env"
+
+          rm -f "$APP_DIR/packages/web/.env"
+          echo "${{ secrets.WEB_ENV_FILE }}" > "$APP_DIR/packages/web/.env"
+          echo '${{ secrets.FIREBASE_JSON }}' > "$APP_DIR/packages/api/firebase.json"
+          echo '${{ secrets.BUCKET_GC_JSON }}' > "$APP_DIR/packages/api/bucket.json"
+
+          echo "📦 Installing dependencies…"
+          cd "$APP_DIR"
           pnpm install --frozen-lockfile
 
           # === BUILD WEB ===
-          echo "🛠️ Building Web..."
-          cd "\$APP_DIR/packages/web"
+          echo "🛠️ Building Web…"
+          cd "$APP_DIR/packages/web"
           NODE_OPTIONS="--max-old-space-size=1024" pnpm run build
 
           if [ -f "dist/index.html" ]; then
             echo "✅ Web build succeeded."
-            sudo mkdir -p "\$WEB_ROOT"
-            sudo cp -r dist/* "\$WEB_ROOT/"
-            echo "🚚 Deployed web files to \$WEB_ROOT"
+            sudo mkdir -p "$WEB_ROOT"
+            sudo cp -r dist/* "$WEB_ROOT/"
+            echo "🚚 Deployed web files to $WEB_ROOT"
           else
             echo "❌ Web build failed — dist/index.html not found."
           fi
 
           # === BUILD & RUN API ===
-          echo "🛠️ Building API..."
-          cd "\$APP_DIR/packages/api"
+          echo "🛠️ Building API…"
+          cd "$APP_DIR/packages/api"
           NODE_OPTIONS="--max-old-space-size=1024" pnpm run build
 
-          if [ -f "\$APP_DIR/packages/api/dist/index.mjs" ]; then
-            echo "🚀 Starting API with PM2..."
-            pm2 delete api-\$DEPLOY_ENV || true
-            pm2 start dist/index.mjs --name api-\$DEPLOY_ENV --interpreter node
+          if [ -f "$APP_DIR/packages/api/dist/index.mjs" ]; then
+            echo "🚀 Starting API with PM2…"
+            "$PM2_BIN" delete "api-$DEPLOY_ENV" || true
+            "$PM2_BIN" start dist/index.mjs --name "api-$DEPLOY_ENV" --interpreter node
           else
             echo "❌ API build failed — index.mjs not found."
           fi
 
           # === CADDY CONFIG ===
-          echo "🧾 Configuring Caddy..."
+          echo "🧾 Configuring Caddy…"
           sudo tee /etc/caddy/Caddyfile > /dev/null <<EOC
-          \$DOMAIN {
-            root * \$WEB_ROOT
+          $DOMAIN {
+            root * $WEB_ROOT
             file_server
             try_files {path} /index.html
           }
 
-          \$API_DOMAIN {
+          $API_DOMAIN {
             reverse_proxy localhost:3000
           }
           EOC
@@ -141,3 +184,105 @@ jobs:
           sudo systemctl reload caddy
           echo "✅ Deployment complete!"
           EOF
+
+              run: |
+                ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} <<EOF
+                REPO_URL="https://github.com/${{ github.repository }}.git"
+                DEPLOY_ENV="${{ inputs.environment }}"
+                set -euo pipefail
+
+                echo "🚀 Starting deployment to environment: \$DEPLOY_ENV"
+
+                # Make pnpm visible for THIS session
+                export PNPM_HOME="$HOME/.local/share/pnpm"
+                export PATH="$PNPM_HOME:$PATH"
+
+
+                APP_DIR="\$HOME/apps/\$DEPLOY_ENV"
+                WEB_ROOT='${{ secrets.WEB_ROOT }}'
+                DOMAIN='${{ secrets.DOMAIN_NAME }}'
+                API_DOMAIN='${{ secrets.API_DOMAIN }}'
+                WEB_DOMAIN='${{ secrets.WEB_DOMAIN }}'
+
+                echo "📦 App directory: \$APP_DIR"
+                echo "Github repository: \$REPO_URL"
+                echo "🌍 Domain: \$DOMAIN"
+                echo "🛠️ Preparing system dependencies..."
+
+                echo "📁 Checking application directory..."
+
+                # === CLONE OR PULL PROJECT ===
+                BRANCH_NAME="${{ github.ref_name }}"
+
+                if [ ! -d "\$APP_DIR/.git" ]; then
+                  echo "📥 Cloning repository (branch: \$BRANCH_NAME)..."
+                  rm -rf "\$APP_DIR"
+                  mkdir -p "\$APP_DIR"
+                  git clone --branch \$BRANCH_NAME \$REPO_URL \$APP_DIR
+                else
+                  echo "🔄 Pulling latest code from \$BRANCH_NAME..."
+                  cd "\$APP_DIR"
+                  git fetch origin \$BRANCH_NAME
+                  git checkout \$BRANCH_NAME
+                  git pull origin \$BRANCH_NAME
+                fi
+
+                echo "🔐 Injecting environment files..."
+
+                # Clean and write .env files
+                rm -f "\$APP_DIR/packages/api/.env"
+                echo '${{ secrets.API_ENV_FILE }}' > "\$APP_DIR/packages/api/.env"
+
+                rm -f "\$APP_DIR/packages/web/.env"
+                echo "${{ secrets.WEB_ENV_FILE }}" > "\$APP_DIR/packages/web/.env"
+                echo '${{ secrets.FIREBASE_JSON }}' > "\$APP_DIR/packages/api/firebase.json"
+                echo '${{ secrets.BUCKET_GC_JSON }}' > "\$APP_DIR/packages/api/bucket.json"
+
+                echo "📦 Installing dependencies..."
+                cd "\$APP_DIR"
+                pnpm install --frozen-lockfile
+
+                # === BUILD WEB ===
+                echo "🛠️ Building Web..."
+                cd "\$APP_DIR/packages/web"
+                NODE_OPTIONS="--max-old-space-size=1024" pnpm run build
+
+                if [ -f "dist/index.html" ]; then
+                  echo "✅ Web build succeeded."
+                  sudo mkdir -p "\$WEB_ROOT"
+                  sudo cp -r dist/* "\$WEB_ROOT/"
+                  echo "🚚 Deployed web files to \$WEB_ROOT"
+                else
+                  echo "❌ Web build failed — dist/index.html not found."
+                fi
+
+                # === BUILD & RUN API ===
+                echo "🛠️ Building API..."
+                cd "\$APP_DIR/packages/api"
+                NODE_OPTIONS="--max-old-space-size=1024" pnpm run build
+
+                if [ -f "\$APP_DIR/packages/api/dist/index.mjs" ]; then
+                  echo "🚀 Starting API with PM2..."
+                  pm2 delete api-\$DEPLOY_ENV || true
+                  pm2 start dist/index.mjs --name api-\$DEPLOY_ENV --interpreter node
+                else
+                  echo "❌ API build failed — index.mjs not found."
+                fi
+
+                # === CADDY CONFIG ===
+                echo "🧾 Configuring Caddy..."
+                sudo tee /etc/caddy/Caddyfile > /dev/null <<EOC
+                \$DOMAIN {
+                  root * \$WEB_ROOT
+                  file_server
+                  try_files {path} /index.html
+                }
+
+                \$API_DOMAIN {
+                  reverse_proxy localhost:3000
+                }
+                EOC
+
+                sudo systemctl reload caddy
+                echo "✅ Deployment complete!"
+                EOF
