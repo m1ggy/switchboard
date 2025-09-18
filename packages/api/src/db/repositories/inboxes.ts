@@ -108,7 +108,7 @@ export const InboxesRepository = {
       limit = 50,
       cursorCreatedAt,
       cursorId,
-      numberId, // ⬅️ new optional filter
+      numberId, // optional filter
     }: {
       limit?: number;
       cursorCreatedAt?: string;
@@ -233,8 +233,76 @@ export const InboxesRepository = {
       callSid?: string | null;
     }>;
 
-    // 🧩 Rest of enrichment logic unchanged...
-    // (attachmentsByMessageId + voicemailsByCallSid + mapping)
+    // 🧩 Collect IDs for enrichment
+    const messageIds = activity
+      .filter((item) => item.type === 'message')
+      .map((item) => item.id);
+
+    const callSids = activity
+      .filter((item) => item.type === 'call' && item.callSid)
+      .map((item) => item.callSid!) as string[];
+
+    // === MMS attachments by message_id ===
+    let attachmentsByMessageId: Record<string, any[]> = {};
+    if (messageIds.length > 0) {
+      const res = await pool.query(
+        `
+      SELECT id, message_id, media_url, content_type, file_name
+      FROM media_attachments
+      WHERE message_id = ANY($1::uuid[])
+      `,
+        [messageIds]
+      );
+
+      attachmentsByMessageId = res.rows.reduce(
+        (acc, row) => {
+          if (!acc[row.message_id]) acc[row.message_id] = [];
+          acc[row.message_id].push({
+            id: row.id,
+            media_url: row.media_url,
+            content_type: row.content_type,
+            file_name: row.file_name,
+          });
+          return acc;
+        },
+        {} as Record<string, any[]>
+      );
+    }
+
+    // === Voicemails by call_sid (NOT call id) ===
+    let voicemailsByCallSid: Record<string, any[]> = {};
+    if (callSids.length > 0) {
+      const res = await pool.query(
+        `
+      SELECT
+        v.id,
+        v.call_sid,
+        v.recording_url,
+        v.transcription_text,
+        v.duration_secs,
+        v.created_at
+      FROM voicemails v
+      WHERE v.call_sid = ANY($1::text[])
+      ORDER BY v.created_at DESC, v.id DESC
+      `,
+        [callSids]
+      );
+
+      voicemailsByCallSid = res.rows.reduce(
+        (acc, row) => {
+          if (!acc[row.call_sid]) acc[row.call_sid] = [];
+          acc[row.call_sid].push({
+            id: row.id,
+            media_url: row.recording_url,
+            transcription: row.transcription_text ?? null,
+            duration: row.duration_secs ?? null,
+            created_at: row.created_at,
+          });
+          return acc;
+        },
+        {} as Record<string, any[]>
+      );
+    }
 
     // 🔁 Normalize all results
     return activity.map((item) => {
