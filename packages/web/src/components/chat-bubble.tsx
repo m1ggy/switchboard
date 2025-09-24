@@ -1,6 +1,6 @@
 /* eslint-disable*/
 import { formatDurationWithDateFns } from '@/lib/utils';
-import { FileText, Phone, Printer } from 'lucide-react';
+import { FileText, Phone, Printer, Voicemail } from 'lucide-react';
 import { useState } from 'react';
 
 type Attachment = {
@@ -8,6 +8,14 @@ type Attachment = {
   media_url: string;
   id: string;
   content_type: string;
+};
+
+type Voicemail = {
+  id: string;
+  media_url: string;
+  transcription?: string | null;
+  duration?: number | null;
+  created_at: string;
 };
 
 type ChatBubbleProps = {
@@ -25,6 +33,9 @@ type ChatBubbleProps = {
     pages?: number;
     faxStatus?: 'completed' | 'failed' | 'in-progress';
     mediaUrl?: string; // for faxes
+    // 🆕 voicemails for calls
+    callSid?: string;
+    voicemails?: Voicemail[];
   };
   setFiles: (files: Attachment[]) => void;
   setIndex: (index: number) => void;
@@ -134,12 +145,76 @@ function ChatBubble({
           </span>
         )}
 
-        {item.type === 'call' && (
+        {/* Calls (incl. regular calls without voicemail) */}
+        {item.type === 'call' && !item.voicemails?.length && (
           <span className="break-words whitespace-pre-wrap flex gap-1 items-center font-bold">
-            <Phone className="w-4 h-4" /> Call —{' '}
-            {formatDurationWithDateFns(item.duration ?? 0)}
+            <Phone className="w-4 h-4" /> Call{' '}
+            {typeof item.duration === 'number' && (
+              <>— {formatDurationWithDateFns(item.duration ?? 0)}</>
+            )}
+            {item.meta?.status && (
+              <span className="text-xs font-normal opacity-75 ml-2">
+                ({item.meta.status})
+              </span>
+            )}
           </span>
         )}
+
+        {/* 🆕 Calls with Voicemails */}
+        {item.type === 'call' && item.voicemails?.length ? (
+          <div className="flex flex-col gap-2">
+            <span className="break-words whitespace-pre-wrap flex gap-1 items-center font-bold">
+              <Voicemail className="w-4 h-4" /> Voicemail
+              {item.voicemails.length > 1 && (
+                <span className="text-sm font-normal">
+                  — {item.voicemails.length} messages
+                </span>
+              )}
+            </span>
+
+            <div className="flex flex-col gap-3">
+              {item.voicemails.map((vm) => (
+                <div
+                  key={vm.id}
+                  className={`rounded-md p-2 ${
+                    isOutbound ? 'bg-white/10' : 'bg-gray-100'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <audio
+                      className="w-full"
+                      controls
+                      preload="none"
+                      src={vm.media_url}
+                    />
+                  </div>
+
+                  <div className="mt-1 text-xs opacity-80 flex items-center justify-between">
+                    <span>
+                      {typeof vm.duration === 'number'
+                        ? formatDurationWithDateFns(vm.duration || 0)
+                        : '—'}
+                    </span>
+                    <span>
+                      {new Date(vm.created_at).toLocaleString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        month: 'short',
+                        day: '2-digit',
+                      })}
+                    </span>
+                  </div>
+
+                  {vm.transcription && (
+                    <p className="mt-2 text-sm leading-snug">
+                      {vm.transcription}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         {item.type === 'fax' && (
           <div className="flex flex-col gap-2">
@@ -185,6 +260,8 @@ function ChatBubble({
           </div>
         )}
       </div>
+
+      {/* existing timestamp for the bubble */}
       <span className="text-[10px] text-muted-foreground mt-1">
         {new Date(item.createdAt).toLocaleTimeString([], {
           minute: '2-digit',
