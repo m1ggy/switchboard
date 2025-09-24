@@ -1,6 +1,7 @@
 import { cn } from '@/lib/utils';
+import { tz } from '@date-fns/tz';
 import type { InboxWithDetails } from 'api/types/db';
-import { formatDistance } from 'date-fns';
+import { formatDistanceToNow } from 'date-fns';
 import { Badge } from './ui/badge';
 
 interface InboxItemProps {
@@ -9,19 +10,35 @@ interface InboxItemProps {
   onSelect: () => void;
 }
 
+/**
+ * Parse an ISO timestamp that represents UTC even if it lacks a Z/offset.
+ * Example: "2025-09-24T05:05:04.19" -> treat as UTC by appending Z.
+ */
+function parseUtcIso(iso: string): Date {
+  const trimmed = iso.trim();
+  const hasZone = /Z|[+-]\d{2}:\d{2}$/.test(trimmed);
+  return new Date(hasZone ? trimmed : `${trimmed}Z`);
+}
+
 export function InboxItem({ inbox, isSelected, onSelect }: InboxItemProps) {
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const inTZ = tz(timeZone);
+
   const lastMessageDate = inbox.lastMessage
-    ? new Date(inbox.lastMessage.created_at as string)
+    ? parseUtcIso(inbox.lastMessage.created_at as string)
     : null;
 
   const lastCallDate = inbox.lastCall
-    ? new Date(inbox.lastCall.initiated_at as string)
+    ? parseUtcIso(inbox.lastCall.initiated_at as string)
     : null;
 
   let latestActivity: 'message' | 'call' | null = null;
   let latestDate: Date | null = null;
 
-  if (lastMessageDate && (!lastCallDate || lastMessageDate > lastCallDate)) {
+  if (
+    lastMessageDate &&
+    (!lastCallDate || lastMessageDate.getTime() > lastCallDate.getTime())
+  ) {
     latestActivity = 'message';
     latestDate = lastMessageDate;
   } else if (lastCallDate) {
@@ -57,7 +74,11 @@ export function InboxItem({ inbox, isSelected, onSelect }: InboxItemProps) {
 
       {latestDate && (
         <span className="text-xs text-muted-foreground text-right">
-          {formatDistance(latestDate, new Date(), { addSuffix: true })}
+          {formatDistanceToNow(latestDate, {
+            addSuffix: true,
+            // Key: compute the distance *in* the user's timezone
+            in: inTZ,
+          })}
         </span>
       )}
     </div>
