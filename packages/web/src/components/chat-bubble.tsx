@@ -1,7 +1,15 @@
 /* eslint-disable*/
 import { formatDurationWithDateFns } from '@/lib/utils';
-import { FileText, Phone, Printer, Voicemail } from 'lucide-react';
-import { useState } from 'react';
+import {
+  Download,
+  FileText,
+  Pause,
+  Phone,
+  Play,
+  Printer,
+  Voicemail as VoicemailIcon,
+} from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 type Attachment = {
   file_name: string;
@@ -33,16 +41,174 @@ type ChatBubbleProps = {
     pages?: number;
     faxStatus?: 'completed' | 'failed' | 'in-progress';
     mediaUrl?: string; // for faxes
-    // 🆕 voicemails for calls
     callSid?: string;
     voicemails?: Voicemail[];
   };
   setFiles: (files: Attachment[]) => void;
   setIndex: (index: number) => void;
   setOpen: (open: boolean) => void;
-  onPreviewFax?: (url: string) => void; // 🆕 new prop
+  onPreviewFax?: (url: string) => void;
 };
 
+function secondsToMMSS(s: number) {
+  const mm = Math.floor(s / 60)
+    .toString()
+    .padStart(2, '0');
+  const ss = Math.floor(s % 60)
+    .toString()
+    .padStart(2, '0');
+  return `${mm}:${ss}`;
+}
+
+/** --- Pretty Voicemail Card ------------------------------------------------ */
+function VoicemailCard({
+  vm,
+  subtle,
+}: {
+  vm: Voicemail;
+  subtle?: boolean; // use light bg when bubble is outbound
+}) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [progress, setProgress] = useState(0); // 0..1
+  const [elapsed, setElapsed] = useState(0); // seconds
+  const total = vm.duration ?? 0;
+
+  // load metadata to know duration when server doesn't include it
+  const [duration, setDuration] = useState<number>(total);
+
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a) return;
+
+    const onTime = () => {
+      setElapsed(a.currentTime);
+      const d = a.duration || duration || total || 1;
+      setProgress(a.currentTime / d);
+    };
+    const onLoaded = () => setDuration(a.duration || duration || total);
+    const onEnd = () => {
+      setIsPlaying(false);
+      setProgress(0);
+      setElapsed(0);
+    };
+
+    a.addEventListener('timeupdate', onTime);
+    a.addEventListener('loadedmetadata', onLoaded);
+    a.addEventListener('ended', onEnd);
+    return () => {
+      a.removeEventListener('timeupdate', onTime);
+      a.removeEventListener('loadedmetadata', onLoaded);
+      a.removeEventListener('ended', onEnd);
+    };
+  }, [duration, total]);
+
+  const toggle = async () => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (isPlaying) {
+      a.pause();
+      setIsPlaying(false);
+    } else {
+      await a.play();
+      setIsPlaying(true);
+    }
+  };
+
+  const onSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const a = audioRef.current;
+    if (!a) return;
+    const pct = Number(e.target.value);
+    const d = a.duration || duration || total || 1;
+    a.currentTime = (pct / 100) * d;
+    setProgress(pct / 100);
+  };
+
+  const stamp = useMemo(
+    () =>
+      new Date(vm.created_at).toLocaleString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        month: 'short',
+        day: '2-digit',
+      }),
+    [vm.created_at]
+  );
+
+  const cardBg = subtle ? 'bg-white/10' : 'bg-gray-50';
+  const ringColor = subtle ? 'ring-white/20' : 'ring-black/5';
+  const textMuted = subtle ? 'text-white/70' : 'text-gray-500';
+
+  return (
+    <div className={`rounded-xl p-3 ${cardBg} ring-1 ${ringColor}`}>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-black/10">
+            <VoicemailIcon className="w-3.5 h-3.5" />
+          </span>
+          <span className="font-semibold">Voicemail</span>
+          <span
+            className={`ml-2 px-1.5 py-0.5 text-[11px] rounded bg-black/10 ${textMuted}`}
+            title="Duration"
+          >
+            {secondsToMMSS(duration || total || 0)}
+          </span>
+        </div>
+        <a
+          href={vm.media_url}
+          download
+          className={`inline-flex items-center gap-1 text-xs ${textMuted} hover:opacity-80`}
+          title="Download"
+        >
+          <Download className="w-3.5 h-3.5" />
+          Download
+        </a>
+      </div>
+
+      {/* Player */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={toggle}
+          className={`h-9 w-9 rounded-full flex items-center justify-center ring-1 ${ringColor} bg-white/70 hover:bg-white transition`}
+          aria-label={isPlaying ? 'Pause' : 'Play'}
+        >
+          {isPlaying ? (
+            <Pause className="w-4 h-4" />
+          ) : (
+            <Play className="w-4 h-4" />
+          )}
+        </button>
+
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={Math.round(progress * 100)}
+          onChange={onSeek}
+          className="flex-1 accent-current"
+          aria-label="Seek"
+        />
+
+        <div className={`w-20 text-right text-xs tabular-nums ${textMuted}`}>
+          {secondsToMMSS(elapsed)} / {secondsToMMSS(duration || total || 0)}
+        </div>
+
+        {/* Hidden native element */}
+        <audio ref={audioRef} preload="none" src={vm.media_url} />
+      </div>
+
+      {/* Footer */}
+      <div className={`mt-2 text-xs ${textMuted}`}>{stamp}</div>
+
+      {vm.transcription && (
+        <p className="mt-2 text-sm leading-snug">{vm.transcription}</p>
+      )}
+    </div>
+  );
+}
+
+/** --- Main bubble ---------------------------------------------------------- */
 function ChatBubble({
   item,
   setFiles,
@@ -59,8 +225,6 @@ function ChatBubble({
 
   const imageAttachments =
     item.attachments?.filter((a) => a.content_type?.startsWith('image/')) || [];
-  const pdfAttachments =
-    item.attachments?.filter((a) => a.content_type === 'application/pdf') || [];
   const previewImages = imageAttachments.slice(0, 3);
   const remainingCount = imageAttachments.length - 3;
 
@@ -69,7 +233,6 @@ function ChatBubble({
   const handleImageLoad = (id: string) => {
     setLoadingMap((prev) => ({ ...prev, [id]: false }));
   };
-
   const handleImageStart = (id: string) => {
     setLoadingMap((prev) => ({ ...prev, [id]: true }));
   };
@@ -86,7 +249,6 @@ function ChatBubble({
         return '';
     }
   };
-
   const getFaxStatusText = (status?: string) => {
     switch (status) {
       case 'completed':
@@ -103,6 +265,7 @@ function ChatBubble({
   return (
     <div key={item.id} className={`flex flex-col gap-1 ${alignClass}`}>
       <div className={`max-w-xs px-4 py-3 rounded-2xl ${bubbleClass}`}>
+        {/* image previews */}
         {previewImages.length > 0 && (
           <div className="flex gap-2 mt-1 mb-2">
             {previewImages.map((img, index) => (
@@ -139,13 +302,14 @@ function ChatBubble({
           </div>
         )}
 
+        {/* text message */}
         {item.type === 'message' && (
           <span className="break-words whitespace-pre-wrap">
             {item.message}
           </span>
         )}
 
-        {/* Calls (incl. regular calls without voicemail) */}
+        {/* plain call (no voicemail) */}
         {item.type === 'call' && !item.voicemails?.length && (
           <span className="break-words whitespace-pre-wrap flex gap-1 items-center font-bold">
             <Phone className="w-4 h-4" /> Call{' '}
@@ -160,62 +324,16 @@ function ChatBubble({
           </span>
         )}
 
-        {/* 🆕 Calls with Voicemails */}
+        {/* pretty voicemails */}
         {item.type === 'call' && item.voicemails?.length ? (
-          <div className="flex flex-col gap-2">
-            <span className="break-words whitespace-pre-wrap flex gap-1 items-center font-bold">
-              <Voicemail className="w-4 h-4" /> Voicemail
-              {item.voicemails.length > 1 && (
-                <span className="text-sm font-normal">
-                  — {item.voicemails.length} messages
-                </span>
-              )}
-            </span>
-
-            <div className="flex flex-col gap-3">
-              {item.voicemails.map((vm) => (
-                <div
-                  key={vm.id}
-                  className={`rounded-md p-2 ${
-                    isOutbound ? 'bg-white/10' : 'bg-gray-100'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <audio
-                      className="w-full"
-                      controls
-                      preload="none"
-                      src={vm.media_url}
-                    />
-                  </div>
-
-                  <div className="mt-1 text-xs opacity-80 flex items-center justify-between">
-                    <span>
-                      {typeof vm.duration === 'number'
-                        ? formatDurationWithDateFns(vm.duration || 0)
-                        : '—'}
-                    </span>
-                    <span>
-                      {new Date(vm.created_at).toLocaleString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        month: 'short',
-                        day: '2-digit',
-                      })}
-                    </span>
-                  </div>
-
-                  {vm.transcription && (
-                    <p className="mt-2 text-sm leading-snug">
-                      {vm.transcription}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
+          <div className="flex flex-col gap-3">
+            {item.voicemails.map((vm) => (
+              <VoicemailCard key={vm.id} vm={vm} subtle={isOutbound} />
+            ))}
           </div>
         ) : null}
 
+        {/* fax */}
         {item.type === 'fax' && (
           <div className="flex flex-col gap-2">
             <span className="break-words whitespace-pre-wrap flex gap-1 items-center font-bold">
@@ -227,7 +345,6 @@ function ChatBubble({
               )}
             </span>
 
-            {/* PDF Preview Trigger */}
             {item.mediaUrl && (
               <div
                 className={`flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors ${
@@ -235,8 +352,7 @@ function ChatBubble({
                     ? 'bg-white/10 hover:bg-white/20'
                     : 'bg-gray-100 hover:bg-gray-200'
                 }`}
-                // @ts-ignore
-                onClick={() => onPreviewFax?.(item.mediaUrl)}
+                onClick={() => onPreviewFax?.(item.mediaUrl!)}
               >
                 <FileText className="w-4 h-4 flex-shrink-0" />
                 <div className="flex-1 min-w-0">
@@ -261,7 +377,6 @@ function ChatBubble({
         )}
       </div>
 
-      {/* existing timestamp for the bubble */}
       <span className="text-[10px] text-muted-foreground mt-1">
         {new Date(item.createdAt).toLocaleTimeString([], {
           minute: '2-digit',
