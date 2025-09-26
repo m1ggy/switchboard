@@ -118,7 +118,6 @@ async function routes(app: FastifyInstance) {
             actionOnEmptyResult: true,
           })
           .say(
-            { voice: 'Polly.Joanna', language: 'en-US' },
             `Thank you for calling ${companyName}. Press 1 to speak with an agent. Or, if you'd like to send a fax, please stay on the line.`
           );
 
