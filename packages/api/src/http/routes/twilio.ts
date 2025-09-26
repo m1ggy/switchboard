@@ -104,6 +104,11 @@ async function routes(app: FastifyInstance) {
       }
 
       if (isInbound && !hasPassedIVR) {
+        const company = await UserCompaniesRepository.findCompanyById(
+          numberRecord.company_id
+        );
+        const companyName = company?.name ?? 'our company';
+
         response
           .gather({
             numDigits: 1,
@@ -112,8 +117,10 @@ async function routes(app: FastifyInstance) {
             method: 'POST',
             actionOnEmptyResult: true,
           })
+          .pause({ length: 1 })
           .say(
-            'Press 1 to speak to an agent. Otherwise, please hold to send a fax.'
+            { voice: 'Polly.Joanna', language: 'en-US' },
+            `Thank you for calling ${companyName}. Press 1 to speak with an agent. Or, if you'd like to send a fax, please stay on the line.`
           );
 
         return reply.type('text/xml').status(200).send(response.toString());
@@ -291,12 +298,41 @@ async function routes(app: FastifyInstance) {
   );
 
   app.get('/voice/hold-music', async (req, reply) => {
+    const { companyId } = req.query as Record<string, string>;
     const r = new twiml.VoiceResponse();
 
-    r.play(
-      { loop: 1 },
-      `${process.env.SERVER_DOMAIN}/audio/marketing_audio.mp3`
-    );
+    const company = (await UserCompaniesRepository.findCompanyById(companyId))!;
+
+    let greetingSound = `${process.env.SERVER_DOMAIN}/audio/marketing_audio.mp3`;
+
+    switch (company.name) {
+      case 'Ace Home Care Inc': {
+        greetingSound = `${process.env.SERVER_DOMAIN}/audio/marketing_audio_acehomecare.mp3`;
+        break;
+      }
+      case 'Ace Home Care Franchise': {
+        greetingSound = `${process.env.SERVER_DOMAIN}/audio/marketing_audio_acehomecarefranchise.mp3`;
+        break;
+      }
+      case 'CTK Advisors': {
+        greetingSound = `${process.env.SERVER_DOMAIN}/audio/marketing_audio_ctkadvisors.mp3`;
+        break;
+      }
+      case 'Carejou': {
+        greetingSound = `${process.env.SERVER_DOMAIN}/audio/marketing_audio_carejou.mp3`;
+        break;
+      }
+      case 'Calliya': {
+        greetingSound = `${process.env.SERVER_DOMAIN}/audio/marketing_audio_calliya.mp3`;
+        break;
+      }
+      case 'Tech Fellow LLC': {
+        greetingSound = `${process.env.SERVER_DOMAIN}/audio/marketing_audio_techfellow.mp3`;
+        break;
+      }
+    }
+
+    r.play({ loop: 1 }, greetingSound);
     r.play({ loop: 1 }, `${process.env.SERVER_DOMAIN}/audio/music1.mp3`);
 
     return reply.type('text/xml').status(200).send(r.toString());
@@ -400,9 +436,6 @@ async function routes(app: FastifyInstance) {
       transcriptionText: null,
       transcriptionStatus: 'pending',
     });
-
-    // If you added a separate GCS column in your schema, you could also update here:
-    // await VoicemailsRepository.setStorageUrls(voicemail.id, { gcsUrl, twilioUrl: twilioMp3Url });
 
     // Notify UI
     await notifyNewVoicemail({
