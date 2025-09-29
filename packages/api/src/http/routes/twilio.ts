@@ -117,6 +117,7 @@ async function routes(app: FastifyInstance) {
             method: 'POST',
             actionOnEmptyResult: true,
           })
+          .pause({ length: 1 })
           .say(
             {
               voice: 'Polly.Amy',
