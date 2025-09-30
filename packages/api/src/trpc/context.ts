@@ -23,13 +23,10 @@ export async function createContext({
     }
   }
 
-  console.log('FIREBASE USER: ', user);
-
   const userInfo = user
     ? await UsersRepository.findByFirebaseUid(user.uid)
     : null;
 
-  console.log('USER: ', JSON.stringify({ userInfo }, null, 2));
   if (!user) throw new Error('User does not exist');
 
   return { user, userInfo };

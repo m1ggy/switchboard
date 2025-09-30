@@ -50,7 +50,6 @@ export const UsersRepository = {
       [uid]
     );
 
-    console.log({ res });
     return res.rows[0] || null;
   },
 

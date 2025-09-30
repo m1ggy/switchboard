@@ -149,6 +149,7 @@ export default function FaxSendDialog({
     client.invalidateQueries({
       queryKey: trpc.inboxes.getActivityByContact.infiniteQueryOptions({
         contactId,
+        numberId: activeNumber?.id as string,
       }).queryKey,
     });
     onOpenChange(false);
