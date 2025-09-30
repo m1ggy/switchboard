@@ -22,6 +22,7 @@ import { TwilioClient } from '@/lib/twilio';
 import axios from 'axios';
 import crypto, { randomUUID } from 'crypto';
 import { FastifyReply, FastifyRequest, type FastifyInstance } from 'fastify';
+import path from 'path';
 import twilio from 'twilio';
 import { authMiddleware } from '../middlewares/auth';
 
@@ -39,6 +40,25 @@ function fullUrl(req: FastifyRequest) {
   const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol;
   const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
   return `${proto}://${host}${req.raw.url}`;
+}
+
+const TWILIO_AUDIO_EXTS = new Set([
+  '.mp3',
+  '.wav',
+  '.wave',
+  '.aiff',
+  '.aifc',
+  '.gsm',
+  '.ulaw',
+]);
+
+function extFromUrlOrName(urlOrName: string) {
+  try {
+    const u = new URL(urlOrName);
+    return path.extname(u.pathname || '').toLowerCase();
+  } catch {
+    return path.extname(urlOrName || '').toLowerCase();
+  }
 }
 
 export async function verifyTwilioRequest(
@@ -309,39 +329,31 @@ async function routes(app: FastifyInstance) {
     const { companyId } = req.query as Record<string, string>;
     const r = new twiml.VoiceResponse();
 
-    const company = (await UserCompaniesRepository.findCompanyById(companyId))!;
-
-    let greetingSound = `${process.env.SERVER_DOMAIN}/audio/marketing_audio.mp3`;
-
-    switch (company.name) {
-      case 'Ace Home Care Inc': {
-        greetingSound = `${process.env.SERVER_DOMAIN}/audio/marketing_audio_acehomecare.mp3`;
-        break;
-      }
-      case 'Ace Home Care Franchise': {
-        greetingSound = `${process.env.SERVER_DOMAIN}/audio/marketing_audio_acehomecarefranchise.mp3`;
-        break;
-      }
-      case 'CTK Advisors': {
-        greetingSound = `${process.env.SERVER_DOMAIN}/audio/marketing_audio_ctkadvisors.mp3`;
-        break;
-      }
-      case 'Carejou': {
-        greetingSound = `${process.env.SERVER_DOMAIN}/audio/marketing_audio_carejou.mp3`;
-        break;
-      }
-      case 'Calliya': {
-        greetingSound = `${process.env.SERVER_DOMAIN}/audio/marketing_audio_calliya.mp3`;
-        break;
-      }
-      case 'Tech Fellow LLC': {
-        greetingSound = `${process.env.SERVER_DOMAIN}/audio/marketing_audio_techfellow.mp3`;
-        break;
-      }
+    if (!companyId) {
+      // Fallback if query is missing
+      r.play({ loop: 1 }, `${SERVER_DOMAIN}/audio/marketing_audio.mp3`);
+      r.play({ loop: 1 }, `${SERVER_DOMAIN}/audio/music1.mp3`);
+      return reply.type('text/xml').status(200).send(r.toString());
     }
 
-    r.play({ loop: 1 }, greetingSound);
-    r.play({ loop: 1 }, `${process.env.SERVER_DOMAIN}/audio/music1.mp3`);
+    // Fetch the company and use its hold_audio_url if present
+    const company = await UserCompaniesRepository.findCompanyById(companyId);
+    const customUrl = (company as any)?.hold_audio_url as
+      | string
+      | null
+      | undefined;
+
+    let firstTrack = `${SERVER_DOMAIN}/audio/marketing_audio.mp3`;
+    if (customUrl && TWILIO_AUDIO_EXTS.has(extFromUrlOrName(customUrl))) {
+      firstTrack = customUrl;
+    }
+
+    // 1) Play the custom (or default) greeting/marketing audio once
+    r.play({ loop: 1 }, firstTrack);
+
+    // 2) Then play your bed music (once, same as your current behavior)
+    //    If you prefer infinite loop here, change loop: 1 -> loop: 0
+    r.play({ loop: 1 }, `${SERVER_DOMAIN}/audio/music1.mp3`);
 
     return reply.type('text/xml').status(200).send(r.toString());
   });
