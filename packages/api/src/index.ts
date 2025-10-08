@@ -112,6 +112,8 @@ app.register(stripeRoutes, { prefix: '/stripe' });
 
 app.listen({ port: 3000 }, () => {
   console.log('API listening on http://localhost:3000');
+  console.log(app.printRoutes());
+
   app.io.use(async (socket, next) => {
     try {
       const token =
@@ -141,6 +143,5 @@ app.listen({ port: 3000 }, () => {
     });
   });
 });
-console.log(app.printRoutes());
 
 export { app };

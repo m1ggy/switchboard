@@ -144,72 +144,71 @@ export const InboxesRepository = {
     }[]
   > {
     const result = await pool.query(
-      `
-    SELECT *
-    FROM (
-      -- 📩 messages
-      SELECT
-        'message' AS type,
-        m.id,
-        m.number_id AS "numberId",
-        m.created_at AS "createdAt",
-        m.direction::text AS direction,
-        m.message,
-        m.status::text AS status,
-        NULL::integer AS duration,
-        NULL::text AS "mediaUrl",
-        (m.meta)::json AS meta,
-        NULL::text AS "callSid"
-      FROM messages m
-      WHERE m.contact_id = $1
-        AND ($5::uuid IS NULL OR m.number_id = $5)
+      `SELECT *
+        FROM (
+          -- messages
+          SELECT
+            'message' AS type,
+            m.id,
+            m.number_id AS "numberId",
+            m.created_at AS "createdAt",
+            m.direction::text AS direction,
+            m.message,
+            m.status::text AS status,
+            NULL::integer AS duration,
+            NULL::text AS "mediaUrl",
+            (m.meta)::json AS meta,
+            NULL::text AS "callSid"
+          FROM messages m
+          WHERE m.contact_id = $1
+            AND ($5::uuid IS NULL OR m.number_id = $5)
 
-      UNION ALL
+          UNION ALL
 
-      -- 📞 calls
-      SELECT
-        'call' AS type,
-        c.id,
-        c.number_id AS "numberId",
-        c.initiated_at AS "createdAt",
-        NULL::text AS direction,
-        NULL::text AS message,
-        NULL::text AS status,
-        c.duration,
-        NULL::text AS "mediaUrl",
-        (c.meta)::json AS meta,
-        c.call_sid AS "callSid"
-      FROM calls c
-      WHERE c.contact_id = $1
-        AND ($5::uuid IS NULL OR c.number_id = $5)
+          -- calls
+          SELECT
+            'call' AS type,
+            c.id,
+            c.number_id AS "numberId",
+            c.initiated_at AS "createdAt",
+            NULL::text AS direction,
+            NULL::text AS message,
+            NULL::text AS status,
+            c.duration,
+            NULL::text AS "mediaUrl",
+            (c.meta)::json AS meta,
+            c.call_sid AS "callSid"
+          FROM calls c
+          WHERE c.contact_id = $1
+            AND ($5::uuid IS NULL OR c.number_id = $5)
 
-      UNION ALL
+          UNION ALL
 
-      -- 📠 faxes
-      SELECT
-        'fax' AS type,
-        f.id,
-        f.number_id AS "numberId",
-        f.initiated_at AS "createdAt",
-        f.direction::text AS direction,
-        NULL::text AS message,
-        f.status::text AS status,
-        NULL::integer AS duration,
-        f.media_url AS "mediaUrl",
-        (f.meta)::json AS meta,
-        NULL::text AS "callSid"
-      FROM faxes f
-      WHERE f.contact_id = $1
-        AND ($5::uuid IS NULL OR f.number_id = $5)
-    ) AS combined
-    WHERE 
-      ($2::timestamp IS NULL OR (
-        "createdAt" < $2
-        OR ("createdAt" = $2 AND id < $3)
-      ))
-    ORDER BY "createdAt" DESC, id DESC
-    LIMIT $4
-    `,
+          -- faxes
+          SELECT
+            'fax' AS type,
+            f.id,
+            f.number_id AS "numberId",
+            COALESCE(f.initiated_at, f.created_at, '1970-01-01'::timestamptz) AS "createdAt",
+            f.direction::text AS direction,
+            NULL::text AS message,
+            f.status::text AS status,
+            NULL::integer AS duration,
+            f.media_url AS "mediaUrl",
+            (f.meta)::json AS meta,
+            NULL::text AS "callSid"
+          FROM faxes f
+          WHERE f.contact_id = $1
+            AND ($5::uuid IS NULL OR f.number_id = $5)
+        ) AS combined
+        WHERE 
+          ($2::timestamptz IS NULL OR (
+            "createdAt" < $2::timestamptz
+            OR ("createdAt" = $2::timestamptz AND id < $3::uuid)
+          ))
+        ORDER BY "createdAt" DESC, id DESC
+        LIMIT $4;
+      `,
       [
         contactId,
         cursorCreatedAt || null,
