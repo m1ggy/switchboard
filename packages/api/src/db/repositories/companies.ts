@@ -112,4 +112,22 @@ export const UserCompaniesRepository = {
 
     return res.rows[0];
   },
+
+  async updateHoldAudio({
+    id,
+    url,
+  }: {
+    id: string;
+    url: string | null;
+  }): Promise<Company | null> {
+    const res = await pool.query<Company>(
+      `UPDATE companies
+      SET hold_audio_url = $2
+      WHERE id = $1
+      RETURNING *`,
+      [id, url]
+    );
+
+    return res.rows[0] ?? null;
+  },
 };

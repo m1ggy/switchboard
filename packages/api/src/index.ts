@@ -19,6 +19,7 @@ import { createContext } from './trpc/context';
 
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
+import companiesRoutes from './http/routes/companies';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -109,6 +110,8 @@ app.register(twilioRoutes, { prefix: '/twilio' });
 app.register(jitsiRoutes, { prefix: '/jitsi' });
 app.register(faxRoutes, { prefix: '/fax' });
 app.register(stripeRoutes, { prefix: '/stripe' });
+
+app.register(companiesRoutes, { prefix: '/companies' });
 
 app.listen({ port: 3000 }, () => {
   console.log('API listening on http://localhost:3000');

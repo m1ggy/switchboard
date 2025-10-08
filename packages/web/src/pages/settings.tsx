@@ -1,17 +1,22 @@
 // src/app/settings/page.tsx
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, ShieldCheck } from 'lucide-react';
+import { Loader2, Settings2, ShieldCheck } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
+import CompanySettingsDialog from '@/components/company-settings-dialog';
 import CreateCompanyDialog from '@/components/create-company-dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useTRPC } from '@/lib/trpc';
+import type { Company } from 'api/types/db';
 
 function Settings() {
   const trpc = useTRPC();
   const qc = useQueryClient();
+
+  const [companySettingOpen, setCompanySettingOpen] = useState(false);
+  const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
 
   const { data: companies, isFetching } = useQuery({
     ...trpc.companies.getUserCompanies.queryOptions(),
@@ -465,6 +470,19 @@ function Settings() {
                           </div>
                         )}
                       </div>
+                      <div>
+                        <Button
+                          variant={'outline'}
+                          onClick={() => {
+                            setSelectedCompany(c);
+                            setCompanySettingOpen(true);
+                          }}
+                        >
+                          {' '}
+                          <Settings2 />
+                          Settings
+                        </Button>
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -481,6 +499,12 @@ function Settings() {
           )}
         </CardContent>
       </Card>
+
+      <CompanySettingsDialog
+        open={companySettingOpen}
+        setOpen={setCompanySettingOpen}
+        company={selectedCompany}
+      />
     </div>
   );
 }
