@@ -4,13 +4,13 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
 import parsePhoneNumberFromString from 'libphonenumber-js';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useForm, type SubmitHandler } from 'react-hook-form';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
 import { getQueryClient } from '@/App';
-import { X } from 'lucide-react';
+import { Paperclip, X } from 'lucide-react';
 import { Button } from './ui/button';
 import {
   Command,
@@ -38,6 +38,15 @@ import {
 import { PhoneInput } from './ui/phone-input';
 import { Textarea } from './ui/textarea';
 
+// MMS-related imports
+import { useAttachmentPrep } from '@/hooks/useAttachmentPrep';
+import AttachmentPreview from './attachment-preview';
+import { Badge } from './ui/badge';
+import { Separator } from './ui/separator';
+
+// Plan feature helper
+import { hasFeature, type PlanName } from '@/lib/utils';
+
 const schema = z.object({
   recipient: z.string().min(1, 'Phone number is required'),
   message: z.string().min(1, 'Message is required'),
@@ -56,6 +65,10 @@ function SendMessageDialog() {
       companyId: activeCompany?.id as string,
     })
   );
+
+  // Get user info for feature checks
+  const { data: userInfo } = useQuery(trpc.users.getUser.queryOptions());
+  const canMMS = hasFeature(userInfo?.selected_plan as PlanName, 'mms');
 
   const { mutateAsync: sendMessage, isPending: sendingMessage } = useMutation(
     trpc.twilio.sendSMS.mutationOptions()
@@ -80,6 +93,18 @@ function SendMessageDialog() {
       message: '',
     },
   });
+
+  // Attachments setup (only used if canMMS)
+  const {
+    attachments,
+    addAttachment,
+    removeAttachment,
+    getBase64Attachments,
+    clearAttachments,
+    totalSize,
+  } = useAttachmentPrep();
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const onSendMessage: SubmitHandler<Schema> = async (data) => {
     try {
@@ -111,10 +136,17 @@ function SendMessageDialog() {
         });
       }
 
+      // Only prepare attachments if MMS is allowed
+      const mappedAttachments =
+        canMMS && attachments.length > 0
+          ? (await getBase64Attachments()).map((b64) => ({ ...b64 }))
+          : undefined;
+
       await sendMessage({
         numberId: activeNumber?.id as string,
         contactId: contact.id,
         body: data.message,
+        attachments: mappedAttachments,
       });
 
       const queryClient = getQueryClient();
@@ -131,6 +163,7 @@ function SendMessageDialog() {
       });
 
       toast.success('Message sent');
+      clearAttachments();
       setSendMessageModalShown(false);
     } catch (error) {
       toast.error('Failed to send message');
@@ -142,7 +175,9 @@ function SendMessageDialog() {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Send new message</DialogTitle>
-          <DialogDescription>Send an SMS to a phone number</DialogDescription>
+          <DialogDescription>
+            Send an {canMMS ? 'SMS or MMS' : 'SMS'} to a phone number
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex gap-2 mb-2">
@@ -257,6 +292,61 @@ function SendMessageDialog() {
                 </FormItem>
               )}
             />
+
+            {/* MMS attachments — only rendered if allowed */}
+            {canMMS && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <FormLabel className="mb-0">Attachments</FormLabel>
+                  {totalSize && (
+                    <Badge title="Total size of all attachments">
+                      {totalSize}/5 MB
+                    </Badge>
+                  )}
+                </div>
+
+                {attachments.length > 0 && (
+                  <>
+                    <Separator />
+                    <div className="grid grid-cols-6 gap-3 overflow-auto pb-2">
+                      {attachments.map((file) => (
+                        <div key={file.id} className="h-24">
+                          <AttachmentPreview
+                            file={file}
+                            onClose={() => removeAttachment(file.id)}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                <div className="flex">
+                  <input
+                    ref={fileInputRef}
+                    id="file-upload"
+                    type="file"
+                    accept="image/*,video/3gpp"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files ?? []);
+                      if (files.length) files.forEach(addAttachment);
+                      e.target.value = '';
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="gap-2"
+                  >
+                    <Paperclip className="w-4 h-4" />
+                    Add Attachments
+                  </Button>
+                </div>
+              </div>
+            )}
           </form>
         </Form>
 
