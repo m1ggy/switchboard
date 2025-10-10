@@ -6,8 +6,9 @@ import {
   Inbox,
   MessageCirclePlus,
   PhoneIcon,
+  Printer,
   Settings,
-  UserPlus,
+  UserPlus, // NEW
   type LucideProps,
 } from 'lucide-react';
 
@@ -30,6 +31,7 @@ import { useTRPC } from '@/lib/trpc';
 import { useQuery } from '@tanstack/react-query';
 import {
   useEffect,
+  useState, // NEW
   type ForwardRefExoticComponent,
   type RefAttributes,
 } from 'react';
@@ -38,7 +40,11 @@ import { NumberSwitcher } from './number-switcher';
 import { useTheme } from './theme-provider';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
+import FaxSendDialog from './ui/fax-send-dialog';
 import { Skeleton } from './ui/skeleton';
+
+// NEW: plan feature helper
+import { hasFeature, type PlanName } from '@/lib/utils';
 
 type SidebarNavItem = {
   title: string;
@@ -104,6 +110,13 @@ function BaseSidebar() {
     setCompanySwitcherDialogShown,
   } = useMainStore();
 
+  // NEW: Fax dialog state
+  const [showFaxDialog, setShowFaxDialog] = useState(false);
+
+  // NEW: plan features (for fax)
+  const { data: userInfo } = useQuery(trpc.users.getUser.queryOptions());
+  const canFax = hasFeature(userInfo?.selected_plan as PlanName, 'fax');
+
   // Fetch companies when there is a user (not based on activeCompany)
   const { data: companies, isFetching: companiesLoading } = useQuery({
     ...trpc.companies.getUserCompanies.queryOptions(),
@@ -112,7 +125,6 @@ function BaseSidebar() {
     enabled: !!user,
   });
 
-  // Normalize/validate activeCompany against the fetched list
   useEffect(() => {
     if (!companiesLoading && companies) {
       const activeIsValid = activeCompany
@@ -120,10 +132,8 @@ function BaseSidebar() {
         : false;
 
       if (!activeIsValid) {
-        // Replace with first available or null
         const next = companies[0] ?? null;
         setActiveCompany(next);
-        // Ensure numbers will be recomputed for the newly selected company
         setActiveNumber(null);
       }
     }
@@ -135,7 +145,6 @@ function BaseSidebar() {
     setActiveNumber,
   ]);
 
-  // Fetch numbers for whichever company is active (after normalization)
   const { data: numbers, isFetching: numbersLoading } = useQuery({
     ...trpc.numbers.getCompanyNumbers.queryOptions({
       companyId: activeCompany?.id as string,
@@ -144,7 +153,6 @@ function BaseSidebar() {
     refetchOnWindowFocus: false,
   });
 
-  // Normalize/validate activeNumber against the fetched numbers
   useEffect(() => {
     if (!numbersLoading && numbers) {
       const activeIsValid = activeNumber
@@ -157,7 +165,6 @@ function BaseSidebar() {
     }
   }, [numbers, numbersLoading, activeNumber, setActiveNumber]);
 
-  // Use the object coming from the numbers list to avoid identity mismatches
   const activeNumberFromList =
     numbers?.find((n) => n.id === activeNumber?.id) ?? null;
 
@@ -173,7 +180,6 @@ function BaseSidebar() {
 
   const theme = useTheme();
 
-  // ------------- IMPORTANT GUARD: wait for hydration -------------
   if (!_rehydrated) {
     return (
       <Sidebar>
@@ -204,7 +210,9 @@ function BaseSidebar() {
             />
           </div>
         </SidebarHeader>
+
         <SidebarSeparator />
+
         {companiesLoading ? (
           <Skeleton className="w-[200px] h-[20px] rounded-full" />
         ) : (
@@ -242,6 +250,7 @@ function BaseSidebar() {
           </SidebarMenuItem>
         </SidebarMenu>
 
+        {/* Messages */}
         {smsItems.length ? (
           <SidebarGroup>
             <SidebarGroupLabel>Messages</SidebarGroupLabel>
@@ -287,6 +296,7 @@ function BaseSidebar() {
           </SidebarGroup>
         ) : null}
 
+        {/* Calls */}
         <SidebarGroup>
           <SidebarGroupLabel>Calls</SidebarGroupLabel>
           <SidebarGroupContent>
@@ -319,6 +329,7 @@ function BaseSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
+        {/* Contacts */}
         <SidebarGroup>
           <SidebarGroupLabel>Contacts</SidebarGroupLabel>
           <SidebarGroupContent>
@@ -351,6 +362,29 @@ function BaseSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
+        {/* NEW: Fax section (shown only if plan allows) */}
+        {canFax && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Fax</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <Button
+                      onClick={() => setShowFaxDialog(true)}
+                      className="cursor-pointer"
+                      variant="outline"
+                    >
+                      <Printer />
+                      <span>Send Fax</span>
+                    </Button>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+
         <SidebarFooter>
           <SidebarGroup>
             <SidebarGroupLabel>Account</SidebarGroupLabel>
@@ -372,6 +406,14 @@ function BaseSidebar() {
           </SidebarGroup>
         </SidebarFooter>
       </SidebarContent>
+
+      {/* NEW: Fax dialog (no contact context from sidebar; selection happens inside the dialog) */}
+      <FaxSendDialog
+        open={showFaxDialog}
+        onOpenChange={setShowFaxDialog}
+        contactId={undefined}
+        defaultFromName={activeCompany?.name ?? ''}
+      />
     </Sidebar>
   );
 }

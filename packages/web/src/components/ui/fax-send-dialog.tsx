@@ -16,15 +16,27 @@ import { auth } from '@/lib/firebase';
 import { isPdfPasswordProtected } from '@/lib/pdf';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
+import { useQuery } from '@tanstack/react-query'; // NEW
+import clsx from 'clsx';
 import { FileText, Loader2, Upload, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+
+// Contact picker bits (copied style from SendMessageDialog)
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import { PhoneInput } from '@/components/ui/phone-input';
 
 type FaxDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   defaultTo?: string;
   defaultFromName?: string;
-  contactId: string;
+  contactId?: string; // optional
 };
 
 type AttachedFile = {
@@ -42,23 +54,53 @@ export default function FaxSendDialog({
   contactId,
 }: FaxDialogProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { activeNumber } = useMainStore();
+  const { activeNumber, activeCompany } = useMainStore();
+  const trpc = useTRPC();
 
+  // Contact selection mode
+  const [mode, setMode] = useState<'phone' | 'contact'>('phone');
+
+  // Contacts for the picker — UPDATED to match your SendMessageDialog style
+  const { data: contacts } = useQuery(
+    trpc.contacts.getCompanyContacts.queryOptions({
+      companyId: activeCompany?.id as string,
+    })
+  );
+
+  // Selected contact (if any)
+  const [selectedContactId, setSelectedContactId] = useState<string | null>(
+    null
+  );
+  const selectedContact = contacts?.find((c) => c.id === selectedContactId);
+
+  // Form state
   const [fromName, setFromName] = useState(defaultFromName);
   const [toName, setToName] = useState('');
   const [to, setTo] = useState('');
   const [subject, setSubject] = useState('');
+
+  // File state
   const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null);
   const [fileError, setFileError] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [isSending, setIsSending] = useState(false);
 
-  const trpc = useTRPC();
+  // Prefill `to` on first load from defaultTo
   useEffect(() => {
-    if (!to && defaultTo) {
-      setTo(defaultTo);
-    }
+    if (!to && defaultTo) setTo(defaultTo);
   }, [defaultTo, to]);
+
+  // If a contactId prop is provided, try to preselect that contact (best-effort)
+  useEffect(() => {
+    if (!contacts || !contactId) return;
+    const found = contacts.find((c) => c.id === contactId);
+    if (found) {
+      setSelectedContactId(found.id);
+      setMode('contact');
+      setTo(found.number);
+      if (!toName) setToName(found.label || '');
+    }
+  }, [contacts, contactId, toName]);
 
   const MAX_SIZE = 50 * 1024 * 1024;
 
@@ -70,12 +112,10 @@ export default function FaxSendDialog({
       setFileError('Only PDF files are allowed.');
       return;
     }
-
     if (file.size > MAX_SIZE) {
       setFileError('File must be under 50MB.');
       return;
     }
-
     const protectedPdf = await isPdfPasswordProtected(file);
     if (protectedPdf) {
       setFileError('Password-protected PDFs cannot be uploaded.');
@@ -98,7 +138,6 @@ export default function FaxSendDialog({
   };
 
   const removeFile = () => setAttachedFile(null);
-
   const formatFileSize = (bytes: number) =>
     `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 
@@ -132,9 +171,7 @@ export default function FaxSendDialog({
     await fetch(`${import.meta.env.VITE_WEBSOCKET_URL}/fax/send`, {
       method: 'POST',
       body: formData,
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
     });
 
     setIsSending(false);
@@ -143,15 +180,21 @@ export default function FaxSendDialog({
     setSubject('');
     setTo('');
     setToName('');
+    setSelectedContactId(null);
+    setMode('phone');
 
+    // Invalidate inbox activity if we have a contact context (prop or selected)
     const client = getQueryClient();
+    const targetContactId = contactId ?? selectedContactId ?? undefined;
+    if (targetContactId && activeNumber?.id) {
+      client.invalidateQueries({
+        queryKey: trpc.inboxes.getActivityByContact.infiniteQueryOptions({
+          contactId: targetContactId,
+          numberId: activeNumber.id as string,
+        }).queryKey,
+      });
+    }
 
-    client.invalidateQueries({
-      queryKey: trpc.inboxes.getActivityByContact.infiniteQueryOptions({
-        contactId,
-        numberId: activeNumber?.id as string,
-      }).queryKey,
-    });
     onOpenChange(false);
   };
 
@@ -168,13 +211,91 @@ export default function FaxSendDialog({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 overflow-y-auto max-h-[70vh] px-1">
           {/* Left column: Lean form */}
           <div className="space-y-4 pr-2">
+            {/* Mode toggle, same pattern as SendMessageDialog */}
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant={mode === 'phone' ? 'default' : 'outline'}
+                onClick={() => {
+                  setMode('phone');
+                  setSelectedContactId(null);
+                }}
+              >
+                Phone Number
+              </Button>
+              <Button
+                type="button"
+                variant={mode === 'contact' ? 'default' : 'outline'}
+                onClick={() => setMode('contact')}
+              >
+                From Contacts
+              </Button>
+            </div>
+
+            {/* Show selected contact summary + Clear (like SendMessageDialog) */}
+            {selectedContactId && selectedContact && (
+              <div className="flex items-center justify-between text-sm text-green-600 font-medium px-1 -mb-2">
+                <span>
+                  {selectedContact.label} — {selectedContact.number}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setSelectedContactId(null);
+                    setTo('');
+                    setToName('');
+                    setMode('phone');
+                  }}
+                  className="text-red-500 hover:text-red-700"
+                >
+                  <X className="w-4 h-4 mr-1" />
+                  Clear
+                </Button>
+              </div>
+            )}
+
+            {/* To (Fax Number) - phone vs contact mode */}
             <div className="grid gap-2">
               <Label>To (Fax Number)</Label>
-              <Input
-                value={to}
-                onChange={(e) => setTo(e.target.value)}
-                placeholder="+1 (555) 123-4567"
-              />
+              {mode === 'phone' ? (
+                <PhoneInput
+                  value={to}
+                  onChange={(val) => setTo(val)}
+                  placeholder="+1 (555) 123-4567"
+                  disablePortal
+                />
+              ) : (
+                <Command className="border rounded-md shadow-sm">
+                  <CommandInput placeholder="Search contacts..." />
+                  <CommandList>
+                    <CommandEmpty>No contacts found.</CommandEmpty>
+                    {contacts?.map((c) => (
+                      <CommandItem
+                        key={c.id}
+                        value={c.number}
+                        onSelect={() => {
+                          setSelectedContactId(c.id);
+                          setTo(c.number);
+                          setToName((prev) => prev || c.label || '');
+                        }}
+                        className={clsx(
+                          'cursor-pointer',
+                          selectedContactId === c.id &&
+                            'bg-accent text-accent-foreground'
+                        )}
+                      >
+                        <div>
+                          <p className="font-medium">{c.label}</p>
+                          <p className="text-muted-foreground text-sm">
+                            {c.number}
+                          </p>
+                        </div>
+                      </CommandItem>
+                    ))}
+                  </CommandList>
+                </Command>
+              )}
             </div>
 
             <div className="grid gap-2">
@@ -190,6 +311,9 @@ export default function FaxSendDialog({
               <Input
                 value={toName}
                 onChange={(e) => setToName(e.target.value)}
+                placeholder={
+                  selectedContact?.label ? selectedContact.label : undefined
+                }
               />
             </div>
 
