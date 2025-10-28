@@ -24,6 +24,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarSeparator,
+  useSidebar,
 } from '@/components/ui/sidebar';
 
 import useMainStore from '@/lib/store';
@@ -44,6 +45,7 @@ import FaxSendDialog from './ui/fax-send-dialog';
 import { Skeleton } from './ui/skeleton';
 
 // NEW: plan feature helper
+import { useIsMobile } from '@/hooks/use-mobile';
 import { hasFeature, type PlanName } from '@/lib/utils';
 
 type SidebarNavItem = {
@@ -153,6 +155,13 @@ function BaseSidebar() {
     refetchOnWindowFocus: false,
   });
 
+  const { setOpenMobile } = useSidebar();
+  const isMobile = useIsMobile();
+
+  const closeIfMobile = () => {
+    if (isMobile) setOpenMobile?.(false);
+  };
+
   useEffect(() => {
     if (!numbersLoading && numbers) {
       const activeIsValid = activeNumber
@@ -219,7 +228,10 @@ function BaseSidebar() {
           <div
             className="flex hover:bg-accent rounded pl-3 pr-2 justify-between items-center cursor-pointer"
             title="Change company"
-            onClick={() => setCompanySwitcherDialogShown(true)}
+            onClick={() => {
+              setCompanySwitcherDialogShown(true);
+              closeIfMobile();
+            }}
           >
             <p className="text-muted-foreground font-semibold">
               {activeCompany?.name ?? 'No company'}
@@ -242,7 +254,7 @@ function BaseSidebar() {
               asChild
               isActive={location.pathname === '/dashboard'}
             >
-              <Link to="/dashboard">
+              <Link to="/dashboard" onClick={closeIfMobile}>
                 <Home />
                 Home
               </Link>
@@ -251,50 +263,44 @@ function BaseSidebar() {
         </SidebarMenu>
 
         {/* Messages */}
-        {smsItems.length ? (
-          <SidebarGroup>
-            <SidebarGroupLabel>Messages</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {smsItems.map((item) => (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={location.pathname === item.url}
-                    >
-                      {item.url ? (
-                        <Link to={item.url}>
-                          <div className="flex items-center justify-between w-full">
-                            <div className="flex items-center gap-2">
-                              <item.icon className="w-4 h-4" />
-                              <span>{item.title}</span>
-                            </div>
-                            {item.title === 'Inbox' &&
-                              unreadCount &&
-                              unreadCount > 0 && (
-                                <Badge variant="secondary" className="ml-auto">
-                                  {unreadCount}
-                                </Badge>
-                              )}
-                          </div>
-                        </Link>
-                      ) : item.onClick ? (
-                        <Button
-                          onClick={item.onClick}
-                          className=" cursor-pointer"
-                          variant={'outline'}
-                        >
-                          <item.icon />
-                          <span>{item.title}</span>
-                        </Button>
-                      ) : null}
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        ) : null}
+        {smsItems.map((item) => (
+          <SidebarMenuItem key={item.title}>
+            <SidebarMenuButton
+              asChild
+              isActive={location.pathname === item.url}
+            >
+              {item.url ? (
+                <Link to={item.url!} onClick={closeIfMobile}>
+                  <div className="flex items-center justify-between w-full">
+                    <div className="flex items-center gap-2">
+                      <item.icon className="w-4 h-4" />
+                      <span>{item.title}</span>
+                    </div>
+                    {item.title === 'Inbox' &&
+                      unreadCount &&
+                      unreadCount > 0 && (
+                        <Badge variant="secondary" className="ml-auto">
+                          {unreadCount}
+                        </Badge>
+                      )}
+                  </div>
+                </Link>
+              ) : item.onClick ? (
+                <Button
+                  onClick={() => {
+                    item.onClick?.();
+                    closeIfMobile();
+                  }}
+                  className="cursor-pointer"
+                  variant="outline"
+                >
+                  <item.icon />
+                  <span>{item.title}</span>
+                </Button>
+              ) : null}
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        ))}
 
         {/* Calls */}
         <SidebarGroup>
@@ -314,9 +320,12 @@ function BaseSidebar() {
                       </Link>
                     ) : item.onClick ? (
                       <Button
-                        onClick={item.onClick}
-                        className=" cursor-pointer"
-                        variant={'outline'}
+                        onClick={() => {
+                          item.onClick?.();
+                          closeIfMobile();
+                        }}
+                        className="cursor-pointer"
+                        variant="outline"
                       >
                         <item.icon />
                         <span>{item.title}</span>
@@ -371,7 +380,10 @@ function BaseSidebar() {
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
                     <Button
-                      onClick={() => setShowFaxDialog(true)}
+                      onClick={() => {
+                        setShowFaxDialog(true);
+                        closeIfMobile();
+                      }}
                       className="cursor-pointer"
                       variant="outline"
                     >
@@ -395,7 +407,7 @@ function BaseSidebar() {
                     asChild
                     isActive={location.pathname === '/dashboard/settings'}
                   >
-                    <Link to={'/dashboard/settings'}>
+                    <Link to="/dashboard/settings" onClick={closeIfMobile}>
                       <Settings />
                       Settings
                     </Link>

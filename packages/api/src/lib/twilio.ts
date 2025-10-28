@@ -104,7 +104,8 @@ export class TwilioClient {
   async searchAvailableNumbers(
     country: string,
     options: {
-      areaCode?: string;
+      areaCode?: string; // 3 digits
+      region?: string; // NEW: 2-letter state code (Twilio 'inRegion')
       contains?: string;
       smsEnabled?: boolean;
       voiceEnabled?: boolean;
@@ -113,6 +114,7 @@ export class TwilioClient {
   ): Promise<AvailablePhoneNumberInstance[]> {
     const {
       areaCode,
+      region,
       contains,
       smsEnabled = true,
       voiceEnabled = true,
@@ -122,6 +124,7 @@ export class TwilioClient {
     const cacheKey = buildCacheKey('twilio:numbers', {
       country,
       areaCode,
+      region, // include in cache key
       contains,
       smsEnabled,
       voiceEnabled,
@@ -130,20 +133,24 @@ export class TwilioClient {
 
     const now = Date.now();
     const cached = numberSearchCache.get(cacheKey);
-
     if (cached && cached.expiresAt > now) {
       return cached.data;
     }
 
+    const listOptions: any = {
+      smsEnabled,
+      voiceEnabled,
+      limit,
+    };
+
+    if (areaCode) listOptions.areaCode = Number(areaCode); // Twilio expects number
+    if (region) listOptions.inRegion = region; // Twilio state filter
+
+    if (contains) listOptions.contains = contains;
+
     const numbers = await this.client
       .availablePhoneNumbers(country)
-      .local.list({
-        smsEnabled,
-        voiceEnabled,
-        areaCode: areaCode as unknown as number,
-        contains,
-        limit,
-      });
+      .local.list(listOptions);
 
     numberSearchCache.set(cacheKey, {
       data: numbers,

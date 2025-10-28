@@ -17,24 +17,76 @@ export const onboardingRouter = t.router({
     .input(
       z.object({
         country: z.string().default('US'),
-        areaCode: z.string().optional(),
+        // single 3-digit area code (still supported)
+        areaCode: z
+          .string()
+          .regex(/^\d{3}$/, { message: 'areaCode must be 3 digits' })
+          .optional(),
+        // NEW: array of 3-digit area codes
+        prefixes: z.array(z.string().regex(/^\d{3}$/)).optional(),
+        // NEW: 2-letter state/region filter (e.g., 'CA', 'NY')
+        region: z.string().length(2).optional(),
         contains: z.string().optional(),
         smsEnabled: z.boolean().optional(),
         voiceEnabled: z.boolean().optional(),
+        // limit remains per-call; when batching, we’ll dedupe afterwards
         limit: z.number().min(1).max(20).optional(),
       })
     )
     .query(async ({ input }) => {
-      const numbers = await twilio.searchAvailableNumbers(input.country, {
-        areaCode: input.areaCode,
-        contains: input.contains,
-        smsEnabled: input.smsEnabled,
-        voiceEnabled: input.voiceEnabled,
-        limit: input.limit,
+      const {
+        country,
+        areaCode,
+        prefixes,
+        region,
+        contains,
+        smsEnabled,
+        voiceEnabled,
+        limit,
+      } = input;
+
+      // If multiple prefixes provided, fan out to Twilio and merge results.
+      if (prefixes && prefixes.length > 0) {
+        const batches = await Promise.all(
+          prefixes.map((p) =>
+            twilio.searchAvailableNumbers(country, {
+              areaCode: p,
+              region, // pass state (Twilio inRegion) if present
+              contains,
+              smsEnabled,
+              voiceEnabled,
+              limit,
+            })
+          )
+        );
+
+        // Flatten + de-dupe by phoneNumber
+        const merged = batches.flat();
+        const seen = new Set<string>();
+        const deduped = merged.filter((n) => {
+          if (!n?.phoneNumber) return false;
+          const key = n.phoneNumber;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+
+        return deduped;
+      }
+
+      // Single areaCode or generic search
+      const numbers = await twilio.searchAvailableNumbers(country, {
+        areaCode,
+        region,
+        contains,
+        smsEnabled,
+        voiceEnabled,
+        limit,
       });
 
       return numbers;
     }),
+
   finishOnboarding: protectedProcedure
     .input(
       z.object({
@@ -72,7 +124,7 @@ export const onboardingRouter = t.router({
           companyId: dbCompany.id,
         });
 
-        // purhcase the number
+        // purchase the number
         await twilio.purchaseNumber(company.companyNumber, {
           voiceUrl: `${process.env.SERVER_DOMAIN}/twilio/voice`,
           smsUrl: `${process.env.SERVER_DOMAIN}/twilio/sms`,
@@ -85,6 +137,7 @@ export const onboardingRouter = t.router({
           label: 'Main',
         });
       }
+
       await UsersRepository.update(ctx.user.uid, {
         onboarding_completed: true,
         onboarding_step: 6,

@@ -41,10 +41,44 @@ export const InboxesRepository = {
   },
 
   async findByNumberId(
-    numberId: string
+    numberId: string,
+    opts?: { search?: string }
   ): Promise<(InboxWithDetails & { unreadCount: number })[]> {
-    const result = await pool.query(
-      `
+    const search = opts?.search?.trim() ?? '';
+    const like = `%${search}%`;
+    const digitsOnly = search.replace(/\D/g, '');
+
+    const params: any[] = [numberId];
+    const searchParts: string[] = [];
+    // we will push params in the same order we add predicates
+
+    if (search) {
+      // last message text
+      params.push(like);
+      searchParts.push(`lm.message ILIKE $${params.length}`);
+
+      // contact label
+      params.push(like);
+      searchParts.push(`c.label ILIKE $${params.length}`);
+
+      // contact number (raw ILIKE)
+      params.push(like);
+      searchParts.push(`c.number ILIKE $${params.length}`);
+
+      // digits-only match only if we actually have digits
+      if (digitsOnly.length > 0) {
+        params.push(`%${digitsOnly}%`);
+        searchParts.push(
+          `regexp_replace(c.number, '\\D', '', 'g') LIKE $${params.length}`
+        );
+      }
+    }
+
+    const searchClause = searchParts.length
+      ? `AND (${searchParts.join(' OR ')})`
+      : '';
+
+    const sql = `
     WITH unread_counts AS (
       SELECT 
         i.id AS inbox_id,
@@ -84,10 +118,11 @@ export const InboxesRepository = {
     LEFT JOIN calls lc ON i.last_call_id = lc.id
     LEFT JOIN unread_counts uc ON i.id = uc.inbox_id
     WHERE i.number_id = $1
+    ${searchClause}
     ORDER BY latest_activity DESC
-    `,
-      [numberId]
-    );
+  `;
+
+    const result = await pool.query(sql, params);
 
     return result.rows.map((row) => ({
       id: row.id,

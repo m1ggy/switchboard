@@ -1,0 +1,59 @@
+{
+  "name": "Calliya Call Center",
+  "short_name": "Calliya",
+  "description": "A web-based call center powered by Twilio.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#0B0B0B",
+  "background_color": "#0B0B0B",
+  "categories": ["business", "communication", "productivity"],
+  "lang": "en",
+  "icons": [
+    {
+      "src": "/calliya-logo.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/calliya-logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/calliya-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Go Online",
+      "short_name": "Online",
+      "description": "Toggle agent availability",
+      "url": "/?action=online",
+      "icons": [
+        {
+          "src": "/icons/shortcut-online.png",
+          "sizes": "96x96",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Call History",
+      "short_name": "History",
+      "description": "View recent calls",
+      "url": "/calls",
+      "icons": [
+        {
+          "src": "/icons/shortcut-history.png",
+          "sizes": "96x96",
+          "type": "image/png"
+        }
+      ]
+    }
+  ]
+}

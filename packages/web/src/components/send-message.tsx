@@ -1,3 +1,5 @@
+'use client';
+
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -172,15 +174,17 @@ function SendMessageDialog() {
 
   return (
     <Dialog open={shown} onOpenChange={setShown}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Send new message</DialogTitle>
-          <DialogDescription>
+      <DialogContent className="w-full max-w-2xl max-h-[90vh] flex flex-col p-4 sm:p-6">
+        <DialogHeader className="flex-shrink-0">
+          <DialogTitle className="text-lg sm:text-xl">
+            Send new message
+          </DialogTitle>
+          <DialogDescription className="text-sm sm:text-base">
             Send an {canMMS ? 'SMS or MMS' : 'SMS'} to a phone number
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex gap-2 mb-2">
+        <div className="flex flex-wrap gap-2 mb-2 flex-shrink-0">
           <Button
             type="button"
             variant={mode === 'phone' ? 'default' : 'outline'}
@@ -188,6 +192,7 @@ function SendMessageDialog() {
               setMode('phone');
               setSelectedContactId(null);
             }}
+            className="text-sm sm:text-base"
           >
             Phone Number
           </Button>
@@ -195,14 +200,15 @@ function SendMessageDialog() {
             type="button"
             variant={mode === 'contact' ? 'default' : 'outline'}
             onClick={() => setMode('contact')}
+            className="text-sm sm:text-base"
           >
             From Contacts
           </Button>
         </div>
 
         {selectedContactId && selectedContact && (
-          <div className="flex items-center justify-between text-sm text-green-600 font-medium px-1 mb-2">
-            <span>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between text-sm text-green-600 font-medium px-1 mb-2 gap-2 flex-shrink-0">
+            <span className="break-words">
               {selectedContact.label} — {selectedContact.number}
             </span>
             <Button
@@ -212,7 +218,7 @@ function SendMessageDialog() {
                 setSelectedContactId(null);
                 form.setValue('recipient', '');
               }}
-              className="text-red-500 hover:text-red-700"
+              className="text-red-500 hover:text-red-700 whitespace-nowrap"
             >
               <X className="w-4 h-4 mr-1" />
               Clear
@@ -220,141 +226,163 @@ function SendMessageDialog() {
           </div>
         )}
 
-        <Form {...form}>
-          <form
-            onSubmit={form.handleSubmit(onSendMessage)}
-            id="send-message"
-            className="space-y-6"
-          >
-            <FormField
-              control={form.control}
-              name="recipient"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Recipient</FormLabel>
-                  <FormControl>
-                    {mode === 'phone' ? (
-                      <PhoneInput
-                        onChange={(value) => {
-                          field.onChange(value);
-                          setSelectedContactId(null);
-                        }}
-                        value={field.value}
-                        placeholder="Enter phone number"
-                        disablePortal
-                      />
-                    ) : (
-                      <Command className="border rounded-md shadow-sm">
-                        <CommandInput placeholder="Search contacts..." />
-                        <CommandList>
-                          <CommandEmpty>No contacts found.</CommandEmpty>
-                          {contacts?.map((contact) => (
-                            <CommandItem
-                              key={contact.number}
-                              value={contact.number}
-                              onSelect={() => {
-                                field.onChange(contact.number);
-                                setSelectedContactId(contact.id);
-                              }}
-                              className={clsx(
-                                'cursor-pointer',
-                                selectedContactId === contact.id &&
-                                  'bg-accent text-accent-foreground'
-                              )}
-                            >
-                              <div>
-                                <p className="font-medium">{contact.label}</p>
-                                <p className="text-muted-foreground text-sm">
-                                  {contact.number}
-                                </p>
-                              </div>
-                            </CommandItem>
-                          ))}
-                        </CommandList>
-                      </Command>
-                    )}
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="message"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Message</FormLabel>
-                  <FormControl>
-                    <Textarea {...field} rows={5} className="resize-none" />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            {/* MMS attachments — only rendered if allowed */}
-            {canMMS && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <FormLabel className="mb-0">Attachments</FormLabel>
-                  {totalSize && (
-                    <Badge title="Total size of all attachments">
-                      {totalSize}/5 MB
-                    </Badge>
-                  )}
-                </div>
-
-                {attachments.length > 0 && (
-                  <>
-                    <Separator />
-                    <div className="grid grid-cols-6 gap-3 overflow-auto pb-2">
-                      {attachments.map((file) => (
-                        <div key={file.id} className="h-24">
-                          <AttachmentPreview
-                            file={file}
-                            onClose={() => removeAttachment(file.id)}
+        <div className="overflow-y-auto flex-1 pr-2 sm:pr-0">
+          <Form {...form}>
+            <form
+              onSubmit={form.handleSubmit(onSendMessage)}
+              id="send-message"
+              className="space-y-4 sm:space-y-6"
+            >
+              <FormField
+                control={form.control}
+                name="recipient"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm sm:text-base">
+                      Recipient
+                    </FormLabel>
+                    <FormControl>
+                      {mode === 'phone' ? (
+                        <PhoneInput
+                          onChange={(value) => {
+                            field.onChange(value);
+                            setSelectedContactId(null);
+                          }}
+                          value={field.value}
+                          placeholder="Enter phone number"
+                          disablePortal
+                          className="text-sm sm:text-base"
+                        />
+                      ) : (
+                        <Command className="border rounded-md shadow-sm">
+                          <CommandInput
+                            placeholder="Search contacts..."
+                            className="text-sm sm:text-base"
                           />
-                        </div>
-                      ))}
-                    </div>
-                  </>
+                          <CommandList className="max-h-48 sm:max-h-64">
+                            <CommandEmpty>No contacts found.</CommandEmpty>
+                            {contacts?.map((contact) => (
+                              <CommandItem
+                                key={contact.number}
+                                value={contact.number}
+                                onSelect={() => {
+                                  field.onChange(contact.number);
+                                  setSelectedContactId(contact.id);
+                                }}
+                                className={clsx(
+                                  'cursor-pointer text-sm sm:text-base py-2 sm:py-3',
+                                  selectedContactId === contact.id &&
+                                    'bg-accent text-accent-foreground'
+                                )}
+                              >
+                                <div className="min-w-0">
+                                  <p className="font-medium truncate">
+                                    {contact.label}
+                                  </p>
+                                  <p className="text-muted-foreground text-xs sm:text-sm truncate">
+                                    {contact.number}
+                                  </p>
+                                </div>
+                              </CommandItem>
+                            ))}
+                          </CommandList>
+                        </Command>
+                      )}
+                    </FormControl>
+                    <FormMessage className="text-xs sm:text-sm" />
+                  </FormItem>
                 )}
+              />
 
-                <div className="flex">
-                  <input
-                    ref={fileInputRef}
-                    id="file-upload"
-                    type="file"
-                    accept="image/*,video/3gpp"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => {
-                      const files = Array.from(e.target.files ?? []);
-                      if (files.length) files.forEach(addAttachment);
-                      e.target.value = '';
-                    }}
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="gap-2"
-                  >
-                    <Paperclip className="w-4 h-4" />
-                    Add Attachments
-                  </Button>
+              <FormField
+                control={form.control}
+                name="message"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="text-sm sm:text-base">
+                      Message
+                    </FormLabel>
+                    <FormControl>
+                      <Textarea
+                        {...field}
+                        rows={4}
+                        className="resize-none text-sm sm:text-base min-h-24 sm:min-h-32"
+                      />
+                    </FormControl>
+                    <FormMessage className="text-xs sm:text-sm" />
+                  </FormItem>
+                )}
+              />
+
+              {/* MMS attachments — only rendered if allowed */}
+              {canMMS && (
+                <div className="space-y-3">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                    <FormLabel className="mb-0 text-sm sm:text-base">
+                      Attachments
+                    </FormLabel>
+                    {totalSize && (
+                      <Badge
+                        title="Total size of all attachments"
+                        className="text-xs sm:text-sm"
+                      >
+                        {totalSize}/5 MB
+                      </Badge>
+                    )}
+                  </div>
+
+                  {attachments.length > 0 && (
+                    <>
+                      <Separator />
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 sm:gap-3 overflow-auto pb-2">
+                        {attachments.map((file) => (
+                          <div key={file.id} className="h-20 sm:h-24">
+                            <AttachmentPreview
+                              file={file}
+                              onClose={() => removeAttachment(file.id)}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  <div className="flex">
+                    <input
+                      ref={fileInputRef}
+                      id="file-upload"
+                      type="file"
+                      accept="image/*,video/3gpp"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files ?? []);
+                        if (files.length) files.forEach(addAttachment);
+                        e.target.value = '';
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="gap-2 text-sm sm:text-base w-full sm:w-auto"
+                    >
+                      <Paperclip className="w-4 h-4" />
+                      Add Attachments
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            )}
-          </form>
-        </Form>
+              )}
+            </form>
+          </Form>
+        </div>
 
-        <DialogFooter>
+        <DialogFooter className="flex-shrink-0 mt-4 sm:mt-6">
           <Button
             form="send-message"
             type="submit"
             disabled={!form.formState.isValid || sendingMessage}
+            className="w-full sm:w-auto text-sm sm:text-base"
           >
             {sendingMessage ? 'Sending' : 'Send'}
           </Button>

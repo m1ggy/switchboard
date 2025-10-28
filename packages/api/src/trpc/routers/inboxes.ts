@@ -5,9 +5,11 @@ import { protectedProcedure, t } from '../trpc';
 
 export const inboxesRouter = t.router({
   getNumberInboxes: protectedProcedure
-    .input(z.object({ numberId: z.string() }))
+    .input(z.object({ numberId: z.string(), search: z.string().optional() }))
     .query(async ({ input }) => {
-      const inboxes = await InboxesRepository.findByNumberId(input.numberId);
+      const inboxes = await InboxesRepository.findByNumberId(input.numberId, {
+        search: input.search,
+      });
       return inboxes as InboxWithDetails[];
     }),
   getActivityByContact: protectedProcedure

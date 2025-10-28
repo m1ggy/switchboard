@@ -9,7 +9,15 @@ import { useTRPC } from '@/lib/trpc';
 import { hasFeature, type PlanName } from '@/lib/utils';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
-import { Loader2, Paperclip, Phone, Printer, Send, Video } from 'lucide-react';
+import {
+  ArrowLeft,
+  Loader2,
+  Paperclip,
+  Phone,
+  Printer,
+  Send,
+  Video,
+} from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -29,9 +37,11 @@ import TooltipStandalone from './ui/tooltip-standalone';
 interface MessengerProps {
   contactId?: string | null;
   inboxId?: string | null;
+  /** Optional: parent can clear selection */
+  onBack?: () => void;
 }
 
-function Messenger({ contactId, inboxId }: MessengerProps) {
+function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
   const trpc = useTRPC();
   const { activeNumber, setActiveVideoCallDialogShown } = useMainStore();
   const { setCurrentCallContactId } = useVideoCallStore();
@@ -56,7 +66,6 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
   );
 
   const { data: userInfo } = useQuery(trpc.users.getUser.queryOptions());
-  console.log({ enabledFeatures });
   const { mutateAsync: markInboxViewed } = useMutation(
     trpc.inboxes.markAsViewed.mutationOptions()
   );
@@ -230,14 +239,11 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
       const isAtBottomInitially =
         el.scrollTop + el.clientHeight >= el.scrollHeight - 10;
 
-      console.log({ isAtBottomInitially, hasReachedBottomOnce });
-
       if (isAtBottomInitially) {
         setHasReachedBottomOnce(true);
       }
     };
 
-    // Two frames to ensure layout is fully applied
     requestAnimationFrame(() => {
       requestAnimationFrame(checkScroll);
     });
@@ -331,6 +337,16 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const { open, setOpen, files, setFiles, setIndex, index } = useLightbox();
 
+  // Fallback when parent didn't pass onBack: emit a window event
+  const handleBack = () => {
+    if (onBack) return onBack();
+    try {
+      window.dispatchEvent(new CustomEvent('messenger-back'));
+    } catch {
+      // no-op
+    }
+  };
+
   if (!contactId) {
     return (
       <div className="flex justify-center items-center w-full h-full">
@@ -341,19 +357,40 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
     );
   }
 
+  // ====== LAYOUT (mobile-first 4-row grid) ======
   return (
-    <div className="flex flex-col w-full border-l">
-      <div className="border-b px-4 py-2 font-medium h-12 flex items-center w-full">
+    <div
+      className="
+        grid grid-rows-[auto,1fr,auto,auto] w-full md:h-full
+        min-h-[100dvh] md:min-h-0
+        bg-background md:border-l
+      "
+    >
+      {/* ROW 1: HEADER */}
+      <div className="border-b px-2 md:px-4 py-2 font-medium h-12 flex items-center w-full">
         {isContactLoading ? (
           <Skeleton className="w-full h-6" />
         ) : (
           <div className="flex justify-between w-full items-center">
-            <span className="h-fit">
-              {contact?.label}{' '}
-              <span className="text-xs text-muted-foreground">
-                ({contact?.number})
+            {/* Mobile-only Back button */}
+            <div className="flex items-center gap-2">
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={handleBack}
+                className="md:hidden"
+                aria-label="Back to conversations"
+              >
+                <ArrowLeft className="h-5 w-5" />
+              </Button>
+              <span className="h-fit">
+                {contact?.label}{' '}
+                <span className="text-xs text-muted-foreground">
+                  ({contact?.number})
+                </span>
               </span>
-            </span>
+            </div>
+
             <div className="flex gap-2">
               {hasFeature(userInfo?.selected_plan as PlanName, 'fax') && (
                 <TooltipStandalone content="Send Fax">
@@ -404,18 +441,17 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
         )}
       </div>
 
-      {isMessagesLoading ? (
-        <div className="flex-1 flex justify-center items-center">
-          <span className="text-sm text-muted-foreground">
+      {/* ROW 2: SCROLLABLE CONTENT */}
+      <div
+        className="min-h-0 overflow-y-auto scroll-smooth"
+        ref={scrollRef}
+        style={{ transform: 'translateZ(0)' }}
+      >
+        {isMessagesLoading ? (
+          <div className="h-full w-full flex items-center justify-center py-10">
             <Loader2 className="animate-spin" />
-          </span>
-        </div>
-      ) : (
-        <div
-          className="flex-1 overflow-y-auto scroll-smooth"
-          ref={scrollRef}
-          style={{ transform: 'translateZ(0)' }}
-        >
+          </div>
+        ) : (
           <div className="px-4 py-2 space-y-2 justify-end flex flex-col">
             {isFetchingNextPage && (
               <div className="flex justify-center w-full items-center">
@@ -461,11 +497,12 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
             )}
             <div ref={bottomRef} />
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
+      {/* ROW 3: ATTACHMENTS */}
       {attachments.length > 0 && (
-        <div className="px-5 pt-6 pb-4 flex flex-col gap-3">
+        <div className="px-5 pt-6 pb-4 flex flex-col gap-3 border-t">
           <Separator />
           <Label>
             Attachments{' '}
@@ -488,8 +525,9 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
           </div>
         </div>
       )}
-      <div className="flex gap-2 px-5 py-5 items-center">
-        {/* NON-FORM BUTTONS */}
+
+      {/* ROW 4: COMPOSER / FOOTER */}
+      <div className="flex gap-2 px-5 py-5 items-center border-t pb-[calc(env(safe-area-inset-bottom)+1rem)]">
         {hasFeature(userInfo?.selected_plan as PlanName, 'mms') && (
           <TooltipStandalone content="Add Attachment">
             <Button
@@ -517,7 +555,6 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
           }}
         />
 
-        {/* THE FORM STARTS HERE */}
         <Form {...form}>
           <form
             className="flex gap-2 items-center w-full"
@@ -550,13 +587,13 @@ function Messenger({ contactId, inboxId }: MessengerProps) {
         </Form>
       </div>
 
+      {/* Portals / Modals */}
       <Lightbox
         images={files}
         initialIndex={index}
         open={open}
         onOpenChange={setOpen}
       />
-
       <FaxSendDialog
         open={showFaxDialog}
         onOpenChange={setShowFaxDialog}
