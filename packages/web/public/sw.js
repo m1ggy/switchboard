@@ -21,9 +21,11 @@ self.addEventListener("install", (event) => {
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.map((k) => (k !== CACHE_NAME ? caches.delete(k) : null)))
-    )
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(keys.map((k) => (k !== CACHE_NAME ? caches.delete(k) : null)))
+      )
   );
   self.clients.claim();
 });
@@ -71,3 +73,115 @@ self.addEventListener("fetch", (event) => {
     })
   );
 });
+
+/* ========================================================================== */
+/*                            PUSH NOTIFICATIONS                               */
+/* ========================================================================== */
+
+/**
+ * Expected push payload (JSON), e.g.:
+ * {
+ *   "title": "New message",
+ *   "body": "You have a new message",
+ *   "icon": "/icons/icon-192.png",
+ *   "badge": "/icons/icon-192.png",
+ *   "url": "/dashboard/inbox/123",
+ *   "tag": "inbox",
+ *   "actions": [{ "action": "open", "title": "Open" }]
+ * }
+ *
+ * Fallback: if payload is plain text, it's used as the notification body.
+ */
+
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    if (event.data) {
+      // Prefer JSON payloads
+      data = event.data.json();
+    }
+  } catch (err) {
+    // Some services may send text payloads
+    data = { title: "Notification", body: event.data && event.data.text() };
+  }
+
+  const title = data.title || "Notification";
+  const options = {
+    body: data.body || "",
+    icon: data.icon || "/icons/icon-192.png",
+    badge: data.badge || "/icons/icon-192.png",
+    tag: data.tag, // Use a tag to collapse similar notifications if desired
+    // Store useful data for click handling
+    data: {
+      url: data.url || "/", // Where to navigate on click
+      // Keep original payload for debugging / advanced routing if needed
+      _payload: data,
+    },
+    actions: Array.isArray(data.actions) ? data.actions : [],
+    // On Android, requireInteraction keeps the notification until the user interacts
+    // requireInteraction: true,
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+/**
+ * Try to focus an existing client with a URL that matches the target path.
+ * If none found, open a new window.
+ */
+async function openOrFocusUrl(targetUrl) {
+  const origin = self.location.origin;
+  const absoluteUrl = new URL(targetUrl, origin).toString();
+
+  const clientsArr = await self.clients.matchAll({
+    type: "window",
+    includeUncontrolled: true,
+  });
+
+  // Try focus an existing visible client first
+  for (const client of clientsArr) {
+    // Normalize both URLs (ignore search/hash differences if you prefer)
+    if (client.url === absoluteUrl && "focus" in client) {
+      await client.focus();
+      return;
+    }
+  }
+
+  // Otherwise, open a new client window
+  if (self.clients.openWindow) {
+    await self.clients.openWindow(absoluteUrl);
+  }
+}
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+
+  // Support action buttons if you added them in the payload
+  const action = event.action;
+  const targetUrl =
+    (event.notification && event.notification.data && event.notification.data.url) || "/";
+
+  // You can route differently depending on action
+  // e.g., if (action === 'reply') { ... }
+  event.waitUntil(openOrFocusUrl(targetUrl));
+});
+
+// (Optional) Handle notification close analytics
+self.addEventListener("notificationclose", (event) => {
+  // You could send a beacon for analytics here using event.notification.data
+  // e.g., navigator.sendBeacon('/api/notify/closed', JSON.stringify(...))
+});
+
+/**
+ * (Optional) pushsubscriptionchange:
+ * If you want to automatically re-subscribe when the browser rotates the
+ * subscription (rare), you can listen here and message clients to refresh.
+ * We don't auto-subscribe here because it requires your VAPID public key.
+ */
+// self.addEventListener("pushsubscriptionchange", async (event) => {
+//   // Example: notify clients to re-initiate subscription flow
+//   const allClients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+//   for (const client of allClients) {
+//     client.postMessage({ type: "PUSH_SUBSCRIPTION_CHANGE" });
+//   }
+// });

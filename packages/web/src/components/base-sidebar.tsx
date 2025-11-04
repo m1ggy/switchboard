@@ -1,6 +1,7 @@
 import {
   ChevronsUpDown,
   Contact2,
+  Download,
   History,
   Home,
   Inbox,
@@ -8,7 +9,7 @@ import {
   PhoneIcon,
   Printer,
   Settings,
-  UserPlus, // NEW
+  UserPlus,
   type LucideProps,
 } from 'lucide-react';
 
@@ -32,7 +33,7 @@ import { useTRPC } from '@/lib/trpc';
 import { useQuery } from '@tanstack/react-query';
 import {
   useEffect,
-  useState, // NEW
+  useState,
   type ForwardRefExoticComponent,
   type RefAttributes,
 } from 'react';
@@ -44,10 +45,11 @@ import { Button } from './ui/button';
 import FaxSendDialog from './ui/fax-send-dialog';
 import { Skeleton } from './ui/skeleton';
 
-// NEW: plan feature helper
+// plan feature helper
 import { useIsMobile } from '@/hooks/use-mobile';
 import { hasFeature, type PlanName } from '@/lib/utils';
 
+// ---- Types ----
 type SidebarNavItem = {
   title: string;
   url: string | null;
@@ -56,6 +58,38 @@ type SidebarNavItem = {
   >;
   onClick?: () => void;
 };
+
+// PWA: beforeinstallprompt event
+interface BeforeInstallPromptEvent extends Event {
+  readonly platforms: string[];
+  readonly userChoice: Promise<{
+    outcome: 'accepted' | 'dismissed';
+    platform: string;
+  }>;
+  prompt(): Promise<void>;
+}
+
+declare global {
+  interface Window {
+    __deferredPrompt?: BeforeInstallPromptEvent | null;
+  }
+  interface WindowEventMap {
+    'pwa-install-available': CustomEvent<{
+      deferredPrompt: BeforeInstallPromptEvent;
+    }>;
+  }
+}
+
+function isStandaloneDisplay(): boolean {
+  return window.matchMedia?.('(display-mode: standalone)').matches ?? false;
+}
+function isIOSStandalone(): boolean {
+  // @ts-expect-error - iOS Safari
+  return !!window.navigator?.standalone;
+}
+function isInstalled(): boolean {
+  return isStandaloneDisplay() || isIOSStandalone();
+}
 
 const smsItems: SidebarNavItem[] = [
   {
@@ -112,14 +146,11 @@ function BaseSidebar() {
     setCompanySwitcherDialogShown,
   } = useMainStore();
 
-  // NEW: Fax dialog state
   const [showFaxDialog, setShowFaxDialog] = useState(false);
 
-  // NEW: plan features (for fax)
   const { data: userInfo } = useQuery(trpc.users.getUser.queryOptions());
   const canFax = hasFeature(userInfo?.selected_plan as PlanName, 'fax');
 
-  // Fetch companies when there is a user (not based on activeCompany)
   const { data: companies, isFetching: companiesLoading } = useQuery({
     ...trpc.companies.getUserCompanies.queryOptions(),
     refetchOnWindowFocus: false,
@@ -188,6 +219,79 @@ function BaseSidebar() {
     : null;
 
   const theme = useTheme();
+
+  // ---- PWA install state shared with bridge ----
+  const [deferredPrompt, setDeferredPrompt] =
+    useState<BeforeInstallPromptEvent | null>(null);
+  const [installed, setInstalled] = useState<boolean>(isInstalled());
+
+  useEffect(() => {
+    // Load any cached prompt immediately
+    if (window.__deferredPrompt && !isInstalled()) {
+      setDeferredPrompt(window.__deferredPrompt);
+    }
+
+    const onAvailable = (
+      e: CustomEvent<{ deferredPrompt: BeforeInstallPromptEvent }>
+    ) => {
+      setDeferredPrompt(e.detail.deferredPrompt);
+    };
+    const onInstalled = () => {
+      setInstalled(true);
+      setDeferredPrompt(null);
+    };
+
+    window.addEventListener(
+      'pwa-install-available',
+      onAvailable as EventListener
+    );
+    window.addEventListener('appinstalled', onInstalled);
+
+    const mq = window.matchMedia?.('(display-mode: standalone)');
+    const onModeChange = () => setInstalled(isInstalled());
+    mq?.addEventListener?.('change', onModeChange);
+
+    return () => {
+      window.removeEventListener(
+        'pwa-install-available',
+        onAvailable as EventListener
+      );
+      window.removeEventListener('appinstalled', onInstalled);
+      mq?.removeEventListener?.('change', onModeChange);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) return;
+    await deferredPrompt.prompt();
+    await deferredPrompt.userChoice;
+    setDeferredPrompt(null);
+    closeIfMobile();
+  };
+  useEffect(() => {
+    if (!isInstalled() && window.__deferredPrompt) {
+      setDeferredPrompt(window.__deferredPrompt);
+    }
+    const onAvailable = (
+      e: CustomEvent<{ deferredPrompt: BeforeInstallPromptEvent }>
+    ) => setDeferredPrompt(e.detail.deferredPrompt);
+    const onInstalled = () => {
+      setDeferredPrompt(null);
+      setInstalled(true);
+    };
+    window.addEventListener(
+      'pwa-install-available',
+      onAvailable as EventListener
+    );
+    window.addEventListener('appinstalled', onInstalled);
+    return () => {
+      window.removeEventListener(
+        'pwa-install-available',
+        onAvailable as EventListener
+      );
+      window.removeEventListener('appinstalled', onInstalled);
+    };
+  }, []);
 
   if (!_rehydrated) {
     return (
@@ -371,7 +475,7 @@ function BaseSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* NEW: Fax section (shown only if plan allows) */}
+        {/* Fax */}
         {canFax && (
           <SidebarGroup>
             <SidebarGroupLabel>Fax</SidebarGroupLabel>
@@ -402,6 +506,22 @@ function BaseSidebar() {
             <SidebarGroupLabel>Account</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
+                {/* Install App: only when not installed AND a prompt exists */}
+                {!installed && deferredPrompt && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <Button
+                        onClick={handleInstallClick}
+                        className="cursor-pointer"
+                        variant="outline"
+                      >
+                        <Download />
+                        <span>Install App</span>
+                      </Button>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
+
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     asChild
@@ -419,7 +539,6 @@ function BaseSidebar() {
         </SidebarFooter>
       </SidebarContent>
 
-      {/* NEW: Fax dialog (no contact context from sidebar; selection happens inside the dialog) */}
       <FaxSendDialog
         open={showFaxDialog}
         onOpenChange={setShowFaxDialog}

@@ -5,6 +5,7 @@ import type { AppRouter } from 'api/trpc';
 import { useState } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router';
 import AppRoot from './AppRoot';
+import InstallPromptDialog from './components/install-app-dialog';
 import Layout from './components/main-layout';
 import { ThemeProvider } from './components/theme-provider';
 import { AuthProvider } from './hooks/auth-provider';
@@ -105,6 +106,8 @@ function App() {
               </Routes>
             </BrowserRouter>
             <Toaster />
+
+            <InstallPromptDialog />
           </AuthProvider>
         </ThemeProvider>
       </TRPCProvider>

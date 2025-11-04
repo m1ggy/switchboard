@@ -4,10 +4,12 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import type { GetUserCompaniesOutput } from 'api/trpc/types';
 import clsx from 'clsx';
 import { formatDate } from 'date-fns';
-import { Check } from 'lucide-react';
+import { Check, ChevronLeft, X } from 'lucide-react';
+import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardTitle } from './ui/card';
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -30,14 +32,17 @@ function CompanySwitcherDialog() {
     ...trpc.companies.getUserCompanies.queryOptions(),
     refetchOnWindowFocus: false,
   });
+
   const { mutateAsync: mutate } = useMutation(
     trpc.twilio.presence.mutationOptions()
   );
+
   const { refetch: refetchToken } = useQuery(
     trpc.twilio.token.queryOptions({
       identity: activeNumber?.number as string,
     })
   );
+
   const onSelectCompany = async (company: GetUserCompaniesOutput) => {
     const { numbers, ...baseCompany } = company;
     setActiveCompany(baseCompany);
@@ -56,53 +61,124 @@ function CompanySwitcherDialog() {
       open={companySwitcherDialogShown}
       onOpenChange={setCompanySwitcherDialogShown}
     >
-      <DialogContent>
-        <DialogHeader>
+      <DialogContent
+        // Mobile: full-height sheet w/ sticky header & safe areas
+        className={clsx(
+          'p-0 sm:p-6 sm:max-w-lg',
+          'sm:rounded-lg',
+          'h-[92dvh] sm:h-auto', // near full height on mobile
+          'overflow-hidden'
+        )}
+      >
+        {/* Mobile header (visible on <sm), desktop uses DialogHeader below */}
+        <div
+          className="sm:hidden sticky top-0 z-10 flex items-center justify-between px-3 py-3 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60"
+          style={{ paddingTop: 'max(env(safe-area-inset-top),0px)' }}
+        >
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="-ml-1"
+              onClick={() => setCompanySwitcherDialogShown(false)}
+              aria-label="Close"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </Button>
+            <span className="font-semibold">Switch Company</span>
+          </div>
+          <DialogClose asChild>
+            <Button variant="ghost" size="icon" aria-label="Close dialog">
+              <X className="h-5 w-5" />
+            </Button>
+          </DialogClose>
+        </div>
+
+        {/* Desktop header */}
+        <DialogHeader className="hidden sm:block">
           <DialogTitle>Switch Company</DialogTitle>
           <DialogDescription>Switch from the current company</DialogDescription>
         </DialogHeader>
 
-        <div className="overflow-y-scroll max-h-[30vh] flex flex-col gap-4">
-          {isFetching ? (
-            <div className="flex justify-center items-center">
-              <Loader />
-            </div>
-          ) : companies && companies.length ? (
-            companies?.map((company) => (
-              <Card
-                key={company.id}
-                onClick={() => onSelectCompany(company)}
-                className={clsx(
-                  'transition-colors select-none',
-                  company.numbers.length === 0
-                    ? 'bg-muted text-muted-foreground opacity-50 cursor-not-allowed pointer-events-none'
-                    : 'hover:bg-accent cursor-pointer',
-                  activeCompany?.id === company.id && 'bg-accent'
-                )}
-              >
-                <CardContent>
-                  <CardTitle>{company.name}</CardTitle>
-                  <CardDescription>
-                    {company.created_at &&
-                      formatDate(company.created_at, 'd MMM yyyy')}
-                  </CardDescription>
-                  {company.numbers.length == 0 ? (
-                    <span className=" text-muted-foreground text-sm font-bold">
-                      No active numbers
-                    </span>
-                  ) : (
-                    <span className=" text-muted-foreground text-sm font-bold">
-                      {company.numbers.length} number
-                      {company.numbers.length > 1 && 's'}
-                    </span>
-                  )}
-                  {company.id === activeCompany?.id && <Check />}
-                </CardContent>
-              </Card>
-            ))
-          ) : (
-            <span className="text-center">Found no companies.</span>
-          )}
+        {/* Content area */}
+        <div className="px-3 sm:px-0 pb-3 sm:pb-0">
+          <div
+            className={clsx(
+              // Mobile: take remaining height; Desktop: keep your original max height
+              'overflow-y-auto',
+              'max-h-[unset] sm:max-h-[60vh]',
+              'h-[calc(92dvh-56px)] sm:h-auto' // subtract mobile header height
+            )}
+            style={{ paddingBottom: 'max(env(safe-area-inset-bottom),0px)' }}
+          >
+            {isFetching ? (
+              <div className="flex justify-center items-center py-16">
+                <Loader />
+              </div>
+            ) : companies && companies.length ? (
+              <div className="flex flex-col gap-3 sm:gap-4">
+                {companies.map((company) => {
+                  const disabled = company.numbers.length === 0;
+                  const isActive = activeCompany?.id === company.id;
+
+                  return (
+                    <Card
+                      key={company.id}
+                      onClick={() =>
+                        !disabled ? onSelectCompany(company) : null
+                      }
+                      role="button"
+                      tabIndex={disabled ? -1 : 0}
+                      aria-disabled={disabled}
+                      className={clsx(
+                        // larger tap target on mobile
+                        'transition-colors select-none',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                        disabled
+                          ? 'bg-muted text-muted-foreground opacity-60 cursor-not-allowed pointer-events-none'
+                          : 'hover:bg-accent cursor-pointer',
+                        isActive && 'bg-accent'
+                      )}
+                    >
+                      <CardContent className="py-4 px-4 sm:py-5 sm:px-6">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <CardTitle className="text-base sm:text-lg truncate">
+                              {company.name}
+                            </CardTitle>
+                            <CardDescription className="mt-0.5 text-xs sm:text-sm">
+                              {company.created_at &&
+                                formatDate(company.created_at, 'd MMM yyyy')}
+                            </CardDescription>
+                            <div className="mt-2">
+                              {company.numbers.length === 0 ? (
+                                <span className="text-muted-foreground text-xs sm:text-sm font-medium">
+                                  No active numbers
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground text-xs sm:text-sm font-medium">
+                                  {company.numbers.length} number
+                                  {company.numbers.length > 1 && 's'}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {isActive && (
+                            <Check className="h-5 w-5 shrink-0 mt-0.5" />
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="py-10 text-center text-sm text-muted-foreground">
+                Found no companies.
+              </div>
+            )}
+          </div>
         </div>
       </DialogContent>
     </Dialog>

@@ -1,7 +1,14 @@
 // src/app/settings/page.tsx
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Settings2, ShieldCheck } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import {
+  Bell,
+  BellOff,
+  Loader2,
+  Rocket,
+  Settings2,
+  ShieldCheck,
+} from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 
 import CompanySettingsDialog from '@/components/company-settings-dialog';
 import CreateCompanyDialog from '@/components/create-company-dialog';
@@ -10,6 +17,53 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useTRPC } from '@/lib/trpc';
 import type { Company } from 'api/types/db';
+
+/* -----------------------------------------------------------------------------
+ * Push helpers (inlined so this page is self-contained)
+ * ---------------------------------------------------------------------------*/
+function base64UrlToUint8Array(base64Url: string) {
+  const padding = '='.repeat((4 - (base64Url.length % 4)) % 4);
+  const base64 = (base64Url + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+const isPushSupported = () =>
+  'serviceWorker' in navigator && 'PushManager' in window;
+
+async function ensureNotificationPermission(): Promise<NotificationPermission> {
+  if (!('Notification' in window)) return 'denied';
+  if (Notification.permission !== 'default') return Notification.permission;
+  return Notification.requestPermission();
+}
+
+async function getOrCreateSubscription(vapidPublicKey: string) {
+  const reg = await navigator.serviceWorker.ready;
+  const existing = await reg.pushManager.getSubscription();
+  if (existing) return existing;
+  return reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: base64UrlToUint8Array(vapidPublicKey),
+  });
+}
+
+async function getExistingSubscription(): Promise<PushSubscription | null> {
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+
+async function unsubscribePush(): Promise<boolean> {
+  const sub = await getExistingSubscription();
+  return sub ? sub.unsubscribe() : false;
+}
+
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
+const isStandalone = () =>
+  window.matchMedia?.('(display-mode: standalone)').matches ||
+  // @ts-expect-error iOS Safari flag
+  !!window.navigator?.standalone;
+
+/* -------------------------------------------------------------------------- */
 
 function Settings() {
   const trpc = useTRPC();
@@ -42,8 +96,6 @@ function Settings() {
         return NaN;
     }
   }, [userInfo]);
-
-  console.log({ companies, maxCompanies });
 
   // Derive admin flag from user record
   const isAdmin = useMemo(
@@ -117,8 +169,198 @@ function Settings() {
 
   const canAddCompany = isAdmin || remainingSlots > 0;
 
+  /* -----------------------------------------------------------------------
+   * Notifications card state
+   * ---------------------------------------------------------------------*/
+  const VAPID = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
+
+  const [permission, setPermission] = useState<NotificationPermission>(
+    (typeof Notification !== 'undefined' && Notification.permission) ||
+      'default'
+  );
+  const [pushSupported, setPushSupported] = useState<boolean>(false);
+  const [hasSub, setHasSub] = useState<boolean>(false);
+  const [pushBusy, setPushBusy] = useState<boolean>(false);
+
+  // TRPC mutations for subscribe/unsubscribe/test
+  const subscribePushMutation = useMutation(
+    trpc.notifications.subscribePush.mutationOptions()
+  );
+  const unsubscribePushMutation = useMutation(
+    trpc.notifications.unsubscribePush.mutationOptions()
+  );
+  const sendTestPushMutation = useMutation(
+    trpc.notifications.sendTestPush.mutationOptions?.() ??
+      // fallback if you don’t expose sendTestPush in some envs
+      ({ mutationFn: async () => ({ ok: false }) } as any)
+  );
+
+  useEffect(() => {
+    setPushSupported(isPushSupported());
+    // check existing sub on mount
+    if (isPushSupported()) {
+      getExistingSubscription().then((s) => setHasSub(!!s));
+    }
+    // record current permission
+    if (typeof Notification !== 'undefined') {
+      setPermission(Notification.permission);
+    }
+  }, []);
+
+  const onEnablePush = async () => {
+    if (!isPushSupported()) {
+      alert('Push is not supported in this browser.');
+      return;
+    }
+    if (!VAPID) {
+      alert('VAPID public key is missing on the client.');
+      return;
+    }
+
+    // iOS: require A2HS to subscribe
+    if (isIOS() && !isStandalone()) {
+      alert(
+        'On iOS, install the app to your home screen to enable push notifications.'
+      );
+      return;
+    }
+
+    setPushBusy(true);
+    try {
+      const perm = await ensureNotificationPermission();
+      setPermission(perm);
+      if (perm !== 'granted') {
+        alert('Please allow notifications to enable push.');
+        return;
+      }
+
+      const sub = await getOrCreateSubscription(VAPID);
+      const json = sub.toJSON();
+
+      await subscribePushMutation.mutateAsync({
+        endpoint: json.endpoint!,
+        expirationTime: (json as any).expirationTime ?? null,
+        keys: {
+          p256dh: json.keys!.p256dh!,
+          auth: json.keys!.auth!,
+        },
+      });
+
+      setHasSub(true);
+    } catch (e: any) {
+      console.error('Enable push failed:', e);
+      alert(e?.message || 'Failed to enable push notifications.');
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const onDisablePush = async () => {
+    setPushBusy(true);
+    try {
+      const sub = await getExistingSubscription();
+      if (sub) {
+        await unsubscribePushMutation.mutateAsync({ endpoint: sub.endpoint });
+        await unsubscribePush();
+        setHasSub(false);
+      } else {
+        setHasSub(false);
+      }
+    } catch (e: any) {
+      console.error('Disable push failed:', e);
+      alert(e?.message || 'Failed to disable push notifications.');
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const onSendTest = async () => {
+    try {
+      await sendTestPushMutation.mutateAsync({
+        title: 'Hello from Switchboard',
+        body: 'If you can read this, push works!',
+        url: '/dashboard/inbox',
+      });
+      alert('Test push sent. Check your system notifications.');
+    } catch (e: any) {
+      console.error('Test push failed:', e);
+      alert(e?.message || 'Failed to send test push.');
+    }
+  };
+
   return (
     <div className="p-6 space-y-6">
+      {/* NOTIFICATIONS CARD (NEW) */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            Notifications
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          <div className="space-y-1.5">
+            <div>
+              Browser support:{' '}
+              <strong>{pushSupported ? 'Supported' : 'Not supported'}</strong>
+            </div>
+            <div>
+              Permission: <strong className="uppercase">{permission}</strong>
+            </div>
+            <div>
+              Subscription:{' '}
+              <strong>{hasSub ? 'Enabled' : 'Not enabled'}</strong>
+            </div>
+            {isIOS() && !isStandalone() && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
+                On iOS, push notifications require installing the app to your
+                Home Screen. Open this site in Safari, tap{' '}
+                <strong>Share</strong> → <strong>Add to Home Screen</strong>,
+                then open the installed app.
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-2 pt-1">
+            {!hasSub ? (
+              <Button
+                onClick={onEnablePush}
+                disabled={pushBusy || !pushSupported || permission === 'denied'}
+              >
+                {pushBusy ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Bell className="mr-2 h-4 w-4" />
+                )}
+                Enable push
+              </Button>
+            ) : (
+              <Button
+                variant="secondary"
+                onClick={onDisablePush}
+                disabled={pushBusy}
+              >
+                {pushBusy ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <BellOff className="mr-2 h-4 w-4" />
+                )}
+                Disable push
+              </Button>
+            )}
+
+            <Button
+              variant="outline"
+              onClick={onSendTest}
+              disabled={!hasSub || pushBusy}
+              title={!hasSub ? 'Enable push first' : 'Send a test notification'}
+            >
+              <Rocket className="mr-2 h-4 w-4" />
+              Send test
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* SUBSCRIPTION CARD */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
@@ -316,75 +558,6 @@ function Settings() {
         </CardContent>
       </Card>
 
-      {/* PAYMENT METHOD CARD */}
-      {/* <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Payment Method</CardTitle>
-          {isRefetching && !isAdmin && (
-            <span className="inline-flex items-center text-xs text-muted-foreground">
-              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-            </span>
-          )}
-        </CardHeader>
-
-        <CardContent className="space-y-3">
-          {isQueryBusy ? (
-            <div className="space-y-2">
-              <Skeleton className="h-4 w-56" />
-              <Skeleton className="h-4 w-40" />
-              {!isAdmin && (
-                <div className="pt-2">
-                  <Skeleton className="h-4 w-24 mb-2" />
-                  <Skeleton className="h-4 w-64" />
-                  <Skeleton className="h-4 w-52 mt-1" />
-                </div>
-              )}
-            </div>
-          ) : isAdmin ? (
-            <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
-              Admin accounts do not have payment methods.
-            </div>
-          ) : (
-            <>
-              {defaultPm ? (
-                <div className="text-sm">
-                  <div>
-                    Default:{' '}
-                    <strong className="uppercase">{defaultPm.brand}</strong>{' '}
-                    •••• {defaultPm.last4}
-                  </div>
-                  <div>
-                    Exp: {defaultPm.exp_month}/{defaultPm.exp_year}
-                  </div>
-                </div>
-              ) : (
-                <div className="text-sm text-muted-foreground">
-                  No default payment method on file.
-                </div>
-              )}
-
-              {billing?.payment_methods?.length ? (
-                <div className="text-sm">
-                  <div className="font-medium mb-1">All cards</div>
-                  <ul className="list-disc ml-5 space-y-1">
-                    {billing.payment_methods.map((pm) => (
-                      <li key={pm.id}>
-                        <span className="uppercase">{pm.brand}</span> ••••{' '}
-                        {pm.last4} (exp {pm.exp_month}/{pm.exp_year})
-                        {pm.is_default && (
-                          <span className="ml-2 text-xs px-2 py-0.5 rounded bg-muted">
-                            Default
-                          </span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-            </>
-          )}
-        </CardContent>
-      </Card> */}
       {/* COMPANIES CARD */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
@@ -478,7 +651,6 @@ function Settings() {
                             setCompanySettingOpen(true);
                           }}
                         >
-                          {' '}
                           <Settings2 />
                           Settings
                         </Button>
