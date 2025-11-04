@@ -11,6 +11,10 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+import('eruda').then((module) => {
+  module.default.init();
+});
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
