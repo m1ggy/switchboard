@@ -49,6 +49,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "date-fns": "^4.1.0",
+    "eruda": "^3.4.3",
     "firebase": "^11.7.1",
     "lib-jitsi-meet": "https://github.com/jitsi/lib-jitsi-meet/releases/download/v2012.0.0+86b76227/lib-jitsi-meet.tgz",
     "libphonenumber-js": "^1.12.8",
