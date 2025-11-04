@@ -65,14 +65,14 @@ export const PLAN_FEATURES: Record<PlanName, readonly FeatureKey[]> = {
 
 // --- Quick helpers ---
 export const hasFeature = (plan: PlanName, feature: FeatureKey): boolean =>
-  PLAN_FEATURES[plan].includes(feature);
+  (PLAN_FEATURES[plan] ?? []).includes(feature);
 
 export const getFeaturesForPlan = (plan: PlanName): readonly FeatureKey[] =>
   PLAN_FEATURES[plan];
 
 export const getPlansWithFeature = (feature: FeatureKey): PlanName[] =>
   (Object.keys(PLAN_FEATURES) as PlanName[]).filter((p) =>
-    PLAN_FEATURES[p].includes(feature)
+    (PLAN_FEATURES[p] ?? []).includes(feature)
   );
 
 // --- (Optional) pretty-print helpers ---
