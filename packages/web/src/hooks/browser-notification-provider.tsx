@@ -40,13 +40,31 @@ interface NotificationProviderProps {
 export const NotificationProvider: FC<NotificationProviderProps> = ({
   children,
 }) => {
-  const [permission, setPermission] = useState<NotificationPermission>(
-    Notification.permission
-  );
-  const originalTitle = useRef<string>(document.title);
-  const intervalId = useRef<NodeJS.Timeout | null>(null);
+  const isClient =
+    typeof window !== 'undefined' && typeof document !== 'undefined';
+  const isNotificationSupported =
+    isClient && typeof (window as any).Notification !== 'undefined';
 
+  const initialPermission: NotificationPermission = isNotificationSupported
+    ? Notification.permission
+    : 'denied';
+
+  const [permission, setPermission] =
+    useState<NotificationPermission>(initialPermission);
+
+  const originalTitle = useRef<string>('');
+  const intervalId = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Capture initial title on client
   useEffect(() => {
+    if (!isClient) return;
+    originalTitle.current = document.title;
+  }, [isClient]);
+
+  // Request permission (client + supported only)
+  useEffect(() => {
+    if (!isNotificationSupported) return;
+
     if (Notification.permission === 'default') {
       Notification.requestPermission().then((result) => {
         setPermission(result);
@@ -54,9 +72,23 @@ export const NotificationProvider: FC<NotificationProviderProps> = ({
     } else {
       setPermission(Notification.permission);
     }
-  }, []);
+  }, [isNotificationSupported]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (intervalId.current) {
+        clearInterval(intervalId.current);
+        intervalId.current = null;
+      }
+      if (isClient && originalTitle.current) {
+        document.title = originalTitle.current;
+      }
+    };
+  }, [isClient]);
 
   const startTabNotification = (message: string = '🔔 New Notification!') => {
+    if (!isClient) return;
     if (!intervalId.current) {
       intervalId.current = setInterval(() => {
         document.title =
@@ -68,10 +100,26 @@ export const NotificationProvider: FC<NotificationProviderProps> = ({
   };
 
   const stopTabNotification = () => {
+    if (!isClient) return;
     if (intervalId.current) {
       clearInterval(intervalId.current);
       intervalId.current = null;
-      document.title = originalTitle.current;
+      document.title = originalTitle.current || document.title;
+    }
+  };
+
+  const fallbackNotify = (title: string) => {
+    if (!isClient) return;
+    // Light haptic hint on supported devices
+    if ('vibrate' in navigator) {
+      navigator.vibrate(200);
+    }
+    // Minimal, universal fallback (optional – remove if you prefer silent fallback)
+    try {
+      // Avoid blocking UX; you can replace with an in-app toast instead.
+      alert(title);
+    } catch {
+      // no-op
     }
   };
 
@@ -79,14 +127,43 @@ export const NotificationProvider: FC<NotificationProviderProps> = ({
     title: string,
     options?: NotificationOptions
   ) => {
+    if (!isNotificationSupported) {
+      fallbackNotify(title);
+      return;
+    }
+
     if (permission === 'granted') {
-      new Notification(title, options);
+      try {
+        new Notification(title, options);
+      } catch (e) {
+        // Some environments (e.g., iOS non-PWA) may still throw
+        fallbackNotify(title);
+      }
+    } else if (permission === 'default') {
+      // Ask once, then try again
+      Notification.requestPermission().then((result) => {
+        setPermission(result);
+        if (result === 'granted') {
+          try {
+            new Notification(title, options);
+          } catch {
+            fallbackNotify(title);
+          }
+        } else {
+          fallbackNotify(title);
+        }
+      });
+    } else {
+      // 'denied'
+      fallbackNotify(title);
     }
   };
 
   const enableVisibilityNotification = (
     message: string = '🔔 New Notification!'
   ) => {
+    if (!isClient) return () => {};
+
     const handleVisibilityChange = () => {
       if (document.hidden) {
         startTabNotification(message);
@@ -99,6 +176,7 @@ export const NotificationProvider: FC<NotificationProviderProps> = ({
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      stopTabNotification();
     };
   };
 
