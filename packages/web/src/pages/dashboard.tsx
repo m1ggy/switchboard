@@ -118,7 +118,7 @@ function Dashboard() {
   return (
     <div
       className="min-h-dvh p-4 sm:p-6 space-y-5 sm:space-y-6
-                 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+                 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] my-8"
     >
       <header>
         <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">

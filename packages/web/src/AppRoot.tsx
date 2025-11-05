@@ -12,7 +12,6 @@ function AppRoot() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    console.log({ userInfo });
     if (!isLoading) {
       if (!userInfo) {
         navigate('/sign-in');
