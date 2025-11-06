@@ -19,8 +19,48 @@ import { useTRPC } from '@/lib/trpc';
 import type { Company } from 'api/types/db';
 
 /* -----------------------------------------------------------------------------
- * Push helpers (inlined so this page is self-contained)
+ * Push diagnostics + logging (REPLACES your previous push helpers)
  * ---------------------------------------------------------------------------*/
+
+const DEBUG_PUSH = true; // toggle as needed
+
+function dlog(...args: any[]) {
+  if (DEBUG_PUSH) console.log('[push]', ...args);
+}
+function dwarn(...args: any[]) {
+  if (DEBUG_PUSH) console.warn('[push]', ...args);
+}
+function derr(...args: any[]) {
+  if (DEBUG_PUSH) console.error('[push]', ...args);
+}
+
+function describeDomError(e: any) {
+  const name = e?.name || 'DOMException';
+  const msg = e?.message || String(e);
+  const code = e && 'code' in e ? e.code : undefined;
+  const cause = e?.cause ? String(e.cause) : undefined;
+
+  const hints: Record<string, string> = {
+    NotAllowedError: 'Permission was denied or the user blocked notifications.',
+    InvalidStateError:
+      'Often: existing subscription created with a different VAPID key, or SW scope mismatch.',
+    NotSupportedError:
+      'Push not supported in this context (iOS needs A2HS; some browsers disable Push).',
+    AbortError: 'Operation aborted (navigation/unload during subscribe).',
+    SecurityError: 'Requires HTTPS (or localhost).',
+    NotReadableError:
+      'Could not read key material. Check your VAPID key encoding.',
+    OperationError:
+      'Underlying operation failed. Check SW registration and key.',
+  };
+
+  return { name, msg, code, cause, hint: hints[name] };
+}
+
+function isValidBase64Url(s: string) {
+  return /^[A-Za-z0-9\-_]+$/.test(s);
+}
+
 function base64UrlToUint8Array(base64Url: string) {
   const padding = '='.repeat((4 - (base64Url.length % 4)) % 4);
   const base64 = (base64Url + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -37,14 +77,76 @@ async function ensureNotificationPermission(): Promise<NotificationPermission> {
   return Notification.requestPermission();
 }
 
-async function getOrCreateSubscription(vapidPublicKey: string) {
-  const reg = await navigator.serviceWorker.ready;
-  const existing = await reg.pushManager.getSubscription();
-  if (existing) return existing;
-  return reg.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: base64UrlToUint8Array(vapidPublicKey),
-  });
+async function diagnosePushEnvironment(vapidPublicKey?: string) {
+  const info: Record<string, any> = {
+    url: location.href,
+    origin: location.origin,
+    isSecureContext,
+    userAgent: navigator.userAgent,
+    supports: {
+      serviceWorker: 'serviceWorker' in navigator,
+      pushManager: 'PushManager' in window,
+      notification: 'Notification' in window,
+    },
+    permission:
+      typeof Notification !== 'undefined' ? Notification.permission : 'n/a',
+    iosStandalone: ((): boolean => {
+      const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+      const isStandalone =
+        window.matchMedia?.('(display-mode: standalone)').matches ||
+        // @ts-expect-error iOS Safari flag
+        !!window.navigator?.standalone;
+      return isIOS && isStandalone;
+    })(),
+    vapidProvided: !!vapidPublicKey,
+  };
+
+  if (vapidPublicKey) {
+    info.vapid = {
+      length: vapidPublicKey.length,
+      urlSafe: isValidBase64Url(vapidPublicKey),
+    };
+    try {
+      const key = base64UrlToUint8Array(vapidPublicKey);
+      info.vapidDecoded = {
+        byteLength: key.byteLength,
+        startsWith0x04: key[0] === 0x04, // uncompressed P-256
+      };
+    } catch (e) {
+      info.vapidDecodeError = String(e);
+    }
+  }
+
+  try {
+    if (info.supports.serviceWorker) {
+      const reg = await navigator.serviceWorker.ready;
+      info.sw = {
+        scope: reg.scope,
+        activeState: reg.active?.state,
+      };
+      const existing = await reg.pushManager.getSubscription();
+      if (existing) {
+        const json = existing.toJSON();
+        const url = new URL(json.endpoint!);
+        info.existingSubscription = {
+          endpointHost: url.host,
+          hasKeys: !!json.keys,
+          keyLengths: {
+            p256dh: json.keys?.p256dh?.length,
+            auth: json.keys?.auth?.length,
+          },
+          expirationTime: (json as any).expirationTime ?? null,
+        };
+      } else {
+        info.existingSubscription = null;
+      }
+    }
+  } catch (e) {
+    info.swDiagError = String(e);
+  }
+
+  dlog('diagnostics', info);
+  return info;
 }
 
 async function getExistingSubscription(): Promise<PushSubscription | null> {
@@ -52,9 +154,59 @@ async function getExistingSubscription(): Promise<PushSubscription | null> {
   return reg.pushManager.getSubscription();
 }
 
-async function unsubscribePush(): Promise<boolean> {
-  const sub = await getExistingSubscription();
-  return sub ? sub.unsubscribe() : false;
+async function getOrCreateSubscription(vapidPublicKey: string) {
+  const reg = await navigator.serviceWorker.ready;
+
+  const existing = await reg.pushManager.getSubscription();
+  if (existing) {
+    dlog('existing subscription found', existing);
+    return existing;
+  }
+
+  if (!vapidPublicKey || !isValidBase64Url(vapidPublicKey)) {
+    throw new Error('Invalid VAPID key: not URL-safe base64.');
+  }
+  const appServerKey = base64UrlToUint8Array(vapidPublicKey);
+  if (appServerKey.byteLength !== 65 || appServerKey[0] !== 0x04) {
+    dwarn('VAPID key decoded length/format looks off', {
+      byteLength: appServerKey.byteLength,
+      firstByte: appServerKey[0],
+    });
+  }
+
+  try {
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: appServerKey,
+    });
+    dlog('created subscription', sub);
+    return sub;
+  } catch (e: any) {
+    const desc = describeDomError(e);
+    derr('subscribe() failed', desc, e);
+    if (desc.name === 'InvalidStateError') {
+      dwarn(
+        'InvalidStateError may mean an old subscription exists under a different VAPID key. ' +
+          'Try Reset push (unsubscribe) and ensure the same VAPID key across environments.'
+      );
+    }
+    throw e;
+  }
+}
+
+async function unsubscribeLocalOnly(): Promise<boolean> {
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    dlog('unsubscribe: no existing subscription');
+    return false;
+  }
+  const ok = await sub.unsubscribe().catch((e) => {
+    derr('unsubscribe() failed', describeDomError(e));
+    return false;
+  });
+  dlog('unsubscribe local result', ok);
+  return ok;
 }
 
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -62,6 +214,12 @@ const isStandalone = () =>
   window.matchMedia?.('(display-mode: standalone)').matches ||
   // @ts-expect-error iOS Safari flag
   !!window.navigator?.standalone;
+
+if (DEBUG_PUSH) {
+  window.addEventListener('unhandledrejection', (ev) => {
+    derr('Unhandled promise rejection', ev.reason);
+  });
+}
 
 /* -------------------------------------------------------------------------- */
 
@@ -210,10 +368,12 @@ function Settings() {
   const onEnablePush = async () => {
     if (!isPushSupported()) {
       alert('Push is not supported in this browser.');
+      dlog('support check failed');
       return;
     }
     if (!VAPID) {
       alert('VAPID public key is missing on the client.');
+      dwarn('missing VAPID public key (VITE_VAPID_PUBLIC_KEY)');
       return;
     }
 
@@ -222,12 +382,16 @@ function Settings() {
       alert(
         'On iOS, install the app to your home screen to enable push notifications.'
       );
+      dwarn('iOS not standalone');
       return;
     }
 
     setPushBusy(true);
     try {
+      await diagnosePushEnvironment(VAPID);
+
       const perm = await ensureNotificationPermission();
+      dlog('permission result', perm);
       setPermission(perm);
       if (perm !== 'granted') {
         alert('Please allow notifications to enable push.');
@@ -236,20 +400,22 @@ function Settings() {
 
       const sub = await getOrCreateSubscription(VAPID);
       const json = sub.toJSON();
+      dlog('subscription json', json);
 
       await subscribePushMutation.mutateAsync({
         endpoint: json.endpoint!,
         expirationTime: (json as any).expirationTime ?? null,
-        keys: {
-          p256dh: json.keys!.p256dh!,
-          auth: json.keys!.auth!,
-        },
+        keys: { p256dh: json.keys!.p256dh!, auth: json.keys!.auth! },
       });
 
       setHasSub(true);
+      dlog('subscribePush: server ok');
     } catch (e: any) {
-      console.error('Enable push failed:', e);
-      alert(e?.message || 'Failed to enable push notifications.');
+      const desc = describeDomError(e);
+      derr('Enable push failed:', desc, e);
+      alert(
+        `${desc.name}: ${desc.msg}${desc.hint ? `\n\nHint: ${desc.hint}` : ''}`
+      );
     } finally {
       setPushBusy(false);
     }
@@ -258,17 +424,43 @@ function Settings() {
   const onDisablePush = async () => {
     setPushBusy(true);
     try {
+      await diagnosePushEnvironment();
+      const sub = await getExistingSubscription();
+      if (sub) {
+        // Notify server first (so it can delete by endpoint), then local unsubscribe
+        await unsubscribePushMutation.mutateAsync({ endpoint: sub.endpoint });
+        await unsubscribeLocalOnly();
+        setHasSub(false);
+        dlog('push disabled');
+      } else {
+        setHasSub(false);
+        dlog('no sub to disable');
+      }
+    } catch (e: any) {
+      derr('Disable push failed', describeDomError(e), e);
+      alert(e?.message || 'Failed to disable push.');
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  // Optional: recovery helper for mismatched VAPID or stuck subs
+  const resetPush = async () => {
+    setPushBusy(true);
+    try {
       const sub = await getExistingSubscription();
       if (sub) {
         await unsubscribePushMutation.mutateAsync({ endpoint: sub.endpoint });
-        await unsubscribePush();
-        setHasSub(false);
-      } else {
-        setHasSub(false);
+        await unsubscribeLocalOnly();
       }
-    } catch (e: any) {
-      console.error('Disable push failed:', e);
-      alert(e?.message || 'Failed to disable push notifications.');
+      // slight delay helps some browsers fully release the old sub
+      await new Promise((r) => setTimeout(r, 250));
+      setHasSub(false);
+      alert('Push reset complete. Try enabling again.');
+      dlog('reset push complete');
+    } catch (e) {
+      derr('resetPush failed', describeDomError(e), e);
+      alert('Reset failed. See console for details.');
     } finally {
       setPushBusy(false);
     }
@@ -290,7 +482,7 @@ function Settings() {
 
   return (
     <div className="p-6 space-y-6">
-      {/* NOTIFICATIONS CARD (NEW) */}
+      {/* NOTIFICATIONS CARD (UPDATED) */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="flex items-center gap-2">
@@ -356,6 +548,15 @@ function Settings() {
             >
               <Rocket className="mr-2 h-4 w-4" />
               Send test
+            </Button>
+
+            <Button
+              variant="ghost"
+              onClick={resetPush}
+              disabled={pushBusy}
+              title="Unsubscribe locally and on server; useful if VAPID or scope changed"
+            >
+              Reset push
             </Button>
           </div>
         </CardContent>
