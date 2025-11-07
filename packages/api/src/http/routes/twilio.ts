@@ -15,6 +15,7 @@ import {
   notifyNewMessage,
   notifyNewVoicemail,
 } from '@/lib/helpers';
+import { sendPushToUser } from '@/lib/push/push';
 import { callQueueManager } from '@/lib/queue';
 import { sendCallAlertToSlack } from '@/lib/slack';
 import { activeCallStore, presenceStore } from '@/lib/store';
@@ -140,7 +141,7 @@ async function routes(app: FastifyInstance) {
           .say(
             { voice: 'Polly.Amy', language: 'en-US' },
             `<speak>
-      <prosody rate="85%">
+      <prosody rate="100%">
         <break time="1000ms"/>
         Thank you for calling ${companyName}.
         <break time="700ms"/>
@@ -281,6 +282,22 @@ async function routes(app: FastifyInstance) {
         response.say(
           `Welcome to ${company?.name} Hotline, please wait while we connect you to an agent`
         );
+
+        const userCompany = await UserCompaniesRepository.findUserIdById(
+          company?.id as string
+        );
+
+        const user = await UsersRepository.findByFirebaseUid(
+          userCompany?.user_id as string
+        );
+        await sendPushToUser(user?.user_id as string, {
+          title: 'Incoming call from ' + slackMessageFromFormatted,
+          body: `You have an incoming call for ${slackMessageToFormatted}`,
+          url: '/dashboard',
+          icon: '/icons/icon-192.png',
+          badge: '/icons/icon-192.png',
+          tag: 'call',
+        });
         response.dial().conference(
           {
             startConferenceOnEnter: false,
@@ -726,6 +743,15 @@ async function routes(app: FastifyInstance) {
         amount: 1,
         type: mediaCount > 0 ? 'mms' : 'sms',
         id: randomUUID(),
+      });
+
+      await sendPushToUser(user?.user_id as string, {
+        title: 'You have a new message ',
+        body: `Message from ${contact.label}`,
+        url: '/dashboard',
+        icon: '/icons/icon-192.png',
+        badge: '/icons/icon-192.png',
+        tag: 'message',
       });
     }
 

@@ -107,12 +107,12 @@ export const notificationsRouter = t.router({
     )
     .mutation(async ({ ctx, input }) => {
       await sendPushToUser(ctx.user.uid, {
-        title: input?.title ?? 'Test notification',
-        body: input?.body ?? 'This is a test.',
+        title: input?.title ?? 'Incoming Call',
+        body: input?.body ?? 'hehe',
         url: input?.url ?? '/dashboard',
         icon: '/icons/icon-192.png',
         badge: '/icons/icon-192.png',
-        tag: input?.tag ?? 'test',
+        tag: input?.tag ?? 'zzz',
       });
       return { ok: true };
     }),
