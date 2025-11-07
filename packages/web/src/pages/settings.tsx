@@ -543,7 +543,7 @@ function Settings() {
             <Button
               variant="outline"
               onClick={onSendTest}
-              disabled={!hasSub || pushBusy}
+              // disabled={!hasSub || pushBusy}
               title={!hasSub ? 'Enable push first' : 'Send a test notification'}
             >
               <Rocket className="mr-2 h-4 w-4" />
