@@ -114,13 +114,6 @@ export const NotificationProvider: FC<NotificationProviderProps> = ({
     if ('vibrate' in navigator) {
       navigator.vibrate(200);
     }
-    // Minimal, universal fallback (optional – remove if you prefer silent fallback)
-    try {
-      // Avoid blocking UX; you can replace with an in-app toast instead.
-      alert(title);
-    } catch {
-      // no-op
-    }
   };
 
   const showSystemNotification = (
