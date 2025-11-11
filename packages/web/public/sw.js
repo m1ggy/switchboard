@@ -1,13 +1,12 @@
 // sw.js
-const CACHE_NAME = "app-shell-v2";
+const CACHE_NAME = "app-shell-v3";
 const APP_SHELL = [
   "/",
   "/index.html",
   "/manifest.webmanifest",
-  // helpful on first paint/splash:
   "/icons/icon-192.png",
   "/icons/icon-512.png",
-  "/calliya-logo.png"
+  "/calliya-logo.png",
 ];
 
 // Only cache http(s) requests
@@ -20,27 +19,38 @@ const isHttp = (urlStr) => {
   }
 };
 
+/* --------------------------- Message: skipWaiting --------------------------- */
+// Let the page activate the new SW on demand (after showing an Update button)
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
+
 /* -------------------------------- Install --------------------------------- */
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL))
-  );
-  // Immediately activate the new SW
-  self.skipWaiting();
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
+  // DO NOT auto-activate: we want a user-driven update flow
+  // self.skipWaiting();
 });
 
 /* -------------------------------- Activate -------------------------------- */
 self.addEventListener("activate", (event) => {
-  event.waitUntil((async () => {
-    // Cleanup old caches
-    const keys = await caches.keys();
-    await Promise.all(keys.map((k) => (k !== CACHE_NAME ? caches.delete(k) : null)));
+  event.waitUntil(
+    (async () => {
+      // Cleanup old caches
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => (k !== CACHE_NAME ? caches.delete(k) : null)));
 
-    // Speed up first navigation while SW warms up
-    if ("navigationPreload" in self.registration) {
-      try { await self.registration.navigationPreload.enable(); } catch {}
-    }
-  })());
+      // Speed up first navigation while SW warms up
+      if ("navigationPreload" in self.registration) {
+        try {
+          await self.registration.navigationPreload.enable();
+        } catch {}
+      }
+    })()
+  );
+
   // Start controlling existing clients ASAP
   self.clients.claim();
 });
@@ -59,50 +69,53 @@ self.addEventListener("fetch", (event) => {
 
   // ---- Navigation requests (SPA): network/preload first, fallback to index.html
   if (req.mode === "navigate") {
-    event.respondWith((async () => {
-      try {
-        // 1) Use any preloaded navigation response (fastest)
-        const preloaded = "navigationPreload" in self.registration
-          ? await event.preloadResponse
-          : null;
-        if (preloaded) {
-          caches.open(CACHE_NAME).then((c) => c.put(req, preloaded.clone())).catch(() => {});
-          return preloaded;
-        }
+    event.respondWith(
+      (async () => {
+        try {
+          // 1) Use any preloaded navigation response (fastest)
+          const preloaded =
+            "navigationPreload" in self.registration ? await event.preloadResponse : null;
+          if (preloaded) {
+            caches.open(CACHE_NAME).then((c) => c.put(req, preloaded.clone())).catch(() => {});
+            return preloaded;
+          }
 
-        // 2) Network
-        const netRes = await fetch(req);
-        if (netRes && netRes.ok) {
-          caches.open(CACHE_NAME).then((c) => c.put(req, netRes.clone())).catch(() => {});
-          return netRes;
-        }
+          // 2) Network
+          const netRes = await fetch(req);
+          if (netRes && netRes.ok) {
+            caches.open(CACHE_NAME).then((c) => c.put(req, netRes.clone())).catch(() => {});
+            return netRes;
+          }
 
-        // 3) Fallback (works for /calls, /?action=online, etc.)
-        return await caches.match("/index.html", { ignoreSearch: true });
-      } catch {
-        // Offline or network error → SPA fallback
-        return await caches.match("/index.html", { ignoreSearch: true });
-      }
-    })());
+          // 3) Fallback (works for /calls, /?action=online, etc.)
+          return await caches.match("/index.html", { ignoreSearch: true });
+        } catch {
+          // Offline or network error → SPA fallback
+          return await caches.match("/index.html", { ignoreSearch: true });
+        }
+      })()
+    );
     return;
   }
 
   // ---- Static & other assets: cache-first, then network; populate cache on success
-  event.respondWith((async () => {
-    const hit = await caches.match(req);
-    if (hit) return hit;
+  event.respondWith(
+    (async () => {
+      const hit = await caches.match(req);
+      if (hit) return hit;
 
-    try {
-      const res = await fetch(req);
-      if (res && res.ok && (res.type === "basic" || res.type === "opaque")) {
-        caches.open(CACHE_NAME).then((c) => c.put(req, res.clone())).catch(() => {});
+      try {
+        const res = await fetch(req);
+        if (res && res.ok && (res.type === "basic" || res.type === "opaque")) {
+          caches.open(CACHE_NAME).then((c) => c.put(req, res.clone())).catch(() => {});
+        }
+        return res;
+      } catch {
+        // last resort: give cached hit if any (usually null)
+        return hit || Response.error();
       }
-      return res;
-    } catch {
-      // last resort: give cached hit if any (usually null)
-      return hit || Response.error();
-    }
-  })());
+    })()
+  );
 });
 
 /* ========================================================================== */
@@ -138,7 +151,9 @@ async function openOrFocusUrl(targetUrl) {
   for (const client of clientsArr) {
     if (client.url.startsWith(self.location.origin) && "focus" in client) {
       await client.focus();
-      try { await client.navigate(absoluteUrl); } catch {}
+      try {
+        await client.navigate(absoluteUrl);
+      } catch {}
       return;
     }
   }

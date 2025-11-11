@@ -27,6 +27,7 @@ import { auth } from '@/lib/firebase';
 import { isAccountLocked } from '@/lib/utils';
 import AppLock from '@/pages/app-lock';
 import { signOut } from 'firebase/auth';
+import { AppUpdatePrompt } from './app-update-prompt';
 import NetworkStatusBanner from './network-status-banner';
 
 const ALLOWLIST_PREFIXES = ['/dashboard/settings'];
@@ -120,6 +121,8 @@ function Layout() {
                   onLogout={handleLogout}
                 />
               )}
+
+              <AppUpdatePrompt />
             </SidebarProvider>
           </JitsiProvider>
         </TwilioVoiceProvider>
