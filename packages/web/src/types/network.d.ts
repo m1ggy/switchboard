@@ -1,0 +1,12 @@
+interface NetworkInformation extends EventTarget {
+  readonly downlink: number;
+  readonly effectiveType: 'slow-2g' | '2g' | '3g' | '4g';
+  readonly rtt: number;
+  readonly saveData: boolean;
+  addEventListener(type: 'change', listener: () => void): void;
+  removeEventListener(type: 'change', listener: () => void): void;
+}
+
+interface Navigator {
+  connection?: NetworkInformation;
+}

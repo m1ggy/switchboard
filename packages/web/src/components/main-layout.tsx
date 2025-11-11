@@ -27,6 +27,7 @@ import { auth } from '@/lib/firebase';
 import { isAccountLocked } from '@/lib/utils';
 import AppLock from '@/pages/app-lock';
 import { signOut } from 'firebase/auth';
+import NetworkStatusBanner from './network-status-banner';
 
 const ALLOWLIST_PREFIXES = ['/dashboard/settings'];
 
@@ -98,6 +99,7 @@ function Layout() {
             <SidebarProvider className="transition-all">
               <BaseSidebar />
               <main className="w-full">
+                <NetworkStatusBanner />
                 <Header isLoggedIn />
                 <Outlet />
               </main>

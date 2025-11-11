@@ -51,6 +51,7 @@
     "date-fns": "^4.1.0",
     "eruda": "^3.4.3",
     "firebase": "^11.7.1",
+    "framer-motion": "^12.23.24",
     "lib-jitsi-meet": "https://github.com/jitsi/lib-jitsi-meet/releases/download/v2012.0.0+86b76227/lib-jitsi-meet.tgz",
     "libphonenumber-js": "^1.12.8",
     "lucide-react": "^0.508.0",

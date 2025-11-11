@@ -54,11 +54,9 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [hasReachedBottomOnce, setHasReachedBottomOnce] = useState(false);
   const [initialScrollDone, setInitialScrollDone] = useState(false);
-  // eslint-disable-next-line
   const [items, setItems] = useState<any[]>([]);
   const firstLoadRef = useRef(true);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-
   const [showFaxDialog, setShowFaxDialog] = useState(false);
 
   const { data: enabledFeatures } = useQuery(
@@ -187,6 +185,17 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
     isAtBottom,
   ]);
 
+  // ---- Autosizing textarea helpers (compact) ----
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  function autosizeTextarea(el: HTMLTextAreaElement | null) {
+    if (!el) return;
+    el.style.height = '0px';
+    const line = 20; // ~leading-5 (20px)
+    const max = line * 5; // cap at ~5 lines
+    const next = Math.min(el.scrollHeight, max);
+    el.style.height = `${next}px`;
+  }
+
   async function onSubmitMessage(data: { message: string }) {
     if (!contactId) return;
 
@@ -220,33 +229,23 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
         numberId: activeNumber?.id as string,
         attachments: mappedAttachments.length ? mappedAttachments : undefined,
       },
-      {
-        onSuccess: () => {
-          refetchMessages();
-        },
-      }
+      { onSuccess: () => refetchMessages() }
     );
 
     form.reset({ message: '' });
     clearAttachments();
+    requestAnimationFrame(() => autosizeTextarea(textareaRef.current));
   }
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || hasReachedBottomOnce) return;
-
     const checkScroll = () => {
       const isAtBottomInitially =
         el.scrollTop + el.clientHeight >= el.scrollHeight - 10;
-
-      if (isAtBottomInitially) {
-        setHasReachedBottomOnce(true);
-      }
+      if (isAtBottomInitially) setHasReachedBottomOnce(true);
     };
-
-    requestAnimationFrame(() => {
-      requestAnimationFrame(checkScroll);
-    });
+    requestAnimationFrame(() => requestAnimationFrame(checkScroll));
   }, [contactId, items.length, hasReachedBottomOnce]);
 
   useEffect(() => {
@@ -273,7 +272,6 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
     const el = scrollRef.current;
     const diff = el.scrollHeight - prevHeight;
     el.scrollTop = diff + 60;
-
     setPrevHeight(null);
   }, [data, prevHeight]);
 
@@ -305,10 +303,7 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
     };
 
     container.addEventListener('scroll', handleScroll);
-
-    delayedInitial = setTimeout(() => {
-      handleScroll();
-    }, 250);
+    delayedInitial = setTimeout(() => handleScroll(), 250);
 
     return () => {
       container.removeEventListener('scroll', handleScroll);
@@ -337,13 +332,12 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const { open, setOpen, files, setFiles, setIndex, index } = useLightbox();
 
-  // Fallback when parent didn't pass onBack: emit a window event
   const handleBack = () => {
     if (onBack) return onBack();
     try {
       window.dispatchEvent(new CustomEvent('messenger-back'));
     } catch {
-      // no-op
+      // noop
     }
   };
 
@@ -357,22 +351,20 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
     );
   }
 
-  // ====== LAYOUT (mobile-first 4-row grid) ======
   return (
     <div
       className="
-        grid grid-rows-[auto,1fr,auto,auto] w-full md:h-full
-        min-h-[100dvh] md:min-h-0
-        bg-background md:border-l
-      "
+    grid grid-rows-[auto,1fr,auto] w-full md:h-full
+    min-h-[100dvh] md:min-h-0
+    bg-background md:border-l
+  "
     >
-      {/* ROW 1: HEADER */}
+      {/* HEADER */}
       <div className="border-b px-2 md:px-4 py-2 font-medium h-12 flex items-center w-full">
         {isContactLoading ? (
           <Skeleton className="w-full h-6" />
         ) : (
           <div className="flex justify-between w-full items-center">
-            {/* Mobile-only Back button */}
             <div className="flex items-center gap-2">
               <Button
                 size="icon"
@@ -399,8 +391,9 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
                     variant="outline"
                     type="button"
                     onClick={() => setShowFaxDialog(true)}
+                    className="h-9 w-9"
                   >
-                    <Printer />
+                    <Printer className="h-4 w-4" />
                   </Button>
                 </TooltipStandalone>
               )}
@@ -410,22 +403,24 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
               ) && (
                 <TooltipStandalone content="Initiate Video Call">
                   <Button
-                    variant={'outline'}
-                    size={'icon'}
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9"
                     onClick={async () => {
                       setCurrentCallContactId(contact?.id as string);
                       await createRoom(contactId);
                       setActiveVideoCallDialogShown(true);
                     }}
                   >
-                    <Video />
+                    <Video className="h-4 w-4" />
                   </Button>
                 </TooltipStandalone>
               )}
               <TooltipStandalone content="Initiate Voice Call">
                 <Button
-                  variant={'outline'}
-                  size={'icon'}
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9"
                   onClick={() =>
                     makeCall({
                       To: contact?.number as string,
@@ -433,7 +428,7 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
                     })
                   }
                 >
-                  <Phone />
+                  <Phone className="h-4 w-4" />
                 </Button>
               </TooltipStandalone>
             </div>
@@ -441,7 +436,7 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
         )}
       </div>
 
-      {/* ROW 2: SCROLLABLE CONTENT */}
+      {/* MESSAGES */}
       <div
         className="min-h-0 overflow-y-auto scroll-smooth"
         ref={scrollRef}
@@ -500,9 +495,9 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
         )}
       </div>
 
-      {/* ROW 3: ATTACHMENTS */}
+      {/* ATTACHMENTS */}
       {attachments.length > 0 && (
-        <div className="px-5 pt-6 pb-4 flex flex-col gap-3 border-t">
+        <div className="px-4 pt-4 pb-3 flex flex-col gap-3 border-t max-h-44 overflow-y-auto">
           <Separator />
           <Label>
             Attachments{' '}
@@ -513,9 +508,9 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
               </TooltipStandalone>
             )}
           </Label>
-          <div className="grid grid-cols-6 gap-3 overflow-auto pb-2">
+          <div className="grid grid-cols-6 gap-3 overflow-auto pb-1">
             {attachments.map((file) => (
-              <div key={file.id} className="h-24">
+              <div key={file.id} className="h-20">
                 <AttachmentPreview
                   file={file}
                   onClose={() => removeAttachment(file.id)}
@@ -526,17 +521,24 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
         </div>
       )}
 
-      {/* ROW 4: COMPOSER / FOOTER */}
-      <div className="flex gap-2 px-5 py-5 items-center border-t pb-[calc(env(safe-area-inset-bottom)+1rem)]">
+      {/* COMPOSER (sticky + compact) */}
+      <div
+        className="
+          sticky bottom-0 z-10
+          flex gap-2 px-3 py-2 items-center border-t bg-background
+          md:pb-2 pb-[env(safe-area-inset-bottom)]
+        "
+      >
         {hasFeature(userInfo?.selected_plan as PlanName, 'mms') && (
           <TooltipStandalone content="Add Attachment">
             <Button
               size="icon"
               variant="outline"
               type="button"
+              className="h-9 w-9"
               onClick={() => inputRef.current?.click()}
             >
-              <Paperclip />
+              <Paperclip className="h-4 w-4" />
             </Button>
           </TooltipStandalone>
         )}
@@ -566,28 +568,38 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
               render={({ field }) => (
                 <FormControl>
                   <Textarea
-                    className="border rounded w-full resize-none max-h-48 overflow-y-auto ring-accent"
+                    ref={textareaRef}
+                    className="border rounded w-full resize-none max-h-40 overflow-y-auto ring-accent text-sm leading-5 px-3 py-2"
                     rows={1}
                     {...field}
+                    onInput={(e) => autosizeTextarea(e.currentTarget)}
+                    onFocus={(e) => autosizeTextarea(e.currentTarget)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
                         form.handleSubmit(onSubmitMessage)();
                       }
                     }}
+                    style={{ height: 'auto' }}
                   />
                 </FormControl>
               )}
             />
 
-            <Button size="icon" variant="outline" type="submit">
-              <Send />
+            <Button
+              size="icon"
+              variant="outline"
+              type="submit"
+              aria-label="Send message"
+              className="h-9 w-9"
+            >
+              <Send className="h-4 w-4" />
             </Button>
           </form>
         </Form>
       </div>
 
-      {/* Portals / Modals */}
+      {/* PORTALS / MODALS */}
       <Lightbox
         images={files}
         initialIndex={index}
