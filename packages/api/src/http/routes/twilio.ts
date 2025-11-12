@@ -78,6 +78,30 @@ export async function verifyTwilioRequest(
   if (!ok) return reply.code(403).send('Invalid Twilio signature');
 }
 
+async function getTransferableCallSid(
+  childOrParentSid?: string,
+  agentIdentity?: string
+) {
+  // If we got a CallSid from the client, try it
+  if (childOrParentSid) {
+    const leg = await twilioClient.client.calls(childOrParentSid).fetch();
+    if (leg.status === 'in-progress') return leg.sid;
+    const parentSid = (leg as any).parentCallSid as string | undefined;
+    if (parentSid) {
+      const parent = await twilioClient.client.calls(parentSid).fetch();
+      if (parent.status === 'in-progress') return parent.sid;
+    }
+  }
+  // Fallback: map from your own store using the agent identity (you add caller leg on /voice)
+  if (agentIdentity && typeof activeCallStore.findByAgent === 'function') {
+    const rec = activeCallStore
+      .findByAgent(agentIdentity)
+      .find((x) => x.sid === childOrParentSid);
+    if (rec?.sid) return rec.sid;
+  }
+  return null;
+}
+
 async function routes(app: FastifyInstance) {
   // 🔹 Voice Entry Point
   app.post(
@@ -788,37 +812,28 @@ async function routes(app: FastifyInstance) {
     { preHandler: authMiddleware },
     async (req, reply) => {
       const { callSid, to, agentIdentity } = req.body as {
-        callSid: string;
+        callSid?: string;
         to: string;
         agentIdentity?: string;
       };
+      if (!to) return reply.code(400).send({ error: 'Missing "to"' });
 
-      if (!callSid || !to) {
-        return reply.code(400).send({ error: 'Missing callSid or to' });
-      }
+      const transferableSid = await getTransferableCallSid(
+        callSid,
+        agentIdentity
+      );
+      if (!transferableSid)
+        return reply
+          .code(400)
+          .send({ error: 'No in-progress caller leg found' });
 
-      try {
-        // Log intent
-        console.log(`[ColdTransfer] Redirecting call ${callSid} to ${to}`);
+      await twilioClient.client.calls(transferableSid).update({
+        method: 'POST',
+        url: `${SERVER_DOMAIN}/twilio/twiml/forward?to=${encodeURIComponent(to)}`,
+      });
 
-        // Redirect the call to a TwiML endpoint that dials the new number
-        await twilioClient.client.calls(callSid).update({
-          method: 'POST',
-          url: `${SERVER_DOMAIN}/twilio/twiml/forward?to=${encodeURIComponent(
-            to
-          )}`,
-        });
-
-        // Optionally, mark the original agent idle
-        if (agentIdentity) {
-          presenceStore.setStatus(agentIdentity, 'idle');
-        }
-
-        return reply.send({ ok: true, message: 'Transfer initiated' });
-      } catch (error) {
-        console.error('[ColdTransfer] Error:', error);
-        return reply.code(500).send({ error: 'Transfer failed' });
-      }
+      if (agentIdentity) presenceStore.setStatus(agentIdentity, 'idle');
+      return reply.send({ ok: true });
     }
   );
 
