@@ -840,18 +840,11 @@ async function routes(app: FastifyInstance) {
   // TwiML responder that actually performs the dial
   app.post('/twiml/forward', async (req, reply) => {
     const { to } = req.query as { to: string };
-
     const r = new twiml.VoiceResponse();
 
     r.say('Transferring your call, please hold.');
 
-    // Construct the forward target with ivr=1
-    // If you're transferring to another Twilio number you own, make sure
-    // it hits your /voice handler with ?ivr=1 so the IVR step is skipped.
-    const transferTarget = to.startsWith('+')
-      ? `${SERVER_DOMAIN}/twilio/voice?To=${encodeURIComponent(to)}&ivr=1`
-      : to;
-
+    // Build the <Dial>
     const dial = r.dial({
       callerId:
         req.body?.To || req.body?.Called || process.env.TWILIO_CALLER_ID,
@@ -859,11 +852,21 @@ async function routes(app: FastifyInstance) {
       answerOnBridge: true,
     });
 
-    // PSTN / SIP / Client autodetect
-    if (transferTarget.startsWith('sip:')) dial.sip(transferTarget);
-    else if (transferTarget.startsWith('client:'))
-      dial.client(transferTarget.replace(/^client:/, ''));
-    else dial.number(transferTarget);
+    // Autodetect and dial properly
+    if (to.startsWith('sip:')) {
+      dial.sip(to);
+    } else if (to.startsWith('client:')) {
+      dial.client(to.replace(/^client:/, ''));
+    } else {
+      // PSTN number — use Twilio's `url` param on <Number> to pass ivr=1
+      dial.number(
+        {
+          // ✅ Twilio will fetch this TwiML when the new leg answers
+          url: `${SERVER_DOMAIN}/twilio/voice?ivr=1`,
+        },
+        to
+      );
+    }
 
     return reply.type('text/xml').send(r.toString());
   });
