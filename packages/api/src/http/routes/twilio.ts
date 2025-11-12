@@ -785,7 +785,7 @@ async function routes(app: FastifyInstance) {
   // Cold transfer: redirect a live call to a new number
   app.post(
     '/transfer/cold',
-    { preHandler: verifyTwilioRequest },
+    { preHandler: authMiddleware },
     async (req, reply) => {
       const { callSid, to, agentIdentity } = req.body as {
         callSid: string;
