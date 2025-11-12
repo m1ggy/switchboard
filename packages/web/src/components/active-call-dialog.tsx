@@ -16,13 +16,6 @@ import {
 } from './ui/dialog';
 
 import { auth } from '@/lib/firebase';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from './ui/select';
 
 function ActiveCallDialog() {
   const trpc = useTRPC();
@@ -272,7 +265,7 @@ function ActiveCallDialog() {
           </div>
 
           {/* ⬇️ New: Cold transfer controls */}
-          <div className="space-y-2">
+          {/* <div className="space-y-2">
             <div className="text-sm font-medium">Transfer to</div>
             <Select value={transferTo} onValueChange={setTransferTo}>
               <SelectTrigger className="w-full">
@@ -302,7 +295,7 @@ function ActiveCallDialog() {
                 {isTransferring ? 'Transferring…' : 'Cold Transfer'}
               </Button>
             </div>
-          </div>
+          </div> */}
         </div>
 
         <DialogFooter
