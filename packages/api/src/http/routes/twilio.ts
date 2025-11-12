@@ -842,32 +842,77 @@ async function routes(app: FastifyInstance) {
     const { to } = req.query as { to: string };
     const r = new twiml.VoiceResponse();
 
+    // Look up whether "to" is one of our Twilio numbers
+    let isInternal = false;
+    try {
+      const n = await NumbersRepository.findByNumber(to);
+      isInternal = Boolean(n);
+    } catch (_) {
+      isInternal = false;
+    }
+
+    if (isInternal) {
+      // INTERNAL TRANSFER: do not dial E.164 — redirect into our own TwiML that bypasses IVR
+      r.redirect(
+        { method: 'POST' },
+        `${SERVER_DOMAIN}/twilio/voice/transfer-direct?to=${encodeURIComponent(to)}`
+      );
+      return reply.type('text/xml').send(r.toString());
+    }
+
+    // EXTERNAL TRANSFER: normal PSTN dial
     r.say('Transferring your call, please hold.');
 
-    // Build the <Dial>
     const dial = r.dial({
       callerId:
         req.body?.To || req.body?.Called || process.env.TWILIO_CALLER_ID,
       timeout: 30,
       answerOnBridge: true,
+      action: `${SERVER_DOMAIN}/twilio/transfer/after-dial`, // handle failures cleanly
+      method: 'POST',
     });
 
-    // Autodetect and dial properly
     if (to.startsWith('sip:')) {
       dial.sip(to);
     } else if (to.startsWith('client:')) {
       dial.client(to.replace(/^client:/, ''));
     } else {
-      // PSTN number — use Twilio's `url` param on <Number> to pass ivr=1
-      dial.number(
-        {
-          // ✅ Twilio will fetch this TwiML when the new leg answers
-          url: `${SERVER_DOMAIN}/twilio/voice?ivr=1`,
-        },
-        to
-      );
+      dial.number(to); // external PSTN number
     }
 
+    return reply.type('text/xml').send(r.toString());
+  });
+
+  // Caller is already live on this leg; skip IVR and bridge immediately
+  app.post('/voice/transfer-direct', async (req, reply) => {
+    const { to } = req.query as { to: string };
+
+    const r = new twiml.VoiceResponse();
+
+    const dial = r.dial({
+      callerId:
+        req.body?.To || req.body?.Called || process.env.TWILIO_CALLER_ID,
+      timeout: 30,
+      answerOnBridge: true,
+      action: `${SERVER_DOMAIN}/twilio/transfer/after-dial`,
+      method: 'POST',
+    });
+    dial.number(to);
+
+    return reply.type('text/xml').send(r.toString());
+  });
+
+  app.post('/transfer/after-dial', async (req, reply) => {
+    const { DialCallStatus } = req.body as Record<string, string>;
+    const r = new twiml.VoiceResponse();
+
+    if (DialCallStatus === 'completed') {
+      return reply.type('text/xml').send(r.toString());
+    }
+
+    // fallback on failure/no-answer/busy
+    r.say('Sorry, the transfer could not be completed.');
+    r.redirect({ method: 'POST' }, `${SERVER_DOMAIN}/twilio/voice/voicemail`);
     return reply.type('text/xml').send(r.toString());
   });
 }
