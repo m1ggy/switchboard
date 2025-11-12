@@ -845,7 +845,13 @@ async function routes(app: FastifyInstance) {
 
     r.say('Transferring your call, please hold.');
 
-    // <Dial> forwards to PSTN,  SIP, or Twilio Client
+    // Construct the forward target with ivr=1
+    // If you're transferring to another Twilio number you own, make sure
+    // it hits your /voice handler with ?ivr=1 so the IVR step is skipped.
+    const transferTarget = to.startsWith('+')
+      ? `${SERVER_DOMAIN}/twilio/voice?To=${encodeURIComponent(to)}&ivr=1`
+      : to;
+
     const dial = r.dial({
       callerId:
         req.body?.To || req.body?.Called || process.env.TWILIO_CALLER_ID,
@@ -854,12 +860,10 @@ async function routes(app: FastifyInstance) {
     });
 
     // PSTN / SIP / Client autodetect
-    if (to.startsWith('sip:')) dial.sip(to);
-    else if (to.startsWith('client:')) dial.client(to.replace(/^client:/, ''));
-    else dial.number(to);
-
-    r.say('The call could not be completed. Goodbye.');
-    r.hangup();
+    if (transferTarget.startsWith('sip:')) dial.sip(transferTarget);
+    else if (transferTarget.startsWith('client:'))
+      dial.client(transferTarget.replace(/^client:/, ''));
+    else dial.number(transferTarget);
 
     return reply.type('text/xml').send(r.toString());
   });
