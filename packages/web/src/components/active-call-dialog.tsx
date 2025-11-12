@@ -280,7 +280,7 @@ function ActiveCallDialog() {
               </SelectTrigger>
               <SelectContent>
                 {transferOptions.length === 0 ? (
-                  <SelectItem value="" disabled>
+                  <SelectItem value="x" disabled>
                     No other numbers available
                   </SelectItem>
                 ) : (
