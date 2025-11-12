@@ -9,7 +9,21 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useTwilioVoice } from '@/hooks/twilio-provider';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+
+import useMainStore from '@/lib/store';
+import { useTRPC } from '@/lib/trpc';
+import { useQuery } from '@tanstack/react-query';
+
+// shadcn/ui Select
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { auth } from '@/lib/firebase';
 
 export function IncomingCallDialog() {
   const {
@@ -20,23 +34,92 @@ export function IncomingCallDialog() {
     activeCall,
   } = useTwilioVoice();
 
+  const { activeCompany, activeNumber } = useMainStore();
+  const trpc = useTRPC();
+
+  // Load companies so we can list numbers for the active company
+  const { data: companies } = useQuery({
+    ...trpc.companies.getUserCompanies.queryOptions(),
+    refetchOnWindowFocus: false,
+  });
+
   const open = callState === 'incoming' && !!incomingCall && !activeCall;
 
   // Normalize/clean the From number (e.g., strip "client:")
-  const fromLabel = useMemo(() => {
+  const normalizedFrom = useMemo(() => {
     const raw = incomingCall?.parameters?.From ?? 'Unknown';
     return typeof raw === 'string' ? raw.replace(/^client:/, '') : 'Unknown';
   }, [incomingCall?.parameters?.From]);
 
+  // 🔎 NEW: look up contact label using your new TRPC endpoint
+  const { data: foundContact } = useQuery({
+    ...trpc.contacts.findContactByNumber.queryOptions({
+      number: normalizedFrom,
+      companyId: activeCompany?.id as string,
+    }),
+    enabled:
+      open &&
+      !!activeCompany?.id &&
+      !!normalizedFrom &&
+      normalizedFrom !== 'Unknown',
+    refetchOnWindowFocus: false,
+  });
+
+  const fromLabel = foundContact?.label ?? normalizedFrom;
+
+  // Build transfer options: all numbers for the active company except the currently active number
+  const transferOptions = useMemo(() => {
+    if (!companies || !activeCompany?.id) return [];
+    const current = companies.find((c) => c.id === activeCompany.id);
+    const numbers = current?.numbers ?? [];
+    return numbers
+      .filter((n) => n.id !== activeNumber?.id)
+      .map((n) => ({ id: n.id, number: n.number, label: n.number }));
+  }, [companies, activeCompany?.id, activeNumber?.id]);
+
+  // Transfer state
+  const [transferTo, setTransferTo] = useState<string>('');
+  const [isTransferring, setIsTransferring] = useState(false);
+
+  const doColdTransfer = async () => {
+    if (!transferTo) return;
+
+    try {
+      setIsTransferring(true);
+
+      // Prefer the incoming leg CallSid if present
+      const callSid = incomingCall?.parameters?.CallSid;
+      const token = await auth.currentUser?.getIdToken();
+
+      await fetch(
+        `${import.meta.env.VITE_WEBSOCKET_URL}/twilio/transfer/cold`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            callSid, // may be undefined; backend can fallback using agentIdentity
+            to: transferTo,
+            agentIdentity: activeNumber?.number, // helps the server resolve the correct leg
+          }),
+        }
+      );
+    } catch (e) {
+      console.error('Cold transfer failed', e);
+    } finally {
+      setIsTransferring(false);
+    }
+  };
+
   return (
     <Dialog open={open}>
       <DialogContent
-        // Mobile: full-screen sheet; Desktop+: compact dialog
         className={[
           'p-0 max-w-none h-[100dvh] w-[100vw] rounded-none',
           'flex flex-col',
           'sm:max-w-sm sm:h-auto sm:w-auto sm:rounded-lg sm:p-6',
-          // hide default close button
           '[&>button:last-child]:hidden',
         ].join(' ')}
       >
@@ -57,10 +140,45 @@ export function IncomingCallDialog() {
           </p>
         </DialogHeader>
 
-        {/* Body (room for future details) */}
+        {/* Body */}
         <div className="flex-1 overflow-y-auto px-4 py-6 sm:p-0">
-          <div className="mx-auto max-w-xs text-center text-sm text-muted-foreground">
-            Tap a button below to accept or reject the call.
+          <div className="mx-auto max-w-xs text-center text-sm text-muted-foreground mb-6">
+            Tap a button below to accept or reject the call. Or transfer it
+            without answering.
+          </div>
+
+          {/* Transfer without answering */}
+          <div className="space-y-2">
+            <div className="text-sm font-medium">Transfer to</div>
+            <Select value={transferTo} onValueChange={setTransferTo}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select a number" />
+              </SelectTrigger>
+              <SelectContent>
+                {transferOptions.length === 0 ? (
+                  <SelectItem value="" disabled>
+                    No other numbers available
+                  </SelectItem>
+                ) : (
+                  transferOptions.map((opt) => (
+                    <SelectItem key={opt.id} value={opt.number}>
+                      {opt.label}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+            <div className="flex justify-center">
+              <Button
+                className="h-10"
+                disabled={!transferTo || isTransferring}
+                onClick={doColdTransfer}
+              >
+                {isTransferring
+                  ? 'Transferring…'
+                  : 'Transfer without answering'}
+              </Button>
+            </div>
           </div>
         </div>
 

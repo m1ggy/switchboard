@@ -780,6 +780,74 @@ async function routes(app: FastifyInstance) {
       }
     }
   );
+
+  // TRANSFER CALLS
+  // Cold transfer: redirect a live call to a new number
+  app.post(
+    '/transfer/cold',
+    { preHandler: verifyTwilioRequest },
+    async (req, reply) => {
+      const { callSid, to, agentIdentity } = req.body as {
+        callSid: string;
+        to: string;
+        agentIdentity?: string;
+      };
+
+      if (!callSid || !to) {
+        return reply.code(400).send({ error: 'Missing callSid or to' });
+      }
+
+      try {
+        // Log intent
+        console.log(`[ColdTransfer] Redirecting call ${callSid} to ${to}`);
+
+        // Redirect the call to a TwiML endpoint that dials the new number
+        await twilioClient.client.calls(callSid).update({
+          method: 'POST',
+          url: `${SERVER_DOMAIN}/twilio/twiml/forward?to=${encodeURIComponent(
+            to
+          )}`,
+        });
+
+        // Optionally, mark the original agent idle
+        if (agentIdentity) {
+          presenceStore.setStatus(agentIdentity, 'idle');
+        }
+
+        return reply.send({ ok: true, message: 'Transfer initiated' });
+      } catch (error) {
+        console.error('[ColdTransfer] Error:', error);
+        return reply.code(500).send({ error: 'Transfer failed' });
+      }
+    }
+  );
+
+  // TwiML responder that actually performs the dial
+  app.post('/twiml/forward', async (req, reply) => {
+    const { to } = req.query as { to: string };
+
+    const r = new twiml.VoiceResponse();
+
+    r.say('Transferring your call, please hold.');
+
+    // <Dial> forwards to PSTN,  SIP, or Twilio Client
+    const dial = r.dial({
+      callerId:
+        req.body?.To || req.body?.Called || process.env.TWILIO_CALLER_ID,
+      timeout: 30,
+      answerOnBridge: true,
+    });
+
+    // PSTN / SIP / Client autodetect
+    if (to.startsWith('sip:')) dial.sip(to);
+    else if (to.startsWith('client:')) dial.client(to.replace(/^client:/, ''));
+    else dial.number(to);
+
+    r.say('The call could not be completed. Goodbye.');
+    r.hangup();
+
+    return reply.type('text/xml').send(r.toString());
+  });
 }
 
 export default routes;

@@ -15,6 +15,15 @@ import {
   DialogTitle,
 } from './ui/dialog';
 
+import { auth } from '@/lib/firebase';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './ui/select';
+
 function ActiveCallDialog() {
   const trpc = useTRPC();
   const { activeCall, callState, hangUp, setActiveCall } = useTwilioVoice();
@@ -29,6 +38,12 @@ function ActiveCallDialog() {
     })
   );
 
+  // ⬇️ fetch companies so we can get the current company’s numbers
+  const { data: companies } = useQuery({
+    ...trpc.companies.getUserCompanies.queryOptions(),
+    refetchOnWindowFocus: false,
+  });
+
   const { mutateAsync: createCallLog } = useMutation(
     trpc.logs.createCallLog.mutationOptions()
   );
@@ -36,13 +51,15 @@ function ActiveCallDialog() {
     trpc.contacts.createContact.mutationOptions()
   );
 
+  // ⬇️ transfer UI state
+  const [transferTo, setTransferTo] = useState<string>('');
+  const [isTransferring, setIsTransferring] = useState(false);
+
   const [callerId, setCallerId] = useState('Unknown');
 
-  // Normalize a number from Twilio (strip client: etc.)
   const normalizeNumber = (n?: string | null) =>
     (n ?? '').replace(/^client:/, '').trim();
 
-  // Derive current counterparty number (memoized)
   const counterpartyNumber = useMemo(() => {
     if (!activeCall) return null;
     if (activeCall.direction === 'OUTGOING') {
@@ -51,7 +68,6 @@ function ActiveCallDialog() {
     return normalizeNumber(activeCall.parameters.From);
   }, [activeCall]);
 
-  // Update caller label when call/contacts available
   useEffect(() => {
     if (!contacts?.length || !counterpartyNumber) return;
     const match = contacts.find((c) => c.number === counterpartyNumber);
@@ -59,7 +75,16 @@ function ActiveCallDialog() {
     else setCallerId('Unknown');
   }, [contacts, counterpartyNumber]);
 
-  // Handle lifecycle + logging
+  // ⬇️ derive transfer targets: all company numbers except the *current* active number
+  const transferOptions = useMemo(() => {
+    if (!companies || !activeCompany?.id) return [];
+    const current = companies.find((c) => c.id === activeCompany.id);
+    const numbers = current?.numbers ?? [];
+    return numbers
+      .filter((n) => n.id !== activeNumber?.id) // don’t show the current device/number
+      .map((n) => ({ id: n.id, number: n.number, label: n.number }));
+  }, [companies, activeCompany?.id, activeNumber?.id]);
+
   useEffect(() => {
     if (activeCall && callState === 'connected') {
       setOpen(true);
@@ -134,7 +159,6 @@ function ActiveCallDialog() {
     trpc,
   ]);
 
-  // Tick duration while dialog is open
   useEffect(() => {
     if (!open) return;
     const interval = setInterval(() => setCallDuration((p) => p + 1), 1000);
@@ -161,30 +185,61 @@ function ActiveCallDialog() {
     setOpen(false);
   };
 
+  // ⬇️ action: call your cold transfer endpoint
+  const handleColdTransfer = async () => {
+    if (!activeCall || !transferTo) return;
+
+    try {
+      setIsTransferring(true);
+      const token = await auth.currentUser?.getIdToken();
+      const res = await fetch(
+        `${import.meta.env.VITE_WEBSOCKET_URL}/twilio/transfer/cold`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            callSid: activeCall.parameters.CallSid,
+            to: transferTo,
+            agentIdentity: activeNumber?.number,
+          }),
+        }
+      );
+
+      if (!res.ok) {
+        const msg = await res.text();
+        throw new Error(msg || 'Transfer failed');
+      }
+
+      // typically the agent leg ends on a cold transfer—feel free to hang up the UI call:
+      // hangUp();
+    } catch (e) {
+      console.error(e);
+      // optionally toast error
+    } finally {
+      setIsTransferring(false);
+    }
+  };
+
   return (
     <Dialog open={open}>
-      {/* Mobile: full-screen sheet; Desktop: compact dialog */}
       <DialogContent
         className={[
-          // mobile
           'p-0 max-w-none h-[100dvh] w-[100vw] rounded-none',
           'flex flex-col',
-          // desktop+
           'sm:max-w-sm sm:h-auto sm:w-auto sm:rounded-lg sm:p-6',
-          // hide the default close button (already in your original)
           '[&>button:last-child]:hidden',
         ].join(' ')}
       >
-        {/* Sticky header on mobile */}
         <DialogHeader
           className={[
             'px-4 pt-4 pb-2 sm:p-0',
             'border-b sm:border-0',
             'sticky top-0 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 z-10',
           ].join(' ')}
-          style={{
-            paddingTop: 'max(env(safe-area-inset-top), 1rem)',
-          }}
+          style={{ paddingTop: 'max(env(safe-area-inset-top), 1rem)' }}
         >
           <DialogTitle className="text-base sm:text-lg">
             📞 Call In Progress
@@ -198,40 +253,67 @@ function ActiveCallDialog() {
           </div>
         </DialogHeader>
 
-        {/* Scrollable body */}
+        {/* Body */}
         <div className="flex-1 overflow-y-auto px-4 py-4 sm:p-0">
-          <div className="grid grid-cols-3 gap-3 sm:gap-2">
+          {/* Dial pad */}
+          <div className="grid grid-cols-3 gap-3 sm:gap-2 mb-4">
             {['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map(
               (digit) => (
                 <Button
                   key={digit}
                   variant="outline"
                   className="h-14 text-xl sm:h-10 sm:text-base"
-                  onClick={() => {
-                    if (activeCall) activeCall.sendDigits(digit);
-                  }}
+                  onClick={() => activeCall?.sendDigits(digit)}
                 >
                   {digit}
                 </Button>
               )
             )}
           </div>
+
+          {/* ⬇️ New: Cold transfer controls */}
+          <div className="space-y-2">
+            <div className="text-sm font-medium">Transfer to</div>
+            <Select value={transferTo} onValueChange={setTransferTo}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select a number" />
+              </SelectTrigger>
+              <SelectContent>
+                {transferOptions.length === 0 ? (
+                  <SelectItem value="" disabled>
+                    No other numbers available
+                  </SelectItem>
+                ) : (
+                  transferOptions.map((opt) => (
+                    <SelectItem key={opt.id} value={opt.number}>
+                      {opt.label}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+
+            <div className="flex gap-2">
+              <Button
+                className="h-10"
+                disabled={!transferTo || isTransferring}
+                onClick={handleColdTransfer}
+              >
+                {isTransferring ? 'Transferring…' : 'Cold Transfer'}
+              </Button>
+            </div>
+          </div>
         </div>
 
-        {/* Sticky footer controls (mobile), regular footer (desktop) */}
         <DialogFooter
           className={[
             'gap-2',
-            // mobile sticky bar
             'px-4 py-4 border-t',
             'sticky bottom-0 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60',
-            // desktop spacing
             'sm:static sm:border-0 sm:bg-transparent sm:px-0 sm:py-0',
             'flex flex-col sm:flex-row sm:justify-center',
           ].join(' ')}
-          style={{
-            paddingBottom: 'max(env(safe-area-inset-bottom), 1rem)',
-          }}
+          style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 1rem)' }}
         >
           <div className="grid grid-cols-2 gap-2 w-full sm:w-auto">
             <Button

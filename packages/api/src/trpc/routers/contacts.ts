@@ -35,13 +35,14 @@ export const contactsRouter = t.router({
 
       return contact as Contact;
     }),
+
   getCompanyContacts: protectedProcedure
     .input(z.object({ companyId: z.string() }))
     .query(async ({ input }) => {
       const contacts = await ContactsRepository.findByCompany(input.companyId);
-
       return contacts as Contact[];
     }),
+
   updateCompanyContact: protectedProcedure
     .input(
       z.object({
@@ -60,11 +61,34 @@ export const contactsRouter = t.router({
 
       return updatedContact;
     }),
+
   findContactById: protectedProcedure
     .input(z.object({ contactId: z.string() }))
     .query(async ({ input }) => {
       const contact = await ContactsRepository.findById(input.contactId);
-
       return contact;
+    }),
+
+  // 🆕 Find contact by number (optionally scoped to company)
+  findContactByNumber: protectedProcedure
+    .input(
+      z.object({
+        number: z.string(),
+        companyId: z.string().optional(),
+      })
+    )
+    .query(async ({ input }) => {
+      let contact: Contact | null = null;
+
+      if (input.companyId) {
+        contact = await ContactsRepository.findByNumber(
+          input.number,
+          input.companyId
+        );
+      } else {
+        contact = await ContactsRepository.findByNumber(input.number);
+      }
+
+      return contact as Contact | null;
     }),
 });
