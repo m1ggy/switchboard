@@ -65,6 +65,8 @@ export function IncomingCallDialog() {
     refetchOnWindowFocus: false,
   });
 
+  console.log({ foundContact });
+
   const fromLabel = foundContact?.label ?? normalizedFrom;
 
   // Build transfer options: all numbers for the active company except the currently active number
