@@ -82,13 +82,35 @@ function ActiveCallDialog() {
 
   // derive transfer targets: all company numbers except the current active number
   const transferOptions = useMemo(() => {
-    if (!companies || !activeCompany?.id) return [];
-    const current = companies.find((c) => c.id === activeCompany.id);
-    const numbers = current?.numbers ?? [];
-    return numbers
-      .filter((n) => n.id !== activeNumber?.id)
-      .map((n) => ({ id: n.id, number: n.number, label: n.number }));
-  }, [companies, activeCompany?.id, activeNumber?.id]);
+    if (!companies) return [];
+
+    const seen = new Set<string>(); // de-dupe by number
+    const opts = [];
+
+    for (const c of companies) {
+      const nums = c?.numbers ?? [];
+      for (const n of nums) {
+        // skip the number you're currently using
+        if (n.id === activeNumber?.id) continue;
+
+        // de-dupe by actual phone number value
+        if (seen.has(n.number)) continue;
+        seen.add(n.number);
+
+        // include company context in label and a composite id to avoid collisions
+        opts.push({
+          id: `${c.id}:${n.id}`,
+          number: n.number,
+          label: `${n.number} — ${c.name}`,
+          companyId: c.id,
+          companyName: c.name,
+          numberId: n.id,
+        });
+      }
+    }
+
+    return opts;
+  }, [companies, activeNumber?.id]);
 
   useEffect(() => {
     if (activeCall && callState === 'connected') {
