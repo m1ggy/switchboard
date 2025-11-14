@@ -978,6 +978,31 @@ async function routes(app: FastifyInstance) {
       const conferenceName = warmConferenceNameForCall(transferableSid);
 
       try {
+        // 🔹 Fetch the existing leg so we can pick a valid Twilio callerId
+        const leg = await twilioClient.client.calls(transferableSid).fetch();
+
+        // For inbound: leg.to is your Twilio number
+        // For outbound-from-client: leg.from is your Twilio number
+        let fromNumber = '';
+
+        // Prefer an E.164/Twilio-ish number
+        if (typeof leg.to === 'string' && leg.to.startsWith('+')) {
+          fromNumber = leg.to;
+        } else if (typeof leg.from === 'string' && leg.from.startsWith('+')) {
+          fromNumber = leg.from;
+        }
+
+        // Last-resort fallback: if we still don't have anything, use the agent identity
+        if (!fromNumber && agentIdentity.startsWith('+')) {
+          fromNumber = agentIdentity;
+        }
+
+        if (!fromNumber) {
+          console.warn(
+            '[warm/create] Could not determine a proper fromNumber; Twilio may reject the call'
+          );
+        }
+
         // 1) Move the existing leg (caller side) into the conference
         await twilioClient.client.calls(transferableSid).update({
           method: 'POST',
@@ -988,7 +1013,7 @@ async function routes(app: FastifyInstance) {
 
         // 2) Call the current agent back into the same conference as a Client
         await twilioClient.client.calls.create({
-          from: process.env.TWILIO_CALLER_ID as string,
+          from: fromNumber, // 🔺 no env var anymore
           to: `client:${agentIdentity}`,
           url: `${SERVER_DOMAIN}/twilio/voice/warm-join-conference?name=${encodeURIComponent(
             conferenceName
