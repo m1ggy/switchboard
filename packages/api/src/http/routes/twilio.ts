@@ -82,23 +82,39 @@ async function getTransferableCallSid(
   childOrParentSid?: string,
   agentIdentity?: string
 ) {
-  // If we got a CallSid from the client, try it
   if (childOrParentSid) {
     const leg = await twilioClient.client.calls(childOrParentSid).fetch();
-    if (leg.status === 'in-progress') return leg.sid;
     const parentSid = (leg as any).parentCallSid as string | undefined;
+
+    // 🔹 Prefer parent (usually the original inbound caller leg)
     if (parentSid) {
-      const parent = await twilioClient.client.calls(parentSid).fetch();
-      if (parent.status === 'in-progress') return parent.sid;
+      try {
+        const parent = await twilioClient.client.calls(parentSid).fetch();
+        if (parent.status === 'in-progress') {
+          return parent.sid;
+        }
+      } catch (e) {
+        console.warn('[getTransferableCallSid] Failed to fetch parent leg', {
+          parentSid,
+          error: e,
+        });
+      }
+    }
+
+    // 🔹 Fall back to the leg we were given if it’s alive
+    if (leg.status === 'in-progress') {
+      return leg.sid;
     }
   }
-  // Fallback: map from your own store using the agent identity (you add caller leg on /voice)
+
+  // 🔹 Fallback: use your own store to find the caller leg for this agent
   if (agentIdentity && typeof activeCallStore.findByAgent === 'function') {
-    const rec = activeCallStore
-      .findByAgent(agentIdentity)
-      .find((x) => x.sid === childOrParentSid);
+    const recs = activeCallStore.findByAgent(agentIdentity);
+    // pick any in-progress sid here if you want to be smarter
+    const rec = recs[0];
     if (rec?.sid) return rec.sid;
   }
+
   return null;
 }
 
@@ -957,70 +973,54 @@ async function routes(app: FastifyInstance) {
     async (req, reply) => {
       const { callSid, agentIdentity } = req.body as {
         callSid?: string;
-        agentIdentity: string; // your client identity, e.g. the numberRecord.number
+        agentIdentity: string;
       };
 
       if (!agentIdentity) {
         return reply.code(400).send({ error: 'Missing "agentIdentity"' });
       }
 
-      // Find the in-progress caller leg (parent or child) same as cold transfer
-      const transferableSid = await getTransferableCallSid(
-        callSid,
-        agentIdentity
-      );
-      if (!transferableSid) {
+      // ✅ now returns the parent (caller) leg when possible
+      const callerSid = await getTransferableCallSid(callSid, agentIdentity);
+      if (!callerSid) {
         return reply
           .code(400)
           .send({ error: 'No in-progress caller leg found for warm transfer' });
       }
 
-      const conferenceName = warmConferenceNameForCall(transferableSid);
+      const conferenceName = warmConferenceNameForCall(callerSid);
 
       try {
-        // 🔹 Fetch the existing leg so we can pick a valid Twilio callerId
-        const leg = await twilioClient.client.calls(transferableSid).fetch();
+        // Fetch caller leg to derive fromNumber
+        const leg = await twilioClient.client.calls(callerSid).fetch();
 
-        // For inbound: leg.to is your Twilio number
-        // For outbound-from-client: leg.from is your Twilio number
         let fromNumber = '';
-
-        // Prefer an E.164/Twilio-ish number
         if (typeof leg.to === 'string' && leg.to.startsWith('+')) {
           fromNumber = leg.to;
         } else if (typeof leg.from === 'string' && leg.from.startsWith('+')) {
           fromNumber = leg.from;
         }
-
-        // Last-resort fallback: if we still don't have anything, use the agent identity
         if (!fromNumber && agentIdentity.startsWith('+')) {
           fromNumber = agentIdentity;
         }
 
-        if (!fromNumber) {
-          console.warn(
-            '[warm/create] Could not determine a proper fromNumber; Twilio may reject the call'
-          );
-        }
-
-        // 1) Move the existing leg (caller side) into the conference
-        await twilioClient.client.calls(transferableSid).update({
+        // 1) Move caller into conference
+        await twilioClient.client.calls(callerSid).update({
           method: 'POST',
           url: `${SERVER_DOMAIN}/twilio/voice/warm-join-conference?name=${encodeURIComponent(
             conferenceName
           )}`,
         });
 
-        // 2) Call the current agent back into the same conference as a Client
+        // 2) Call the agent back into the same conference as a Client
         await twilioClient.client.calls.create({
-          from: fromNumber, // 🔺 no env var anymore
+          from: fromNumber || undefined,
           to: `client:${agentIdentity}`,
           url: `${SERVER_DOMAIN}/twilio/voice/warm-join-conference?name=${encodeURIComponent(
             conferenceName
           )}`,
         });
 
-        // Mark agent as "on-call" (they'll answer the new leg)
         presenceStore.setStatus(agentIdentity, 'on-call');
 
         return reply.send({ ok: true, conferenceName });
