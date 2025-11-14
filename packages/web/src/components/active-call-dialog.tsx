@@ -14,7 +14,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from './ui/dialog';
-
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './ui/select';
+// adjust this import to wherever your Firebase auth is exported from
 import { auth } from '@/lib/firebase';
 
 function ActiveCallDialog() {
@@ -31,7 +38,6 @@ function ActiveCallDialog() {
     })
   );
 
-  // ⬇️ fetch companies so we can get the current company’s numbers
   const { data: companies } = useQuery({
     ...trpc.companies.getUserCompanies.queryOptions(),
     refetchOnWindowFocus: false,
@@ -44,9 +50,15 @@ function ActiveCallDialog() {
     trpc.contacts.createContact.mutationOptions()
   );
 
-  // ⬇️ transfer UI state
+  // transfer UI state
   const [transferTo, setTransferTo] = useState<string>('');
-  const [isTransferring, setIsTransferring] = useState(false);
+  const [isTransferring, setIsTransferring] = useState(false); // cold
+
+  // warm transfer state
+  const [isWarmBusy, setIsWarmBusy] = useState(false);
+  const [warmActive, setWarmActive] = useState(false);
+  const [isCompletingWarm, setIsCompletingWarm] = useState(false);
+  const [warmError, setWarmError] = useState<string | null>(null);
 
   const [callerId, setCallerId] = useState('Unknown');
 
@@ -68,13 +80,13 @@ function ActiveCallDialog() {
     else setCallerId('Unknown');
   }, [contacts, counterpartyNumber]);
 
-  // ⬇️ derive transfer targets: all company numbers except the *current* active number
+  // derive transfer targets: all company numbers except the current active number
   const transferOptions = useMemo(() => {
     if (!companies || !activeCompany?.id) return [];
     const current = companies.find((c) => c.id === activeCompany.id);
     const numbers = current?.numbers ?? [];
     return numbers
-      .filter((n) => n.id !== activeNumber?.id) // don’t show the current device/number
+      .filter((n) => n.id !== activeNumber?.id)
       .map((n) => ({ id: n.id, number: n.number, label: n.number }));
   }, [companies, activeCompany?.id, activeNumber?.id]);
 
@@ -128,6 +140,12 @@ function ActiveCallDialog() {
         setMuted(false);
         setCallDuration(0);
         setActiveCall(null);
+
+        // reset warm transfer state
+        setWarmActive(false);
+        setIsWarmBusy(false);
+        setIsCompletingWarm(false);
+        setWarmError(null);
       };
 
       activeCall.on('disconnect', onDisconnect);
@@ -178,14 +196,17 @@ function ActiveCallDialog() {
     setOpen(false);
   };
 
-  // ⬇️ action: call your cold transfer endpoint
-  const handleColdTransfer = async () => {
-    if (!activeCall || !transferTo) return;
+  // 🔹 Cold transfer, using your fetch pattern
+  const doColdTransfer = async () => {
+    if (!transferTo || !activeCall || !activeNumber?.number) return;
 
     try {
       setIsTransferring(true);
+
+      const callSid = activeCall.parameters.CallSid;
       const token = await auth.currentUser?.getIdToken();
-      const res = await fetch(
+
+      await fetch(
         `${import.meta.env.VITE_WEBSOCKET_URL}/twilio/transfer/cold`,
         {
           method: 'POST',
@@ -194,25 +215,122 @@ function ActiveCallDialog() {
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            callSid: activeCall.parameters.CallSid,
+            callSid, // backend can fall back using agentIdentity if needed
             to: transferTo,
-            agentIdentity: activeNumber?.number,
+            agentIdentity: activeNumber.number,
+          }),
+        }
+      );
+
+      // after cold transfer, we typically hang up our leg
+      hangUp();
+    } catch (e) {
+      console.error('Cold transfer failed', e);
+    } finally {
+      setIsTransferring(false);
+    }
+  };
+
+  // 🔥 Warm transfer (create conference + add target) with same pattern
+  const doWarmTransfer = async () => {
+    if (!transferTo || !activeCall || !activeNumber?.number) return;
+
+    setWarmError(null);
+    setIsWarmBusy(true);
+
+    try {
+      const callSid = activeCall.parameters.CallSid;
+      const token = await auth.currentUser?.getIdToken();
+
+      // 1) upgrade current call to warm conference
+      const res1 = await fetch(
+        `${import.meta.env.VITE_WEBSOCKET_URL}/twilio/transfer/warm/create`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            callSid,
+            agentIdentity: activeNumber.number,
+          }),
+        }
+      );
+
+      if (!res1.ok) {
+        const data = await res1.json().catch(() => null);
+        throw new Error(data?.error || 'Failed to start warm transfer');
+      }
+
+      // 2) add the chosen target into the warm conference
+      const res2 = await fetch(
+        `${import.meta.env.VITE_WEBSOCKET_URL}/twilio/transfer/warm/add-party`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            callSid,
+            to: transferTo,
+          }),
+        }
+      );
+
+      if (!res2.ok) {
+        const data = await res2.json().catch(() => null);
+        throw new Error(data?.error || 'Failed to add party to warm transfer');
+      }
+
+      setWarmActive(true);
+    } catch (e: any) {
+      console.error('Warm transfer failed', e);
+      setWarmError(e?.message || 'Warm transfer failed');
+      setWarmActive(false);
+    } finally {
+      setIsWarmBusy(false);
+    }
+  };
+
+  // ✅ Complete warm transfer: drop this agent from 3-way
+  const completeWarmTransfer = async () => {
+    if (!activeCall || !activeNumber?.number) return;
+
+    setWarmError(null);
+    setIsCompletingWarm(true);
+
+    try {
+      const callSid = activeCall.parameters.CallSid;
+      const token = await auth.currentUser?.getIdToken();
+
+      const res = await fetch(
+        `${import.meta.env.VITE_WEBSOCKET_URL}/twilio/transfer/warm/complete`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            callSid,
+            agentIdentity: activeNumber.number,
           }),
         }
       );
 
       if (!res.ok) {
-        const msg = await res.text();
-        throw new Error(msg || 'Transfer failed');
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'Failed to complete warm transfer');
       }
 
-      // typically the agent leg ends on a cold transfer—feel free to hang up the UI call:
-      // hangUp();
-    } catch (e) {
-      console.error(e);
-      // optionally toast error
+      // Twilio should disconnect our leg; onDisconnect handler will clean up UI
+    } catch (e: any) {
+      console.error('Complete warm transfer failed', e);
+      setWarmError(e?.message || 'Failed to complete warm transfer');
     } finally {
-      setIsTransferring(false);
+      setIsCompletingWarm(false);
     }
   };
 
@@ -264,8 +382,8 @@ function ActiveCallDialog() {
             )}
           </div>
 
-          {/* ⬇️ New: Cold transfer controls */}
-          {/* <div className="space-y-2">
+          {/* Transfer controls */}
+          <div className="space-y-2">
             <div className="text-sm font-medium">Transfer to</div>
             <Select value={transferTo} onValueChange={setTransferTo}>
               <SelectTrigger className="w-full">
@@ -286,16 +404,48 @@ function ActiveCallDialog() {
               </SelectContent>
             </Select>
 
-            <div className="flex gap-2">
+            {warmError && (
+              <div className="text-xs text-destructive">{warmError}</div>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              {/* Cold transfer */}
               <Button
                 className="h-10"
-                disabled={!transferTo || isTransferring}
-                onClick={handleColdTransfer}
+                variant="outline"
+                disabled={
+                  !transferTo || isTransferring || callState !== 'connected'
+                }
+                onClick={doColdTransfer}
               >
                 {isTransferring ? 'Transferring…' : 'Cold Transfer'}
               </Button>
+
+              {/* Warm transfer */}
+              <Button
+                className="h-10"
+                disabled={
+                  !transferTo ||
+                  isWarmBusy ||
+                  callState !== 'connected' ||
+                  warmActive
+                }
+                onClick={doWarmTransfer}
+              >
+                {isWarmBusy ? 'Starting Warm…' : 'Warm Transfer'}
+              </Button>
+
+              {/* Complete warm (drop myself) */}
+              <Button
+                className="h-10"
+                variant="secondary"
+                disabled={!warmActive || isCompletingWarm}
+                onClick={completeWarmTransfer}
+              >
+                {isCompletingWarm ? 'Completing…' : 'Complete Warm Transfer'}
+              </Button>
             </div>
-          </div> */}
+          </div>
         </div>
 
         <DialogFooter

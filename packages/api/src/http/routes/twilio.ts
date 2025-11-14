@@ -102,6 +102,10 @@ async function getTransferableCallSid(
   return null;
 }
 
+function warmConferenceNameForCall(callSid: string) {
+  return `warm-${callSid}`;
+}
+
 async function routes(app: FastifyInstance) {
   // 🔹 Voice Entry Point
   app.post(
@@ -915,6 +919,225 @@ async function routes(app: FastifyInstance) {
     r.redirect({ method: 'POST' }, `${SERVER_DOMAIN}/twilio/voice/voicemail`);
     return reply.type('text/xml').send(r.toString());
   });
+
+  // Join a call leg into a named warm-transfer conference
+  app.post('/voice/warm-join-conference', async (req, reply) => {
+    const { name } = req.query as { name: string };
+
+    const r = new twiml.VoiceResponse();
+
+    const dial = r.dial({
+      // Keep it generic; Twilio will already know callerId for this leg
+      callerId:
+        (req.body?.To as string) ||
+        (req.body?.Called as string) ||
+        process.env.TWILIO_CALLER_ID,
+    });
+
+    dial.conference(
+      {
+        startConferenceOnEnter: true,
+        endConferenceOnExit: false,
+        statusCallback: `${SERVER_DOMAIN}/twilio/voice/conference-events`,
+        statusCallbackMethod: 'POST',
+        statusCallbackEvent: ['join', 'leave'],
+        waitUrl: `${SERVER_DOMAIN}/twilio/voice/hold-music`,
+        waitMethod: 'GET',
+      },
+      name
+    );
+
+    return reply.type('text/xml').status(200).send(r.toString());
+  });
+
+  // WARM TRANSFER (step 1): upgrade current call to a conference
+  app.post(
+    '/transfer/warm/create',
+    { preHandler: authMiddleware },
+    async (req, reply) => {
+      const { callSid, agentIdentity } = req.body as {
+        callSid?: string;
+        agentIdentity: string; // your client identity, e.g. the numberRecord.number
+      };
+
+      if (!agentIdentity) {
+        return reply.code(400).send({ error: 'Missing "agentIdentity"' });
+      }
+
+      // Find the in-progress caller leg (parent or child) same as cold transfer
+      const transferableSid = await getTransferableCallSid(
+        callSid,
+        agentIdentity
+      );
+      if (!transferableSid) {
+        return reply
+          .code(400)
+          .send({ error: 'No in-progress caller leg found for warm transfer' });
+      }
+
+      const conferenceName = warmConferenceNameForCall(transferableSid);
+
+      try {
+        // 1) Move the existing leg (caller side) into the conference
+        await twilioClient.client.calls(transferableSid).update({
+          method: 'POST',
+          url: `${SERVER_DOMAIN}/twilio/voice/warm-join-conference?name=${encodeURIComponent(
+            conferenceName
+          )}`,
+        });
+
+        // 2) Call the current agent back into the same conference as a Client
+        await twilioClient.client.calls.create({
+          from: process.env.TWILIO_CALLER_ID as string,
+          to: `client:${agentIdentity}`,
+          url: `${SERVER_DOMAIN}/twilio/voice/warm-join-conference?name=${encodeURIComponent(
+            conferenceName
+          )}`,
+        });
+
+        // Mark agent as "on-call" (they'll answer the new leg)
+        presenceStore.setStatus(agentIdentity, 'on-call');
+
+        return reply.send({ ok: true, conferenceName });
+      } catch (err) {
+        console.error('[warm/create] Failed to create warm conference', err);
+        return reply
+          .code(500)
+          .send({ error: 'Failed to create warm transfer' });
+      }
+    }
+  );
+
+  // WARM TRANSFER (step 2): add a new party into the existing warm conference
+  app.post(
+    '/transfer/warm/add-party',
+    { preHandler: authMiddleware },
+    async (req, reply) => {
+      const { callSid, to } = req.body as {
+        callSid: string; // original caller/transferable CallSid
+        to: string; // '+E164', 'sip:..', or 'client:identity'
+      };
+
+      if (!callSid || !to) {
+        return reply
+          .code(400)
+          .send({ error: 'Missing "callSid" or "to" for warm add-party' });
+      }
+
+      const conferenceName = warmConferenceNameForCall(callSid);
+
+      try {
+        const fromCallerId =
+          process.env.TWILIO_CALLER_ID ||
+          (req.body?.To as string) ||
+          (req.body?.Called as string);
+
+        const callOpts: twilio.Twilio.Api.V2010.AccountContext.CallListInstanceCreateOptions =
+          {
+            from: fromCallerId,
+            url: `${SERVER_DOMAIN}/twilio/voice/warm-join-conference?name=${encodeURIComponent(
+              conferenceName
+            )}`,
+          };
+
+        if (
+          to.startsWith('sip:') ||
+          to.startsWith('client:') ||
+          to.startsWith('+')
+        ) {
+          callOpts.to = to;
+        } else {
+          // assume PSTN if not prefixed
+          callOpts.to = to;
+        }
+
+        await twilioClient.client.calls.create(callOpts);
+
+        return reply.send({ ok: true, conferenceName });
+      } catch (err) {
+        console.error('[warm/add-party] Failed to add new party', err);
+        return reply
+          .code(500)
+          .send({ error: 'Failed to add party to warm transfer' });
+      }
+    }
+  );
+
+  // WARM TRANSFER (step 3): drop the current agent from the conference
+  app.post(
+    '/transfer/warm/complete',
+    { preHandler: authMiddleware },
+    async (req, reply) => {
+      const { agentIdentity, callSid } = req.body as {
+        agentIdentity: string;
+        callSid: string; // original caller callSid used to build conferenceName
+      };
+
+      if (!agentIdentity || !callSid) {
+        return reply
+          .code(400)
+          .send({ error: 'Missing "agentIdentity" or "callSid"' });
+      }
+
+      try {
+        // We expect conferenceSid to have been captured in /voice/conference-events
+        const conferenceName = warmConferenceNameForCall(callSid);
+
+        // Look up the conference by friendlyName
+        const conferences = await twilioClient.client.conferences.list({
+          friendlyName: conferenceName,
+          status: 'in-progress',
+          limit: 1,
+        });
+
+        const conference = conferences[0];
+        if (!conference) {
+          return reply
+            .code(404)
+            .send({ error: 'No active warm conference found for this call' });
+        }
+
+        const participants = await twilioClient.client
+          .conferences(conference.sid)
+          .participants.list({ limit: 50 });
+
+        // Heuristic: the agent leg is usually the one whose "to" is client:agentIdentity
+        const agentParticipant = participants.find((p) => {
+          // p.callSid can be fetched in more detail, but Twilio doesn't expose "to" directly here.
+          // If you label your participants on create, you can match that label instead.
+          return (p.label && p.label === agentIdentity) || false;
+        });
+
+        if (!agentParticipant) {
+          console.warn(
+            '[warm/complete] Could not find agent participant in conference',
+            { agentIdentity, conferenceSid: conference.sid }
+          );
+          return reply
+            .code(404)
+            .send({ error: 'Agent not found in conference participants' });
+        }
+
+        await twilioClient.client
+          .conferences(conference.sid)
+          .participants(agentParticipant.accountSid)
+          .update({ status: 'completed' });
+
+        // Mark the original agent idle again
+        presenceStore.setStatus(agentIdentity, 'idle');
+
+        return reply.send({ ok: true });
+      } catch (err) {
+        console.error(
+          '[warm/complete] Failed to remove agent from warm transfer',
+          err
+        );
+        return reply
+          .code(500)
+          .send({ error: 'Failed to complete warm transfer' });
+      }
+    }
+  );
 }
 
 export default routes;
