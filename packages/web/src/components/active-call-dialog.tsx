@@ -446,12 +446,7 @@ function ActiveCallDialog() {
               {/* Warm transfer */}
               <Button
                 className="h-10"
-                disabled={
-                  !transferTo ||
-                  isWarmBusy ||
-                  callState !== 'connected' ||
-                  warmActive
-                }
+                disabled={!transferTo || isWarmBusy || warmActive}
                 onClick={doWarmTransfer}
               >
                 {isWarmBusy ? 'Starting Warm…' : 'Warm Transfer'}
