@@ -1040,7 +1040,7 @@ async function routes(app: FastifyInstance) {
     async (req, reply) => {
       const { callSid, to } = req.body as {
         callSid: string; // original caller/transferable CallSid
-        to: string; // '+E164', 'sip:..', or 'client:identity'
+        to: string; // '+E164', 'sip:..', 'client:identity', or internal number
       };
 
       if (!callSid || !to) {
@@ -1052,31 +1052,36 @@ async function routes(app: FastifyInstance) {
       const conferenceName = warmConferenceNameForCall(callSid);
 
       try {
-        const fromCallerId =
-          process.env.TWILIO_CALLER_ID ||
-          (req.body?.To as string) ||
-          (req.body?.Called as string);
+        // 🔹 Fetch the existing call leg to determine a valid callerId
+        const leg = await twilioClient.client.calls(callSid).fetch();
 
-        const callOpts: twilio.Twilio.Api.V2010.AccountContext.CallListInstanceCreateOptions =
-          {
-            from: fromCallerId,
-            url: `${SERVER_DOMAIN}/twilio/voice/warm-join-conference?name=${encodeURIComponent(
-              conferenceName
-            )}`,
-          };
+        // For inbound calls: leg.to is your Twilio number
+        // For outbound-from-client: leg.from is your Twilio number (usually)
+        let fromNumber = '';
 
-        if (
-          to.startsWith('sip:') ||
-          to.startsWith('client:') ||
-          to.startsWith('+')
-        ) {
-          callOpts.to = to;
-        } else {
-          // assume PSTN if not prefixed
-          callOpts.to = to;
+        if (typeof leg.to === 'string' && leg.to.startsWith('+')) {
+          fromNumber = leg.to;
+        } else if (typeof leg.from === 'string' && leg.from.startsWith('+')) {
+          fromNumber = leg.from;
         }
 
-        await twilioClient.client.calls.create(callOpts);
+        if (!fromNumber) {
+          console.error('[warm/add-party] Could not determine fromNumber', {
+            legFrom: leg.from,
+            legTo: leg.to,
+          });
+          return reply
+            .code(500)
+            .send({ error: 'Could not determine callerId for warm add-party' });
+        }
+
+        await twilioClient.client.calls.create({
+          from: fromNumber, // ✅ now we always send a valid "from"
+          to,
+          url: `${SERVER_DOMAIN}/twilio/voice/warm-join-conference?name=${encodeURIComponent(
+            conferenceName
+          )}`,
+        });
 
         return reply.send({ ok: true, conferenceName });
       } catch (err) {
