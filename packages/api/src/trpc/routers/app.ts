@@ -9,6 +9,7 @@ import { notificationsRouter } from './notifications';
 import { numbersRouter } from './numbers';
 import { onboardingRouter } from './onboarding';
 import { pingRouter } from './ping';
+import { reassuranceSchedulesRouter } from './reasuranceSchedules';
 import { shortUrlRouter } from './shortUrls';
 import { statisticsRouter } from './statistics';
 import { stripeRouter } from './stripe';
@@ -34,6 +35,7 @@ export const appRouter = t.router({
   onboarding: onboardingRouter,
   stripe: stripeRouter,
   subscription: subscriptionRouter,
+  reassuranceSchedules: reassuranceSchedulesRouter,
 });
 
 export type AppRouter = typeof appRouter;

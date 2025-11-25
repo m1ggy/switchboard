@@ -20,6 +20,7 @@ import { createContext } from './trpc/context';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import companiesRoutes from './http/routes/companies';
+import { registerReassuranceCron } from './lib/jobs/reassurance';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -112,6 +113,8 @@ app.register(faxRoutes, { prefix: '/fax' });
 app.register(stripeRoutes, { prefix: '/stripe' });
 
 app.register(companiesRoutes, { prefix: '/companies' });
+
+registerReassuranceCron(app);
 
 app.listen({ port: 3000 }, () => {
   console.log('API listening on http://localhost:3000');

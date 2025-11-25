@@ -6,6 +6,7 @@ import { InboxesRepository } from '@/db/repositories/inboxes';
 import { MediaAttachmentsRepository } from '@/db/repositories/message_attachments';
 import { MessagesRepository } from '@/db/repositories/messages';
 import { NumbersRepository } from '@/db/repositories/numbers';
+import { ReassuranceSchedulesRepository } from '@/db/repositories/reassurance_schedules';
 import { UsageRepository } from '@/db/repositories/usage';
 import { UsersRepository } from '@/db/repositories/users';
 import { VoicemailsRepository } from '@/db/repositories/voicemails';
@@ -1151,7 +1152,7 @@ async function routes(app: FastifyInstance) {
         await twilioClient.client
           .conferences(conference.sid)
           .participants(agentParticipant.accountSid)
-          .update({ status: 'completed' });
+          .update(() => ({ status: 'completed' }));
 
         // Mark the original agent idle again
         presenceStore.setStatus(agentIdentity, 'idle');
@@ -1166,6 +1167,88 @@ async function routes(app: FastifyInstance) {
           .code(500)
           .send({ error: 'Failed to complete warm transfer' });
       }
+    }
+  );
+
+  app.post(
+    '/reassurance/call',
+    { preHandler: verifyTwilioRequest },
+    async (req, reply) => {
+      const { scheduleId } = req.query as { scheduleId?: string };
+
+      const r = new twiml.VoiceResponse();
+
+      if (!scheduleId) {
+        r.say('Sorry, this reassurance call could not be completed.');
+        r.hangup();
+        return reply.type('text/xml').status(200).send(r.toString());
+      }
+
+      const schedule = await ReassuranceSchedulesRepository.find(
+        Number(scheduleId)
+      );
+
+      if (!schedule) {
+        r.say('Sorry, this reassurance call could not be completed.');
+        r.hangup();
+        return reply.type('text/xml').status(200).send(r.toString());
+      }
+
+      const script =
+        schedule.script_content &&
+        schedule.script_content.toString().trim().length > 0
+          ? schedule.script_content
+          : 'Hello, this is your reassurance call. We are just checking in to see how you are doing.';
+
+      // 🔹 Gather a single digit after the script
+      const gather = r.gather({
+        numDigits: 1,
+        timeout: 5,
+        action: `${SERVER_DOMAIN}/twilio/reassurance/response?scheduleId=${schedule.id}`,
+        method: 'POST',
+        actionOnEmptyResult: true,
+      });
+
+      // 1) Play the user script
+      gather.say({ voice: 'Polly.Amy', language: 'en-US' }, script);
+
+      // 2) Ask for confirmation
+      gather.say(
+        { voice: 'Polly.Amy', language: 'en-US' },
+        'If you understood this message, please press 1.'
+      );
+
+      // If no input or after Gather completes, Twilio continues here:
+      r.say({ voice: 'Polly.Amy', language: 'en-US' }, 'Thank you. Goodbye.');
+      r.hangup();
+
+      return reply.type('text/xml').status(200).send(r.toString());
+    }
+  );
+
+  app.post(
+    '/reassurance/response',
+    { preHandler: verifyTwilioRequest },
+    async (req, reply) => {
+      const { Digits, From, To, CallSid } = req.body as Record<string, string>;
+      const { scheduleId } = req.query as { scheduleId?: string };
+
+      const r = new twiml.VoiceResponse();
+
+      // You can persist this somewhere: job result, schedule stats, etc.
+      // e.g. ReassuranceResponsesRepository.create({ scheduleId, from: From, digits: Digits, callSid: CallSid })
+
+      if (Digits === '1') {
+        r.say(
+          { voice: 'Polly.Amy', language: 'en-US' },
+          'Thank you for confirming. We are glad you received the message. Goodbye.'
+        );
+      } else {
+        r.say({ voice: 'Polly.Amy', language: 'en-US' }, 'Thank you. Goodbye.');
+      }
+
+      r.hangup();
+      return reply.type('text/xml').status(200).send(r.toString());
     }
   );
 }

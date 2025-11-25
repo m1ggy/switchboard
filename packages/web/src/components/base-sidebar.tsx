@@ -1,4 +1,5 @@
 import {
+  BotMessageSquare,
   ChevronsUpDown,
   Contact2,
   Download,
@@ -116,6 +117,11 @@ const callsItems = [
     title: 'Call History',
     url: '/dashboard/call-history',
     icon: History,
+  },
+  {
+    title: 'Automated Calls',
+    url: '/dashboard/automated-calls',
+    icon: BotMessageSquare,
   },
 ];
 

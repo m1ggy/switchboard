@@ -249,3 +249,36 @@ export interface PlanUsageLimit {
   metric_name?: string; // populated from join
   unit?: string; // populated from join
 }
+
+export interface ReassuranceCallSchedule {
+  id: number;
+  name: string; // now the single source of truth for display / labeling
+  phone_number: string;
+  caller_name: string | null; // keep if DB still has it, but no longer used for labeling
+  script_type: 'template' | 'custom';
+  template: string | null;
+  script_content: string | null;
+  name_in_script: 'contact' | 'caller';
+  frequency: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'custom';
+  frequency_days: number | null;
+  frequency_time: string;
+  selected_days: string[] | null;
+  calls_per_day: number;
+  max_attempts: number;
+  retry_interval: number;
+  created_at: string;
+  is_active: boolean | null;
+
+  company_id: string; // uuid
+  number_id: string; // uuid (number to use for calling)
+}
+
+export interface ReassuranceCallJob {
+  id: string;
+  schedule_id: number;
+  run_at: Date; // or string, depending on how you use it
+  attempt: number;
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+  last_error: string | null;
+  created_at: Date;
+}

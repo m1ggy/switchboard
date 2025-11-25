@@ -14,6 +14,7 @@ import { TRPCProvider } from './lib/trpc';
 import NotFound from './pages/404';
 import AddContact from './pages/add-contact';
 import AllContacts from './pages/all-contacts';
+import AutomatedCalls from './pages/automated-calls';
 import CallHistory from './pages/call-history';
 import Dashboard from './pages/dashboard';
 import Draft from './pages/draft';
@@ -98,6 +99,7 @@ function App() {
                   <Route path="call-history" element={<CallHistory />} />
                   <Route path="add-contact" element={<AddContact />} />
                   <Route path="all-contacts" element={<AllContacts />} />
+                  <Route path="automated-calls" element={<AutomatedCalls />} />
                   <Route path="settings" element={<Settings />} />
                   <Route path="*" element={<NotFound />} />
                 </Route>

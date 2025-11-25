@@ -34,6 +34,7 @@
     "jsonwebtoken": "^9.0.2",
     "mime-types": "^3.0.1",
     "nanoid": "^5.1.5",
+    "node-cron": "^4.2.1",
     "pdf-lib": "^1.17.1",
     "pg": "^8.15.6",
     "socket.io": "^4.8.1",

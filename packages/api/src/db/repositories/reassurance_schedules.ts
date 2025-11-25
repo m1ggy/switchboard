@@ -1,0 +1,221 @@
+import pool from '@/lib/pg';
+import { Call, ReassuranceCallSchedule } from '@/types/db';
+
+export const ReassuranceSchedulesRepository = {
+  /**
+   * Insert a new reassurance call schedule
+   */
+  async include({
+    name,
+    phone_number,
+    caller_name,
+    script_type,
+    template,
+    script_content,
+    name_in_script,
+    frequency,
+    frequency_days,
+    frequency_time,
+    selected_days,
+    calls_per_day,
+    max_attempts,
+    retry_interval,
+    company_id,
+    number_id,
+  }: {
+    name: string;
+    phone_number: string; // callee
+    caller_name?: string | null;
+    script_type: 'template' | 'custom';
+    template?: string | null;
+    script_content?: string | null;
+    name_in_script: 'contact' | 'caller';
+    frequency: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'custom';
+    frequency_days?: number | null;
+    frequency_time: string; // 'HH:MM'
+    selected_days?: string[] | null;
+    calls_per_day: number;
+    max_attempts: number;
+    retry_interval: number; // minutes
+    company_id: string; // uuid
+    number_id: string; // uuid (FK to numbers.id)
+  }): Promise<ReassuranceCallSchedule> {
+    const res = await pool.query<ReassuranceCallSchedule>(
+      `
+      INSERT INTO reassurance_call_schedules (
+        name,
+        phone_number,
+        caller_name,
+        script_type,
+        template,
+        script_content,
+        name_in_script,
+        frequency,
+        frequency_days,
+        frequency_time,
+        selected_days,
+        calls_per_day,
+        max_attempts,
+        retry_interval,
+        company_id,
+        number_id
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7,
+        $8, $9, $10, $11, $12, $13, $14, $15, $16
+      )
+      RETURNING *
+      `,
+      [
+        name, // $1
+        phone_number, // $2
+        caller_name ?? null, // $3
+        script_type, // $4
+        template ?? null, // $5
+        script_content ?? null, // $6
+        name_in_script, // $7
+        frequency, // $8
+        frequency_days ?? null, // $9
+        frequency_time, // $10
+        selected_days ?? ['monday'], // $11
+        calls_per_day, // $12
+        max_attempts, // $13
+        retry_interval, // $14
+        company_id, // $15
+        number_id, // $16
+      ]
+    );
+
+    return res.rows[0];
+  },
+
+  async find(id: number): Promise<ReassuranceCallSchedule | null> {
+    const res = await pool.query<ReassuranceCallSchedule>(
+      `SELECT * FROM reassurance_call_schedules WHERE id = $1`,
+      [id]
+    );
+
+    return res.rows[0] || null;
+  },
+
+  async getAll(): Promise<ReassuranceCallSchedule[]> {
+    const res = await pool.query<ReassuranceCallSchedule>(
+      `SELECT * FROM reassurance_call_schedules ORDER BY created_at DESC`
+    );
+
+    return res.rows;
+  },
+
+  async delete(id: number): Promise<void> {
+    await pool.query(`DELETE FROM reassurance_call_schedules WHERE id = $1`, [
+      id,
+    ]);
+  },
+
+  async update(
+    id: number,
+    updates: Partial<ReassuranceCallSchedule>
+  ): Promise<ReassuranceCallSchedule | null> {
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    for (const [key, value] of Object.entries(updates)) {
+      // Don't allow changing primary key or created_at
+      if (key === 'id' || key === 'created_at') continue;
+
+      fields.push(`${key} = $${paramIndex}`);
+      values.push(value);
+      paramIndex++;
+    }
+
+    if (fields.length === 0) {
+      throw new Error('No fields provided to update.');
+    }
+
+    values.push(id); // last param is the id
+
+    const res = await pool.query<ReassuranceCallSchedule>(
+      `
+      UPDATE reassurance_call_schedules
+      SET ${fields.join(', ')}
+      WHERE id = $${paramIndex}
+      RETURNING *
+      `,
+      values
+    );
+
+    return res.rows[0] || null;
+  },
+
+  /**
+   * Paginated call logs for reassurance schedules that still exist (not deleted)
+   *
+   * Optionally filtered by company_id.
+   */
+  async getPaginatedScheduleCallLogs({
+    page = 1,
+    pageSize = 20,
+    companyId,
+  }: {
+    page?: number;
+    pageSize?: number;
+    companyId?: string; // optional uuid filter
+  }): Promise<{
+    data: Call[];
+    page: number;
+    pageSize: number;
+    total: number;
+  }> {
+    const limit = pageSize;
+    const offset = (page - 1) * pageSize;
+
+    const params: any[] = [];
+    let paramIndex = 1;
+
+    // --- Where clause for optional company filter ---
+    let where = '';
+
+    if (companyId) {
+      where = `WHERE s.company_id = $${paramIndex}`;
+      params.push(companyId);
+      paramIndex++;
+    }
+
+    // --- Total count query ---
+    const countRes = await pool.query<{ total: string }>(
+      `
+    SELECT COUNT(*) AS total
+    FROM calls c
+    JOIN reassurance_call_schedules s
+      ON (c.meta->>'scheduleId')::int = s.id
+    ${where}
+    `,
+      params
+    );
+
+    const total = parseInt(countRes.rows[0]?.total ?? '0', 10);
+
+    // --- Paginated data query ---
+    const dataQueryParams = [...params, limit, offset];
+
+    const dataRes = await pool.query<Call>(
+      `
+    SELECT c.*
+    FROM calls c
+    JOIN reassurance_call_schedules s
+      ON (c.meta->>'scheduleId')::int = s.id
+    ${where}
+    ORDER BY c.initiated_at DESC
+    LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+    `,
+      dataQueryParams
+    );
+
+    return {
+      data: dataRes.rows,
+      page,
+      pageSize: limit,
+      total,
+    };
+  },
+};

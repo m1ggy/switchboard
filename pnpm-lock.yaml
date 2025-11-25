@@ -89,6 +89,9 @@ importers:
       nanoid:
         specifier: ^5.1.5
         version: 5.1.5
+      node-cron:
+        specifier: ^4.2.1
+        version: 4.2.1
       pdf-lib:
         specifier: ^1.17.1
         version: 1.17.1
@@ -6438,6 +6441,11 @@ packages:
     dependencies:
       react: 19.1.0
       react-dom: 19.1.0(react@19.1.0)
+    dev: false
+
+  /node-cron@4.2.1:
+    resolution: {integrity: sha512-lgimEHPE/QDgFlywTd8yTR61ptugX3Qer29efeyWw2rv259HtGBNn1vZVmp8lB9uo9wC0t/AT4iGqXxia+CJFg==}
+    engines: {node: '>=6.0.0'}
     dev: false
 
   /node-fetch@2.7.0:
