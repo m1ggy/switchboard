@@ -3,6 +3,24 @@ import pool from '@/lib/pg';
 import { ReassuranceCallJob } from '@/types/db';
 
 export const ReassuranceCallJobsRepository = {
+  async findActiveForSchedule(
+    scheduleId: number
+  ): Promise<ReassuranceCallJob | null> {
+    const res = await pool.query<ReassuranceCallJob>(
+      `
+    SELECT *
+    FROM reassurance_call_jobs
+    WHERE schedule_id = $1
+      AND status IN ('pending', 'processing')
+    ORDER BY run_at ASC
+    LIMIT 1
+    `,
+      [scheduleId]
+    );
+
+    return res.rows[0] || null;
+  },
+
   /**
    * Create a new job (include)
    */

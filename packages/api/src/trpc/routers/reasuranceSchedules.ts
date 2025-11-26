@@ -1,7 +1,29 @@
+import { ReassuranceCallJobsRepository } from '@/db/repositories/reassurance_calls_jobs';
 import { ReassuranceSchedulesRepository } from '@/db/repositories/reassurance_schedules';
 import { ReassuranceCallSchedule } from '@/types/db';
+import crypto from 'crypto';
 import { z } from 'zod';
 import { protectedProcedure, t } from '../trpc';
+
+function getNextRunAtForSchedule(schedule: ReassuranceCallSchedule): Date {
+  const now = new Date();
+
+  // frequency_time is 'HH:MM' or 'HH:MM:SS'
+  const [hourStr, minuteStr] = schedule.frequency_time.split(':');
+  const hour = parseInt(hourStr, 10) || 0;
+  const minute = parseInt(minuteStr ?? '0', 10) || 0;
+
+  const next = new Date(now);
+  next.setSeconds(0, 0);
+  next.setHours(hour, minute, 0, 0);
+
+  // If that time today is already past, schedule for tomorrow
+  if (next <= now) {
+    next.setDate(next.getDate() + 1);
+  }
+
+  return next;
+}
 
 const scriptTypeEnum = z.enum(['template', 'custom']);
 const nameInScriptEnum = z.enum(['contact', 'caller']);
@@ -73,6 +95,16 @@ export const reassuranceSchedulesRouter = t.router({
         retry_interval: input.retryInterval,
         company_id: input.companyId,
         number_id: input.numberId,
+      });
+
+      const runAt = getNextRunAtForSchedule(schedule);
+
+      await ReassuranceCallJobsRepository.include({
+        id: crypto.randomUUID() as string,
+        schedule_id: schedule.id,
+        run_at: runAt,
+        attempt: 1,
+        status: 'pending',
       });
 
       return schedule as ReassuranceCallSchedule;
@@ -169,14 +201,31 @@ export const reassuranceSchedulesRouter = t.router({
       })
     )
     .mutation(async ({ input }) => {
-      const updated = await ReassuranceSchedulesRepository.update(input.id, {
-        // assuming DB column & TS type field is `is_active`
-        // if your TS type uses camelCase, you can still pass snake_case here
-        // because the repo works in DB column names.
-        is_active: true as boolean,
+      const schedule = await ReassuranceSchedulesRepository.update(input.id, {
+        is_active: true as any,
       });
 
-      return updated as ReassuranceCallSchedule | null;
+      if (!schedule) {
+        return null;
+      }
+
+      // Check if an active job already exists
+      const existing =
+        await ReassuranceCallJobsRepository.findActiveForSchedule(schedule.id);
+
+      if (!existing) {
+        const runAt = getNextRunAtForSchedule(schedule);
+
+        await ReassuranceCallJobsRepository.include({
+          id: crypto.randomUUID(),
+          schedule_id: schedule.id,
+          run_at: runAt,
+          attempt: 1,
+          status: 'pending',
+        });
+      }
+
+      return schedule as ReassuranceCallSchedule;
     }),
 
   /**
