@@ -3,7 +3,10 @@
 import { getQueryClient } from '@/App';
 import { useTRPC } from '@/lib/trpc';
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { toast } from 'sonner';
+
+import EditDialog from '@/components/edit-scheduled-call-dialog';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -15,9 +18,41 @@ import {
 } from '@/components/ui/card';
 import { Edit2, PauseCircle, PlayCircle, Trash2 } from 'lucide-react';
 
+const parseSelectedDays = (raw: unknown): string[] => {
+  if (Array.isArray(raw)) {
+    // Already an array of strings? just sanitize each
+    return raw
+      .map((d) => (typeof d === 'string' ? d.trim() : ''))
+      .filter(Boolean);
+  }
+
+  if (typeof raw !== 'string') return [];
+
+  let s = raw.trim();
+  if (!s) return [];
+
+  if (s.startsWith('{') && s.endsWith('}')) {
+    s = s.slice(1, -1); // remove outer braces
+  }
+
+  return s
+    .split(',')
+    .map((d) =>
+      d
+        .trim()
+        // strip leading/trailing quotes if present
+        .replace(/^"+|"+$/g, '')
+        .replace(/^'+|'+$/g, '')
+    )
+    .filter(Boolean);
+};
+
 export default function ActiveCalls() {
   const trpc = useTRPC();
   const queryClient = getQueryClient();
+
+  const [editingCall, setEditingCall] = useState<any | null>(null);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
 
   const {
     data: schedules,
@@ -33,6 +68,11 @@ export default function ActiveCalls() {
   );
   const { mutateAsync: deleteSchedule, isPending: deleting } = useMutation(
     trpc.reassuranceSchedules.deleteSchedule.mutationOptions()
+  );
+
+  // ⬇️ You'll need a matching tRPC mutation on the backend for this
+  const { mutateAsync: updateSchedule, isPending: updating } = useMutation(
+    trpc.reassuranceSchedules.updateSchedule.mutationOptions()
   );
 
   const invalidate = async () => {
@@ -72,6 +112,42 @@ export default function ActiveCalls() {
     }
   };
 
+  // 🔁 Open dialog with the schedule mapped into EditDialog's form shape
+  const handleEditClick = (call: any) => {
+    console.log({ call });
+    setEditingCall(call);
+    setIsEditDialogOpen(true);
+  };
+
+  const handleEditSave = async (data: any) => {
+    if (!editingCall) return;
+
+    try {
+      const normalizedSelectedDays = Array.isArray(data.selectedDays)
+        ? data.selectedDays
+        : typeof data.selectedDays === 'string'
+          ? parseSelectedDays(data.selectedDays)
+          : [];
+
+      await updateSchedule({
+        id: editingCall.id,
+        data: {
+          ...data,
+          selectedDays: normalizedSelectedDays,
+        },
+      });
+
+      await invalidate();
+      toast.success('Schedule updated');
+
+      setIsEditDialogOpen(false);
+      setEditingCall(null);
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to update schedule');
+    }
+  };
+
   if (isLoading) {
     return (
       <Card>
@@ -104,15 +180,23 @@ export default function ActiveCalls() {
     );
   }
 
-  // Map DB fields (snake_case) to UI-friendly shape
   const calls = schedules.map((s) => ({
     id: s.id,
     name: s.name,
-    phoneNumber: (s as any).phone_number,
-    frequency: (s as any).frequency,
-    scriptType: (s as any).script_type,
-    template: (s as any).template,
-    status: (s as any).is_active ? 'active' : 'paused',
+    phoneNumber: s.phone_number,
+    callerName: s.caller_name ?? '',
+    scriptType: s.script_type ?? 'template',
+    scriptContent: s.script_content ?? '',
+    nameInScript: s.name_in_script ?? 'contact',
+    frequency: s.frequency ?? 'daily',
+    frequencyDays: s.frequency_days ?? 1,
+    frequencyTime: s.frequency_time ?? '09:00',
+    selectedDays: s.selected_days ?? ['monday'],
+    callsPerDay: s.calls_per_day ?? 1,
+    maxAttempts: s.max_attempts ?? 3,
+    template: s.template ?? 'wellness',
+    retryInterval: s.retry_interval ?? 30,
+    status: s.is_active ? 'active' : 'paused',
   }));
 
   if (calls.length === 0) {
@@ -131,77 +215,92 @@ export default function ActiveCalls() {
     );
   }
 
-  const anyMutating = enabling || disabling || deleting;
+  const anyMutating = enabling || disabling || deleting || updating;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Active Call Schedules</CardTitle>
-        <CardDescription>
-          {calls.length} schedule{calls.length !== 1 ? 's' : ''} configured
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-3">
-          {calls.map((call) => (
-            <div
-              key={call.id}
-              className="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-muted/50"
-            >
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <div
-                    className={`w-2 h-2 rounded-full ${
-                      call.status === 'active'
-                        ? 'bg-green-500'
-                        : 'bg-yellow-500'
-                    }`}
-                  />
-                  <h3 className="font-medium">{call.name}</h3>
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle>Active Call Schedules</CardTitle>
+          <CardDescription>
+            {calls.length} schedule{calls.length !== 1 ? 's' : ''} configured
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3">
+            {calls.map((call) => (
+              <div
+                key={call.id}
+                className="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-muted/50"
+              >
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <div
+                      className={`w-2 h-2 rounded-full ${
+                        call.status === 'active'
+                          ? 'bg-green-500'
+                          : 'bg-yellow-500'
+                      }`}
+                    />
+                    <h3 className="font-medium">{call.name}</h3>
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {call.phoneNumber} • {call.frequency} •{' '}
+                    {call.scriptType === 'template'
+                      ? call.template || 'Template'
+                      : 'Custom'}
+                  </p>
                 </div>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {call.phoneNumber} • {call.frequency} •{' '}
-                  {call.scriptType === 'template'
-                    ? call.template || 'Template'
-                    : 'Custom'}
-                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      handleToggleStatus(call.id, call.status as any)
+                    }
+                    title={call.status === 'active' ? 'Pause' : 'Resume'}
+                    disabled={anyMutating}
+                  >
+                    {call.status === 'active' ? (
+                      <PauseCircle className="w-4 h-4" />
+                    ) : (
+                      <PlayCircle className="w-4 h-4" />
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={anyMutating}
+                    onClick={() => handleEditClick(call)}
+                  >
+                    <Edit2 className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleDelete(call.id)}
+                    className="text-destructive hover:text-destructive"
+                    disabled={anyMutating}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleToggleStatus(call.id, call.status)}
-                  title={call.status === 'active' ? 'Pause' : 'Resume'}
-                  disabled={anyMutating}
-                >
-                  {call.status === 'active' ? (
-                    <PauseCircle className="w-4 h-4" />
-                  ) : (
-                    <PlayCircle className="w-4 h-4" />
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={anyMutating}
-                  // TODO: wire up edit dialog / page
-                >
-                  <Edit2 className="w-4 h-4" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleDelete(call.id)}
-                  className="text-destructive hover:text-destructive"
-                  disabled={anyMutating}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ✨ Edit dialog wired up here */}
+      <EditDialog
+        call={editingCall}
+        isOpen={!!isEditDialogOpen && !!editingCall}
+        onClose={() => {
+          setIsEditDialogOpen(false);
+          setEditingCall(null);
+        }}
+        onSave={handleEditSave}
+      />
+    </>
   );
 }

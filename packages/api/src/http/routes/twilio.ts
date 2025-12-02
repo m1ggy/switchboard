@@ -6,6 +6,7 @@ import { InboxesRepository } from '@/db/repositories/inboxes';
 import { MediaAttachmentsRepository } from '@/db/repositories/message_attachments';
 import { MessagesRepository } from '@/db/repositories/messages';
 import { NumbersRepository } from '@/db/repositories/numbers';
+import { ReassuranceCallJobsRepository } from '@/db/repositories/reassurance_calls_jobs';
 import { ReassuranceSchedulesRepository } from '@/db/repositories/reassurance_schedules';
 import { UsageRepository } from '@/db/repositories/usage';
 import { UsersRepository } from '@/db/repositories/users';
@@ -1249,6 +1250,62 @@ async function routes(app: FastifyInstance) {
 
       r.hangup();
       return reply.type('text/xml').status(200).send(r.toString());
+    }
+  );
+
+  app.post(
+    '/reassurance/status',
+    { preHandler: verifyTwilioRequest },
+    async (req, reply) => {
+      const { CallSid, CallStatus, CallDuration, To, From } =
+        req.body as Record<string, string>;
+
+      const { jobId } = req.query as { jobId?: string };
+
+      // Optionally log/debug
+      console.log('[Reassurance Status]', {
+        jobId,
+        CallSid,
+        CallStatus,
+        CallDuration,
+        To,
+        From,
+      });
+
+      if (jobId) {
+        try {
+          if (CallStatus === 'completed') {
+            await ReassuranceCallJobsRepository.markCompleted(jobId);
+          } else {
+            await ReassuranceCallJobsRepository.markFailed(
+              jobId,
+              `Twilio call status: ${CallStatus}`
+            );
+          }
+        } catch (err) {
+          console.error('[Reassurance Status] Failed to update job', {
+            jobId,
+            err,
+          });
+        }
+      }
+
+      try {
+        if (CallSid && CallDuration) {
+          const durationSeconds = Number(CallDuration);
+          await CallsRepository.update(CallSid, {
+            duration: durationSeconds,
+            meta: { status: CallStatus },
+          });
+        }
+      } catch (err) {
+        console.error('[Reassurance Status] Failed to update call record', {
+          CallSid,
+          err,
+        });
+      }
+
+      return reply.status(204).send();
     }
   );
 }

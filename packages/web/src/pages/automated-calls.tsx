@@ -1,6 +1,7 @@
 'use client';
 
 import SetupForm from '@/components/create-scheduled-call-dialog';
+import EditDialog from '@/components/edit-scheduled-call-dialog';
 import CallLog from '@/components/scheduled-call-logs';
 import ActiveCalls from '@/components/scheduled-calls';
 import { Button } from '@/components/ui/button';
@@ -9,6 +10,8 @@ import { Clock, FileText, History, Phone, Plus } from 'lucide-react';
 import { useState } from 'react';
 
 export default function AutomatedCalls() {
+  const [editingCall, setEditingCall] = useState<any>(null);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [view, setView] = useState<'overview' | 'setup' | 'logs'>('overview');
   const [calls, setCalls] = useState([]);
   const [callLogs, setCallLogs] = useState([]);
@@ -16,6 +19,19 @@ export default function AutomatedCalls() {
   const handleAddCall = (newCall: any) => {
     setCalls([...calls, { ...newCall, id: Date.now(), status: 'active' }]);
     setView('overview');
+  };
+
+  const handleEditClick = (call: any) => {
+    setEditingCall(call);
+    setIsEditDialogOpen(true);
+  };
+
+  const handleEditSave = (updatedData: any) => {
+    setCalls(
+      calls.map((call) =>
+        call.id === editingCall.id ? { ...call, ...updatedData } : call
+      )
+    );
   };
 
   return (
@@ -118,6 +134,13 @@ export default function AutomatedCalls() {
         {view === 'setup' && <SetupForm onSubmit={handleAddCall} />}
 
         {view === 'logs' && <CallLog logs={callLogs} />}
+
+        <EditDialog
+          call={editingCall}
+          isOpen={isEditDialogOpen}
+          onClose={() => setIsEditDialogOpen(false)}
+          onSave={handleEditSave}
+        />
       </main>
     </div>
   );

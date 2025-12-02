@@ -173,4 +173,22 @@ export const ReassuranceCallJobsRepository = {
   async delete(id: string): Promise<void> {
     await pool.query(`DELETE FROM reassurance_call_jobs WHERE id = $1`, [id]);
   },
+
+  async reschedulePendingForSchedule(
+    scheduleId: number,
+    run_at: Date
+  ): Promise<ReassuranceCallJob[]> {
+    const res = await pool.query<ReassuranceCallJob>(
+      `
+      UPDATE reassurance_call_jobs
+      SET run_at = $2
+      WHERE schedule_id = $1
+        AND status = 'pending'
+      RETURNING *
+      `,
+      [scheduleId, run_at.toISOString()]
+    );
+
+    return res.rows;
+  },
 };

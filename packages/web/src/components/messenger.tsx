@@ -13,6 +13,7 @@ import {
   ArrowLeft,
   Loader2,
   Paperclip,
+  Pencil,
   Phone,
   Printer,
   Send,
@@ -28,8 +29,10 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import FaxSendDialog from './ui/fax-send-dialog';
 import { Form, FormControl, FormField } from './ui/form';
+import { Input } from './ui/input';
 import { Label } from './ui/label';
 import Lightbox from './ui/lightbox';
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Separator } from './ui/separator';
 import { Textarea } from './ui/textarea';
 import TooltipStandalone from './ui/tooltip-standalone';
@@ -72,12 +75,27 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
     trpc.twilio.sendSMS.mutationOptions()
   );
 
-  const { data: contact, isLoading: isContactLoading } = useQuery(
+  const {
+    data: contact,
+    isLoading: isContactLoading,
+    refetch: refetchContact,
+  } = useQuery(
     trpc.contacts.findContactById.queryOptions(
       { contactId: contactId as string },
       { enabled: !!contactId }
     )
   );
+  // 👇 new: mutation for updating contact label
+  const { mutateAsync: updateContactLabel, isPending: isUpdatingLabel } =
+    useMutation(trpc.contacts.updateCompanyContact.mutationOptions());
+
+  // 👇 new: local state for popover and label input
+  const [isEditingLabel, setIsEditingLabel] = useState(false);
+  const [contactLabel, setContactLabel] = useState(contact?.label ?? '');
+
+  useEffect(() => {
+    setContactLabel(contact?.label ?? '');
+  }, [contact?.label]);
 
   const { refetch: refetchUnreadCount } = useQuery(
     trpc.inboxes.getUnreadInboxesCount.queryOptions({
@@ -341,6 +359,26 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
     }
   };
 
+  async function handleSaveContactLabel(e: React.FormEvent) {
+    e.preventDefault();
+    if (!contact || !contactLabel.trim()) return;
+
+    try {
+      await updateContactLabel({
+        companyId: contact.company_id as string,
+        number: contact.number as string,
+        label: contactLabel.trim(),
+        contactId: contact.id as string,
+      });
+
+      setIsEditingLabel(false);
+      // Ensure query reflects latest label
+      refetchContact();
+    } catch (err) {
+      console.error('Failed to update contact label', err);
+    }
+  }
+
   if (!contactId) {
     return (
       <div className="flex justify-center items-center w-full h-full">
@@ -381,6 +419,64 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
                   ({contact?.number})
                 </span>
               </span>
+              <Popover open={isEditingLabel} onOpenChange={setIsEditingLabel}>
+                <TooltipStandalone content="Edit contact name">
+                  <PopoverTrigger asChild>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      aria-label="Edit contact name"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                  </PopoverTrigger>
+                </TooltipStandalone>
+
+                <PopoverContent
+                  align="start"
+                  className="w-64 p-3 space-y-3"
+                  sideOffset={6}
+                >
+                  <form onSubmit={handleSaveContactLabel} className="space-y-3">
+                    <div className="space-y-1">
+                      <Label htmlFor="contact-label" className="text-xs">
+                        Contact name
+                      </Label>
+                      <Input
+                        id="contact-label"
+                        value={contactLabel}
+                        onChange={(e) => setContactLabel(e.target.value)}
+                        autoFocus
+                      />
+                    </div>
+
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setIsEditingLabel(false);
+                          setContactLabel(contact?.label ?? '');
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="submit"
+                        size="sm"
+                        disabled={isUpdatingLabel || !contactLabel.trim()}
+                      >
+                        {isUpdatingLabel && (
+                          <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                        )}
+                        Save
+                      </Button>
+                    </div>
+                  </form>
+                </PopoverContent>
+              </Popover>
             </div>
 
             <div className="flex gap-2">

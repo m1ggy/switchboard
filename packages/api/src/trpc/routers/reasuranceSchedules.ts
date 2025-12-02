@@ -187,6 +187,30 @@ export const reassuranceSchedulesRouter = t.router({
         updates.retry_interval = data.retryInterval;
 
       const updated = await ReassuranceSchedulesRepository.update(id, updates);
+      if (!updated) {
+        return null;
+      }
+
+      // 🔹 Did any timing-related fields come in this update?
+      const timingFieldsTouched =
+        data.frequency !== undefined ||
+        data.frequencyDays !== undefined ||
+        data.frequencyTime !== undefined ||
+        data.selectedDays !== undefined ||
+        data.callsPerDay !== undefined ||
+        data.retryInterval !== undefined;
+
+      // 🔹 Only reschedule if timing changed AND schedule is active
+      if (timingFieldsTouched && updated.is_active) {
+        const runAt = getNextRunAtForSchedule(
+          updated as ReassuranceCallSchedule
+        );
+
+        await ReassuranceCallJobsRepository.reschedulePendingForSchedule(
+          updated.id,
+          runAt
+        );
+      }
 
       return updated as ReassuranceCallSchedule | null;
     }),
