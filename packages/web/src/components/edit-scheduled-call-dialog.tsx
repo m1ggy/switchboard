@@ -31,6 +31,9 @@ const defaultFormData = {
   name: '',
   phoneNumber: '',
   callerName: '',
+  // NEW: emergency contact fields
+  emergencyContactName: '',
+  emergencyContactPhoneNumber: '',
   scriptType: 'template',
   scriptContent: '',
   nameInScript: 'contact',
@@ -130,6 +133,21 @@ export default function EditDialog({
       ) {
         newErrors.phoneNumber = 'Please enter a valid phone number';
       }
+
+      // NEW: emergency contact validation
+      if (!formData.emergencyContactName?.trim()) {
+        newErrors.emergencyContactName = 'Emergency contact name is required';
+      }
+      if (!formData.emergencyContactPhoneNumber?.trim()) {
+        newErrors.emergencyContactPhoneNumber =
+          'Emergency contact phone number is required';
+      } else if (
+        !formData.emergencyContactPhoneNumber.match(/^\+?[\d\s\-()]+$/)
+      ) {
+        newErrors.emergencyContactPhoneNumber =
+          'Please enter a valid emergency contact phone number';
+      }
+
       if (formData.nameInScript === 'caller' && !formData.callerName.trim()) {
         newErrors.callerName =
           'Caller name is required when using caller name in script';
@@ -212,7 +230,8 @@ export default function EditDialog({
               <div className="p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-lg flex gap-3">
                 <User className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
                 <p className="text-sm text-blue-900 dark:text-blue-100">
-                  Edit the contact details for this reassurance call.
+                  Edit the contact details for this reassurance call, including
+                  who to contact if the callee cannot be reached.
                 </p>
               </div>
 
@@ -256,6 +275,64 @@ export default function EditDialog({
                     {errors.phoneNumber}
                   </p>
                 )}
+              </div>
+
+              {/* NEW: emergency contact section */}
+              <div className="space-y-3 pt-2 border-t border-border">
+                <p className="text-sm font-medium">
+                  Emergency Contact (if the callee cannot be reached after 3
+                  retries)
+                </p>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2 flex items-center gap-2">
+                    <User className="w-4 h-4" />
+                    Emergency Contact Name
+                  </label>
+                  <Input
+                    type="text"
+                    name="emergencyContactName"
+                    placeholder="e.g., John Smith (son)"
+                    value={formData.emergencyContactName}
+                    onChange={handleChange}
+                    className={
+                      errors.emergencyContactName ? 'border-red-500' : ''
+                    }
+                  />
+                  {errors.emergencyContactName && (
+                    <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      {errors.emergencyContactName}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2 flex items-center gap-2">
+                    <Phone className="w-4 h-4" />
+                    Emergency Contact Phone
+                  </label>
+                  <Input
+                    type="tel"
+                    name="emergencyContactPhoneNumber"
+                    placeholder="+1 (555) 987-6543"
+                    value={formData.emergencyContactPhoneNumber}
+                    onChange={handleChange}
+                    className={
+                      errors.emergencyContactPhoneNumber ? 'border-red-500' : ''
+                    }
+                  />
+                  {errors.emergencyContactPhoneNumber && (
+                    <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      {errors.emergencyContactPhoneNumber}
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground mt-1">
+                    This person will be contacted if the primary callee cannot
+                    be reached after 3 call retries.
+                  </p>
+                </div>
               </div>
 
               <div className="space-y-4 pt-4 border-t border-border">
@@ -622,6 +699,25 @@ export default function EditDialog({
                   </p>
                   <p className="text-sm font-medium">{formData.phoneNumber}</p>
                 </div>
+
+                {/* NEW: emergency contact review */}
+                <div className="p-4 border border-border rounded-lg">
+                  <p className="text-xs font-medium text-muted-foreground uppercase mb-1">
+                    Emergency Contact Name
+                  </p>
+                  <p className="text-sm font-medium">
+                    {formData.emergencyContactName}
+                  </p>
+                </div>
+                <div className="p-4 border border-border rounded-lg">
+                  <p className="text-xs font-medium text-muted-foreground uppercase mb-1">
+                    Emergency Contact Phone
+                  </p>
+                  <p className="text-sm font-medium">
+                    {formData.emergencyContactPhoneNumber}
+                  </p>
+                </div>
+
                 <div className="p-4 border border-border rounded-lg">
                   <p className="text-xs font-medium text-muted-foreground uppercase mb-1">
                     Script Type

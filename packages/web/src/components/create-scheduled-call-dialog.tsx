@@ -33,6 +33,9 @@ const INITIAL_FORM_STATE = {
   name: '',
   phoneNumber: '',
   callerName: '',
+  // NEW: emergency contact
+  emergencyContactName: '',
+  emergencyContactPhoneNumber: '',
   scriptType: 'template',
   scriptContent: '',
   nameInScript: 'contact',
@@ -135,6 +138,21 @@ export default function SetupForm({ onSubmit }: SetupFormProps) {
       ) {
         newErrors.phoneNumber = 'Please enter a valid phone number';
       }
+
+      // NEW: emergency contact validation
+      if (!formData.emergencyContactName.trim()) {
+        newErrors.emergencyContactName = 'Emergency contact name is required';
+      }
+      if (!formData.emergencyContactPhoneNumber.trim()) {
+        newErrors.emergencyContactPhoneNumber =
+          'Emergency contact phone number is required';
+      } else if (
+        !formData.emergencyContactPhoneNumber.match(/^\+?[\d\s\-()]+$/)
+      ) {
+        newErrors.emergencyContactPhoneNumber =
+          'Please enter a valid emergency contact phone number';
+      }
+
       if (formData.nameInScript === 'caller' && !formData.callerName.trim()) {
         newErrors.callerName =
           'Caller name is required when using caller name in script';
@@ -185,6 +203,10 @@ export default function SetupForm({ onSubmit }: SetupFormProps) {
         name: formData.name,
         phoneNumber: formData.phoneNumber,
         callerName: formData.callerName || null,
+
+        // NEW: emergency contact fields
+        emergencyContactName: formData.emergencyContactName,
+        emergencyContactPhoneNumber: formData.emergencyContactPhoneNumber,
 
         scriptType: formData.scriptType as 'template' | 'custom',
         template:
@@ -299,7 +321,8 @@ export default function SetupForm({ onSubmit }: SetupFormProps) {
                   <User className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
                   <p className="text-sm text-blue-900 dark:text-blue-100">
                     Enter the contact details for the person who will receive
-                    the reassurance calls.
+                    the reassurance calls and who to contact in case they cannot
+                    be reached after repeated attempts.
                   </p>
                 </div>
 
@@ -349,6 +372,66 @@ export default function SetupForm({ onSubmit }: SetupFormProps) {
                   <p className="text-xs text-muted-foreground mt-1">
                     Include country code and area code
                   </p>
+                </div>
+
+                {/* NEW: emergency contact section */}
+                <div className="space-y-3 pt-2 border-t border-border">
+                  <p className="text-sm font-medium">
+                    Emergency Contact (if the callee cannot be reached after 3
+                    retries)
+                  </p>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-2 flex items-center gap-2">
+                      <User className="w-4 h-4" />
+                      Emergency Contact Name
+                    </label>
+                    <Input
+                      type="text"
+                      name="emergencyContactName"
+                      placeholder="e.g., John Smith (son)"
+                      value={formData.emergencyContactName}
+                      onChange={handleChange}
+                      className={
+                        errors.emergencyContactName ? 'border-red-500' : ''
+                      }
+                    />
+                    {errors.emergencyContactName && (
+                      <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" />
+                        {errors.emergencyContactName}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-2 flex items-center gap-2">
+                      <Phone className="w-4 h-4" />
+                      Emergency Contact Phone
+                    </label>
+                    <Input
+                      type="tel"
+                      name="emergencyContactPhoneNumber"
+                      placeholder="+1 (555) 987-6543"
+                      value={formData.emergencyContactPhoneNumber}
+                      onChange={handleChange}
+                      className={
+                        errors.emergencyContactPhoneNumber
+                          ? 'border-red-500'
+                          : ''
+                      }
+                    />
+                    {errors.emergencyContactPhoneNumber && (
+                      <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" />
+                        {errors.emergencyContactPhoneNumber}
+                      </p>
+                    )}
+                    <p className="text-xs text-muted-foreground mt-1">
+                      This person will be contacted if the primary callee cannot
+                      be reached after 3 call retries.
+                    </p>
+                  </div>
                 </div>
 
                 <div className="space-y-4 pt-4 border-t border-border">
@@ -840,6 +923,25 @@ export default function SetupForm({ onSubmit }: SetupFormProps) {
                       {formData.phoneNumber}
                     </p>
                   </div>
+
+                  {/* NEW: emergency review */}
+                  <div className="p-4 bg-muted rounded-lg border border-border">
+                    <p className="text-xs text-muted-foreground mb-1">
+                      Emergency Contact Name
+                    </p>
+                    <p className="font-semibold text-sm">
+                      {formData.emergencyContactName}
+                    </p>
+                  </div>
+                  <div className="p-4 bg-muted rounded-lg border border-border">
+                    <p className="text-xs text-muted-foreground mb-1">
+                      Emergency Contact Phone
+                    </p>
+                    <p className="font-semibold text-sm font-mono">
+                      {formData.emergencyContactPhoneNumber}
+                    </p>
+                  </div>
+
                   {formData.callerName && (
                     <div className="p-4 bg-muted rounded-lg border border-border">
                       <p className="text-xs text-muted-foreground mb-1">
@@ -913,7 +1015,7 @@ export default function SetupForm({ onSubmit }: SetupFormProps) {
               </div>
             )}
 
-            {/* Navigation */}
+            {/* Navigation (unchanged) */}
             <div className="flex gap-3 justify-between pt-4 border-t border-border">
               <div>
                 {step > 1 && (

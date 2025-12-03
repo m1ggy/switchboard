@@ -1,16 +1,14 @@
 import pool from '@/lib/pg';
-import { Call, ReassuranceCallSchedule } from '@/types/db';
+import { ReassuranceCallSchedule } from '@/types/db';
 
 export const ReassuranceSchedulesRepository = {
-  /**
-   * Insert a new reassurance call schedule
-   *
-   * Note: tenant scoping here is handled by setting company_id on insert.
-   */
   async include({
     name,
     phone_number,
     caller_name,
+    // NEW:
+    emergency_contact_name,
+    emergency_contact_phone_number,
     script_type,
     template,
     script_content,
@@ -28,6 +26,9 @@ export const ReassuranceSchedulesRepository = {
     name: string;
     phone_number: string; // callee
     caller_name?: string | null;
+    // NEW:
+    emergency_contact_name?: string | null;
+    emergency_contact_phone_number?: string | null;
     script_type: 'template' | 'custom';
     template?: string | null;
     script_content?: string | null;
@@ -47,6 +48,8 @@ export const ReassuranceSchedulesRepository = {
       INSERT INTO reassurance_call_schedules (
         name,
         phone_number,
+        emergency_contact_name,
+        emergency_contact_phone_number,
         caller_name,
         script_type,
         template,
@@ -63,27 +66,29 @@ export const ReassuranceSchedulesRepository = {
         number_id
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7,
-        $8, $9, $10, $11, $12, $13, $14, $15, $16
+        $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
       )
       RETURNING *
       `,
       [
         name, // $1
         phone_number, // $2
-        caller_name ?? null, // $3
-        script_type, // $4
-        template ?? null, // $5
-        script_content ?? null, // $6
-        name_in_script, // $7
-        frequency, // $8
-        frequency_days ?? null, // $9
-        frequency_time, // $10
-        selected_days ?? ['monday'], // $11
-        calls_per_day, // $12
-        max_attempts, // $13
-        retry_interval, // $14
-        company_id, // $15
-        number_id, // $16
+        emergency_contact_name ?? null, // $3
+        emergency_contact_phone_number ?? null, // $4
+        caller_name ?? null, // $5
+        script_type, // $6
+        template ?? null, // $7
+        script_content ?? null, // $8
+        name_in_script, // $9
+        frequency, // $10
+        frequency_days ?? null, // $11
+        frequency_time, // $12
+        selected_days ?? ['monday'], // $13
+        calls_per_day, // $14
+        max_attempts, // $15
+        retry_interval, // $16
+        company_id, // $17
+        number_id, // $18
       ]
     );
 

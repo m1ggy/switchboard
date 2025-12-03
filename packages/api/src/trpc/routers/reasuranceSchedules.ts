@@ -41,6 +41,10 @@ const baseScheduleInput = z.object({
   phoneNumber: z.string().min(1),
   callerName: z.string().optional().nullable(),
 
+  // NEW: emergency contact
+  emergencyContactName: z.string().min(1),
+  emergencyContactPhoneNumber: z.string().min(1),
+
   scriptType: scriptTypeEnum,
   template: templateEnum.optional().nullable(), // only required when scriptType === 'template'
   scriptContent: z.string().optional().nullable(), // only required when scriptType === 'custom'
@@ -72,9 +76,6 @@ const baseScheduleInput = z.object({
 });
 
 export const reassuranceSchedulesRouter = t.router({
-  /**
-   * Create a new reassurance schedule
-   */
   createSchedule: protectedProcedure
     .input(baseScheduleInput)
     .mutation(async ({ input }) => {
@@ -82,6 +83,11 @@ export const reassuranceSchedulesRouter = t.router({
         name: input.name,
         phone_number: input.phoneNumber,
         caller_name: input.callerName ?? null,
+
+        // NEW: emergency contact
+        emergency_contact_name: input.emergencyContactName,
+        emergency_contact_phone_number: input.emergencyContactPhoneNumber,
+
         script_type: input.scriptType,
         template: input.template ?? null,
         script_content: input.scriptContent ?? null,
@@ -163,6 +169,7 @@ export const reassuranceSchedulesRouter = t.router({
       z.object({
         id: z.number().int(),
         data: baseScheduleInput.partial(),
+        companyId: z.string().uuid(),
       })
     )
     .mutation(async ({ input }) => {
@@ -175,6 +182,14 @@ export const reassuranceSchedulesRouter = t.router({
       if (data.phoneNumber !== undefined)
         updates.phone_number = data.phoneNumber;
       if (data.callerName !== undefined) updates.caller_name = data.callerName;
+
+      // NEW: emergency contact mappings
+      if (data.emergencyContactName !== undefined)
+        updates.emergency_contact_name = data.emergencyContactName;
+      if (data.emergencyContactPhoneNumber !== undefined)
+        updates.emergency_contact_phone_number =
+          data.emergencyContactPhoneNumber;
+
       if (data.scriptType !== undefined) updates.script_type = data.scriptType;
       if (data.template !== undefined) updates.template = data.template;
       if (data.scriptContent !== undefined)
@@ -195,12 +210,15 @@ export const reassuranceSchedulesRouter = t.router({
       if (data.retryInterval !== undefined)
         updates.retry_interval = data.retryInterval;
 
-      const updated = await ReassuranceSchedulesRepository.update(id, updates);
+      const updated = await ReassuranceSchedulesRepository.update(
+        id,
+        input.companyId,
+        updates
+      );
       if (!updated) {
         return null;
       }
 
-      // 🔹 Did any timing-related fields come in this update?
       const timingFieldsTouched =
         data.frequency !== undefined ||
         data.frequencyDays !== undefined ||
@@ -209,7 +227,6 @@ export const reassuranceSchedulesRouter = t.router({
         data.callsPerDay !== undefined ||
         data.retryInterval !== undefined;
 
-      // 🔹 Only reschedule if timing changed AND schedule is active
       if (timingFieldsTouched && updated.is_active) {
         const runAt = getNextRunAtForSchedule(
           updated as ReassuranceCallSchedule

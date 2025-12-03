@@ -142,6 +142,7 @@ export default function ActiveCalls() {
           ...data,
           selectedDays: normalizedSelectedDays,
         },
+        companyId,
       });
 
       await invalidate();

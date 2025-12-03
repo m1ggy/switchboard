@@ -124,6 +124,61 @@ function warmConferenceNameForCall(callSid: string) {
   return `warm-${callSid}`;
 }
 
+async function notifyEmergencyContact({
+  app,
+  fromNumber,
+  schedule,
+  job,
+  maxAttempts,
+}: {
+  app: FastifyInstance;
+  fromNumber: string;
+  schedule: any;
+  job: any;
+  maxAttempts: number;
+}) {
+  if (!schedule.emergency_contact_phone_number) {
+    app.log.warn(
+      { jobId: job.id, scheduleId: schedule.id },
+      'No emergency contact phone set; skipping notification'
+    );
+    return;
+  }
+
+  const contactName = schedule.emergency_contact_name || 'Emergency contact';
+  const scheduleName = schedule.name || schedule.phone_number || 'the contact';
+
+  const body = `${contactName}, we were unable to reach ${scheduleName} after ${maxAttempts} reassurance call attempt(s). Please check on them.`;
+
+  try {
+    const message = await twilioClient.client.messages.create({
+      from: fromNumber,
+      to: schedule.emergency_contact_phone_number,
+      body,
+    });
+
+    app.log.info(
+      {
+        jobId: job.id,
+        scheduleId: schedule.id,
+        emergencyContactPhone: schedule.emergency_contact_phone_number,
+        messageSid: message.sid,
+      },
+      'Emergency contact SMS sent'
+    );
+  } catch (err: any) {
+    app.log.error(
+      {
+        err,
+        jobId: job.id,
+        scheduleId: schedule.id,
+        emergencyContactPhone: schedule.emergency_contact_phone_number,
+      },
+      'Failed to send emergency contact SMS'
+    );
+  }
+}
+
 async function routes(app: FastifyInstance) {
   // 🔹 Voice Entry Point
   app.post(
@@ -1259,37 +1314,130 @@ async function routes(app: FastifyInstance) {
     async (req, reply) => {
       const { CallSid, CallStatus, CallDuration, To, From } =
         req.body as Record<string, string>;
-
       const { jobId } = req.query as { jobId?: string };
 
-      // Optionally log/debug
-      console.log('[Reassurance Status]', {
-        jobId,
-        CallSid,
-        CallStatus,
-        CallDuration,
-        To,
-        From,
-      });
+      app.log.info(
+        { jobId, CallSid, CallStatus, CallDuration, To, From },
+        '[Reassurance Status] Callback received'
+      );
 
       if (jobId) {
         try {
-          if (CallStatus === 'completed') {
-            await ReassuranceCallJobsRepository.markCompleted(jobId);
+          const job = await ReassuranceCallJobsRepository.findById(jobId);
+          if (!job) {
+            app.log.error({ jobId }, '[Reassurance Status] Job not found');
           } else {
-            await ReassuranceCallJobsRepository.markFailed(
-              jobId,
-              `Twilio call status: ${CallStatus}`
+            const schedule = await ReassuranceSchedulesRepository.find(
+              job.schedule_id
             );
+
+            if (!schedule) {
+              app.log.error(
+                { jobId, scheduleId: job.schedule_id },
+                '[Reassurance Status] Schedule not found'
+              );
+              await ReassuranceCallJobsRepository.markFailed(
+                jobId,
+                'Schedule not found during status callback'
+              );
+            } else {
+              const maxAttempts =
+                typeof schedule.max_attempts === 'number'
+                  ? schedule.max_attempts
+                  : 3;
+              const currentAttempt = job.attempt ?? 1;
+
+              app.log.info(
+                {
+                  jobId,
+                  scheduleId: schedule.id,
+                  currentAttempt,
+                  maxAttempts,
+                  callStatus: CallStatus,
+                },
+                '[Reassurance Status] Handling job attempt'
+              );
+
+              if (CallStatus === 'completed') {
+                // Success: mark completed, no retries
+                await ReassuranceCallJobsRepository.markCompleted(jobId);
+              } else {
+                // Failure / no-answer / busy
+                if (currentAttempt >= maxAttempts) {
+                  // Final failed attempt → mark failed + SMS emergency contact
+                  await ReassuranceCallJobsRepository.markFailed(
+                    jobId,
+                    `Twilio call status: ${CallStatus}`
+                  );
+
+                  // Resolve from-number for SMS
+                  const numberEntry = await NumbersRepository.findById(
+                    schedule.number_id
+                  );
+                  const fromNumber = numberEntry?.number;
+
+                  if (fromNumber) {
+                    await notifyEmergencyContact({
+                      app,
+                      fromNumber,
+                      schedule,
+                      job,
+                      maxAttempts,
+                    });
+                  } else {
+                    app.log.error(
+                      {
+                        jobId,
+                        scheduleId: schedule.id,
+                        numberId: schedule.number_id,
+                      },
+                      '[Reassurance Status] Could not resolve from-number for emergency SMS'
+                    );
+                  }
+                } else {
+                  // Not yet at max attempts → reschedule
+                  const retryMinutes =
+                    typeof schedule.retry_interval === 'number'
+                      ? schedule.retry_interval
+                      : 5; // fallback
+
+                  const nextRunAt = new Date(
+                    Date.now() + retryMinutes * 60 * 1000
+                  );
+
+                  const nextAttempt = currentAttempt + 1;
+
+                  const updatedJob =
+                    await ReassuranceCallJobsRepository.reschedule(jobId, {
+                      run_at: nextRunAt,
+                      attempt: nextAttempt,
+                    });
+
+                  app.log.info(
+                    {
+                      jobId,
+                      scheduleId: schedule.id,
+                      previousAttempt: currentAttempt,
+                      nextAttempt,
+                      retryMinutes,
+                      nextRunAt: nextRunAt.toISOString(),
+                      callStatus: CallStatus,
+                    },
+                    '[Reassurance Status] Job rescheduled for retry'
+                  );
+                }
+              }
+            }
           }
-        } catch (err) {
-          console.error('[Reassurance Status] Failed to update job', {
-            jobId,
-            err,
-          });
+        } catch (err: any) {
+          app.log.error(
+            { jobId, err },
+            '[Reassurance Status] Failed to process job'
+          );
         }
       }
 
+      // Update call record with duration/status (your existing logic)
       try {
         if (CallSid && CallDuration) {
           const durationSeconds = Number(CallDuration);
@@ -1298,11 +1446,11 @@ async function routes(app: FastifyInstance) {
             meta: { status: CallStatus },
           });
         }
-      } catch (err) {
-        console.error('[Reassurance Status] Failed to update call record', {
-          CallSid,
-          err,
-        });
+      } catch (err: any) {
+        app.log.error(
+          { CallSid, err },
+          '[Reassurance Status] Failed to update call record'
+        );
       }
 
       return reply.status(204).send();
