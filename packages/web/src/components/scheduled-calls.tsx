@@ -16,6 +16,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import useMainStore from '@/lib/store';
 import { Edit2, PauseCircle, PlayCircle, Trash2 } from 'lucide-react';
 
 const parseSelectedDays = (raw: unknown): string[] => {
@@ -53,12 +54,16 @@ export default function ActiveCalls() {
 
   const [editingCall, setEditingCall] = useState<any | null>(null);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const { activeCompany } = useMainStore();
+  const companyId = activeCompany?.id as string;
 
   const {
     data: schedules,
     isLoading,
     isError,
-  } = useQuery(trpc.reassuranceSchedules.getSchedules.queryOptions());
+  } = useQuery(
+    trpc.reassuranceSchedules.getSchedules.queryOptions({ companyId })
+  );
 
   const { mutateAsync: enableSchedule, isPending: enabling } = useMutation(
     trpc.reassuranceSchedules.enableSchedule.mutationOptions()
@@ -77,7 +82,9 @@ export default function ActiveCalls() {
 
   const invalidate = async () => {
     await queryClient.invalidateQueries({
-      queryKey: trpc.reassuranceSchedules.getSchedules.queryOptions().queryKey,
+      queryKey: trpc.reassuranceSchedules.getSchedules.queryOptions({
+        companyId,
+      }).queryKey,
     });
   };
 
@@ -87,9 +94,9 @@ export default function ActiveCalls() {
   ) => {
     try {
       if (status === 'active') {
-        await disableSchedule({ id });
+        await disableSchedule({ id, companyId });
       } else {
-        await enableSchedule({ id });
+        await enableSchedule({ id, companyId });
       }
       await invalidate();
       toast.success(
@@ -103,7 +110,7 @@ export default function ActiveCalls() {
 
   const handleDelete = async (id: number) => {
     try {
-      await deleteSchedule({ id });
+      await deleteSchedule({ id, companyId });
       await invalidate();
       toast.success('Schedule deleted');
     } catch (err) {

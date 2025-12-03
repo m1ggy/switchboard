@@ -113,10 +113,14 @@ export const reassuranceSchedulesRouter = t.router({
   /**
    * Get all reassurance schedules
    */
-  getSchedules: protectedProcedure.query(async () => {
-    const schedules = await ReassuranceSchedulesRepository.getAll();
-    return schedules as ReassuranceCallSchedule[];
-  }),
+  getSchedules: protectedProcedure
+    .input(z.object({ companyId: z.string().uuid() }))
+    .query(async ({ input }) => {
+      const schedules = await ReassuranceSchedulesRepository.getAll(
+        input.companyId
+      );
+      return schedules as ReassuranceCallSchedule[];
+    }),
 
   /**
    * Get a single schedule by ID
@@ -125,10 +129,14 @@ export const reassuranceSchedulesRouter = t.router({
     .input(
       z.object({
         id: z.number().int(),
+        companyId: z.string().uuid(),
       })
     )
     .query(async ({ input }) => {
-      const schedule = await ReassuranceSchedulesRepository.find(input.id);
+      const schedule = await ReassuranceSchedulesRepository.find(
+        input.id,
+        input.companyId
+      );
       return schedule as ReassuranceCallSchedule | null;
     }),
 
@@ -139,10 +147,11 @@ export const reassuranceSchedulesRouter = t.router({
     .input(
       z.object({
         id: z.number().int(),
+        companyId: z.string().uuid(),
       })
     )
     .mutation(async ({ input }) => {
-      await ReassuranceSchedulesRepository.delete(input.id);
+      await ReassuranceSchedulesRepository.delete(input.id, input.companyId);
       return { success: true };
     }),
 
@@ -222,12 +231,17 @@ export const reassuranceSchedulesRouter = t.router({
     .input(
       z.object({
         id: z.number().int(),
+        companyId: z.string().uuid(),
       })
     )
     .mutation(async ({ input }) => {
-      const schedule = await ReassuranceSchedulesRepository.update(input.id, {
-        is_active: true as any,
-      });
+      const schedule = await ReassuranceSchedulesRepository.update(
+        input.id,
+        input.companyId,
+        {
+          is_active: true as any,
+        }
+      );
 
       if (!schedule) {
         return null;
@@ -259,12 +273,17 @@ export const reassuranceSchedulesRouter = t.router({
     .input(
       z.object({
         id: z.number().int(),
+        companyId: z.string().uuid(),
       })
     )
     .mutation(async ({ input }) => {
-      const updated = await ReassuranceSchedulesRepository.update(input.id, {
-        is_active: false as boolean,
-      });
+      const updated = await ReassuranceSchedulesRepository.update(
+        input.id,
+        input.companyId,
+        {
+          is_active: false as boolean,
+        }
+      );
 
       return updated as ReassuranceCallSchedule | null;
     }),
@@ -273,7 +292,7 @@ export const reassuranceSchedulesRouter = t.router({
       z.object({
         page: z.number().int().positive().optional(),
         pageSize: z.number().int().positive().max(100).optional(),
-        companyId: z.string().uuid().optional(),
+        companyId: z.string().uuid(),
       })
     )
     .query(async ({ input }) => {

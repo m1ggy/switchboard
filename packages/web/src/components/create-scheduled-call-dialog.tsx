@@ -26,7 +26,6 @@ import {
 import { useState } from 'react';
 
 interface SetupFormProps {
-  // now optional – parent can still pass it to keep local `calls` state in sync
   onSubmit?: (data: any) => void;
 }
 
@@ -47,6 +46,24 @@ const INITIAL_FORM_STATE = {
   retryInterval: 30,
 };
 
+const ALL_DAYS: (
+  | 'monday'
+  | 'tuesday'
+  | 'wednesday'
+  | 'thursday'
+  | 'friday'
+  | 'saturday'
+  | 'sunday'
+)[] = [
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+  'sunday',
+];
+
 export default function SetupForm({ onSubmit }: SetupFormProps) {
   const [step, setStep] = useState(1);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -55,13 +72,14 @@ export default function SetupForm({ onSubmit }: SetupFormProps) {
   const trpc = useTRPC();
   const queryClient = getQueryClient();
   const { activeNumber, activeCompany } = useMainStore();
+  const companyId = activeCompany?.id as string;
 
   const { mutateAsync: createSchedule, isPending: isCreating } = useMutation(
     trpc.reassuranceSchedules.createSchedule.mutationOptions()
   );
 
   const { refetch: refetchSchedules } = useQuery(
-    trpc.reassuranceSchedules.getSchedules.queryOptions()
+    trpc.reassuranceSchedules.getSchedules.queryOptions({ companyId })
   );
 
   const getScriptTemplates = (
@@ -158,7 +176,6 @@ export default function SetupForm({ onSubmit }: SetupFormProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Make sure the current step is valid before submit (especially if user jumps back/forth)
     if (!validateStep(step)) return;
 
     try {
@@ -192,19 +209,21 @@ export default function SetupForm({ onSubmit }: SetupFormProps) {
           formData.frequency === 'custom' ? formData.frequencyDays : null,
         frequencyTime: formData.frequencyTime,
         selectedDays:
-          formData.frequency === 'weekly' ||
-          formData.frequency === 'biweekly' ||
-          formData.frequency === 'monthly'
-            ? (formData.selectedDays as (
-                | 'monday'
-                | 'tuesday'
-                | 'wednesday'
-                | 'thursday'
-                | 'friday'
-                | 'saturday'
-                | 'sunday'
-              )[])
-            : null,
+          formData.frequency === 'daily'
+            ? ALL_DAYS
+            : formData.frequency === 'weekly' ||
+                formData.frequency === 'biweekly' ||
+                formData.frequency === 'monthly'
+              ? (formData.selectedDays as (
+                  | 'monday'
+                  | 'tuesday'
+                  | 'wednesday'
+                  | 'thursday'
+                  | 'friday'
+                  | 'saturday'
+                  | 'sunday'
+                )[])
+              : null,
 
         callsPerDay: formData.callsPerDay,
         maxAttempts: formData.maxAttempts,
@@ -214,19 +233,18 @@ export default function SetupForm({ onSubmit }: SetupFormProps) {
       const schedule = await createSchedule(payload);
 
       await queryClient.invalidateQueries({
-        queryKey:
-          trpc.reassuranceSchedules.getSchedules.queryOptions().queryKey,
+        queryKey: trpc.reassuranceSchedules.getSchedules.queryOptions({
+          companyId,
+        }).queryKey,
       });
       await refetchSchedules();
 
       toast.success('Reassurance call schedule created');
 
-      // still let the parent know, so your current AutomatedCalls `calls` state keeps working
       if (onSubmit) {
         onSubmit(schedule);
       }
 
-      // reset UI state
       setFormData(INITIAL_FORM_STATE);
       setStep(1);
       setErrors({});

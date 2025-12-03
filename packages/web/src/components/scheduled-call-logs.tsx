@@ -49,7 +49,6 @@ export default function CallLog() {
     trpc.reassuranceSchedules.getScheduleCallLogs.queryOptions({
       page: 1,
       pageSize: 50,
-      // companyId can be passed here if you want to scope, e.g. from session
       companyId: activeCompany?.id as string,
     })
   );

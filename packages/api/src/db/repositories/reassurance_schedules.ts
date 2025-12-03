@@ -4,6 +4,8 @@ import { Call, ReassuranceCallSchedule } from '@/types/db';
 export const ReassuranceSchedulesRepository = {
   /**
    * Insert a new reassurance call schedule
+   *
+   * Note: tenant scoping here is handled by setting company_id on insert.
    */
   async include({
     name,
@@ -37,7 +39,7 @@ export const ReassuranceSchedulesRepository = {
     calls_per_day: number;
     max_attempts: number;
     retry_interval: number; // minutes
-    company_id: string; // uuid
+    company_id: string; // uuid (tenant id)
     number_id: string; // uuid (FK to numbers.id)
   }): Promise<ReassuranceCallSchedule> {
     const res = await pool.query<ReassuranceCallSchedule>(
@@ -88,31 +90,63 @@ export const ReassuranceSchedulesRepository = {
     return res.rows[0];
   },
 
-  async find(id: number): Promise<ReassuranceCallSchedule | null> {
+  /**
+   * Find schedule by id, scoped to tenant
+   */
+  async find(
+    id: number,
+    companyId: string
+  ): Promise<ReassuranceCallSchedule | null> {
     const res = await pool.query<ReassuranceCallSchedule>(
-      `SELECT * FROM reassurance_call_schedules WHERE id = $1`,
-      [id]
+      `
+      SELECT *
+      FROM reassurance_call_schedules
+      WHERE id = $1
+        AND company_id = $2
+      `,
+      [id, companyId]
     );
 
     return res.rows[0] || null;
   },
 
-  async getAll(): Promise<ReassuranceCallSchedule[]> {
+  /**
+   * Get all schedules for a given tenant
+   */
+  async getAll(companyId: string): Promise<ReassuranceCallSchedule[]> {
     const res = await pool.query<ReassuranceCallSchedule>(
-      `SELECT * FROM reassurance_call_schedules ORDER BY created_at DESC`
+      `
+      SELECT *
+      FROM reassurance_call_schedules
+      WHERE company_id = $1
+      ORDER BY created_at DESC
+      `,
+      [companyId]
     );
 
     return res.rows;
   },
 
-  async delete(id: number): Promise<void> {
-    await pool.query(`DELETE FROM reassurance_call_schedules WHERE id = $1`, [
-      id,
-    ]);
+  /**
+   * Delete schedule scoped to tenant
+   */
+  async delete(id: number, companyId: string): Promise<void> {
+    await pool.query(
+      `
+      DELETE FROM reassurance_call_schedules
+      WHERE id = $1
+        AND company_id = $2
+      `,
+      [id, companyId]
+    );
   },
 
+  /**
+   * Update schedule scoped to tenant
+   */
   async update(
     id: number,
+    companyId: string,
     updates: Partial<ReassuranceCallSchedule>
   ): Promise<ReassuranceCallSchedule | null> {
     const fields: string[] = [];
@@ -120,8 +154,9 @@ export const ReassuranceSchedulesRepository = {
     let paramIndex = 1;
 
     for (const [key, value] of Object.entries(updates)) {
-      // Don't allow changing primary key or created_at
-      if (key === 'id' || key === 'created_at') continue;
+      // Don't allow changing primary key, created_at, or company_id (tenant)
+      if (key === 'id' || key === 'created_at' || key === 'company_id')
+        continue;
 
       fields.push(`${key} = $${paramIndex}`);
       values.push(value);
@@ -132,13 +167,19 @@ export const ReassuranceSchedulesRepository = {
       throw new Error('No fields provided to update.');
     }
 
-    values.push(id); // last param is the id
+    // Add id and companyId as the last params
+    const idParamIndex = paramIndex;
+    const companyIdParamIndex = paramIndex + 1;
+
+    values.push(id); // $idParamIndex
+    values.push(companyId); // $companyIdParamIndex
 
     const res = await pool.query<ReassuranceCallSchedule>(
       `
       UPDATE reassurance_call_schedules
       SET ${fields.join(', ')}
-      WHERE id = $${paramIndex}
+      WHERE id = $${idParamIndex}
+        AND company_id = $${companyIdParamIndex}
       RETURNING *
       `,
       values
@@ -148,9 +189,8 @@ export const ReassuranceSchedulesRepository = {
   },
 
   /**
-   * Paginated call logs for reassurance schedules that still exist (not deleted)
-   *
-   * Optionally filtered by company_id.
+   * Paginated call logs for reassurance schedules
+   * Only returns calls for schedules that belong to the given tenant (companyId)
    */
   async getPaginatedScheduleCallLogs({
     page = 1,
@@ -159,7 +199,7 @@ export const ReassuranceSchedulesRepository = {
   }: {
     page?: number;
     pageSize?: number;
-    companyId?: string; // optional uuid filter
+    companyId: string; // required uuid filter (tenant)
   }): Promise<{
     data: Call[];
     page: number;
@@ -169,27 +209,19 @@ export const ReassuranceSchedulesRepository = {
     const limit = pageSize;
     const offset = (page - 1) * pageSize;
 
-    const params: any[] = [];
-    let paramIndex = 1;
-
-    // --- Where clause for optional company filter ---
-    let where = '';
-
-    if (companyId) {
-      where = `WHERE s.company_id = $${paramIndex}`;
-      params.push(companyId);
-      paramIndex++;
-    }
+    // --- Where clause for required company filter ---
+    const where = `WHERE s.company_id = $1`;
+    const params: any[] = [companyId];
 
     // --- Total count query ---
     const countRes = await pool.query<{ total: string }>(
       `
-    SELECT COUNT(*) AS total
-    FROM calls c
-    JOIN reassurance_call_schedules s
-      ON (c.meta->>'scheduleId')::int = s.id
-    ${where}
-    `,
+      SELECT COUNT(*) AS total
+      FROM calls c
+      JOIN reassurance_call_schedules s
+        ON (c.meta->>'scheduleId')::int = s.id
+      ${where}
+      `,
       params
     );
 
@@ -197,17 +229,17 @@ export const ReassuranceSchedulesRepository = {
 
     // --- Paginated data query ---
     const dataQueryParams = [...params, limit, offset];
-
+    // companyId = $1, limit = $2, offset = $3
     const dataRes = await pool.query<Call>(
       `
-    SELECT c.*
-    FROM calls c
-    JOIN reassurance_call_schedules s
-      ON (c.meta->>'scheduleId')::int = s.id
-    ${where}
-    ORDER BY c.initiated_at DESC
-    LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
-    `,
+      SELECT c.*
+      FROM calls c
+      JOIN reassurance_call_schedules s
+        ON (c.meta->>'scheduleId')::int = s.id
+      ${where}
+      ORDER BY c.initiated_at DESC
+      LIMIT $2 OFFSET $3
+      `,
       dataQueryParams
     );
 
