@@ -249,7 +249,7 @@ export default function SetupForm({ onSubmit }: SetupFormProps) {
 
         callsPerDay: formData.callsPerDay,
         maxAttempts: formData.maxAttempts,
-        retryInterval: formData.retryInterval,
+        retryInterval: parseInt(formData.retryInterval as unknown as string),
       };
 
       const schedule = await createSchedule(payload);
