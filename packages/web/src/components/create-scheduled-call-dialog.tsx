@@ -67,6 +67,21 @@ const ALL_DAYS: (
   'sunday',
 ];
 
+function localTimeToUtcClockTime(localTime: string): string {
+  const [hour, minute] = localTime.split(':').map(Number);
+
+  const localDate = new Date();
+  localDate.setHours(hour, minute, 0, 0);
+
+  const utcHour = localDate.getUTCHours();
+  const utcMinute = localDate.getUTCMinutes();
+
+  return `${String(utcHour).padStart(2, '0')}:${String(utcMinute).padStart(
+    2,
+    '0'
+  )}:00`;
+}
+
 export default function SetupForm({ onSubmit }: SetupFormProps) {
   const [step, setStep] = useState(1);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -229,7 +244,7 @@ export default function SetupForm({ onSubmit }: SetupFormProps) {
           | 'custom',
         frequencyDays:
           formData.frequency === 'custom' ? formData.frequencyDays : null,
-        frequencyTime: formData.frequencyTime,
+        frequencyTime: localTimeToUtcClockTime(formData.frequencyTime),
         selectedDays:
           formData.frequency === 'daily'
             ? ALL_DAYS

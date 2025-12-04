@@ -96,25 +96,24 @@ export const ReassuranceSchedulesRepository = {
   },
 
   /**
-   * Find schedule by id, scoped to tenant
+   * Find schedule by id, optionally scoped to tenant
    */
   async find(
     id: number,
-    companyId: string
+    companyId?: string
   ): Promise<ReassuranceCallSchedule | null> {
     const res = await pool.query<ReassuranceCallSchedule>(
       `
       SELECT *
       FROM reassurance_call_schedules
       WHERE id = $1
-        AND company_id = $2
-      `,
-      [id, companyId]
+        ${companyId ? 'AND company_id = $2' : ''}
+    `,
+      companyId ? [id, companyId] : [id]
     );
 
     return res.rows[0] || null;
   },
-
   /**
    * Get all schedules for a given tenant
    */
