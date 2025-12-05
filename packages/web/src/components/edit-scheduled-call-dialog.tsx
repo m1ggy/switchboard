@@ -47,14 +47,52 @@ const defaultFormData = {
   retryInterval: 30,
 };
 
+function pad(n: number) {
+  return String(n).padStart(2, '0');
+}
+
+// Stored UTC clock time ("HH:MM" or "HH:MM:SS") -> local "HH:MM" for <input type="time">
+function utcClockToLocalTime(utcTime: string): string {
+  if (!utcTime) return defaultFormData.frequencyTime;
+
+  const [hourStr, minuteStr, secondStr] = utcTime.split(':');
+  const hour = parseInt(hourStr ?? '0', 10) || 0;
+  const minute = parseInt(minuteStr ?? '0', 10) || 0;
+  const second = parseInt(secondStr ?? '0', 10) || 0;
+
+  // Build a Date at that UTC time
+  const utcDate = new Date(Date.UTC(1970, 0, 1, hour, minute, second));
+
+  // Read in user's local timezone
+  const localHour = utcDate.getHours();
+  const localMinute = utcDate.getMinutes();
+
+  return `${pad(localHour)}:${pad(localMinute)}`;
+}
+
+// Local "HH:MM" from <input type="time"> -> UTC clock time "HH:MM:SS"
+function localTimeToUtcClockTime(localTime: string): string {
+  if (!localTime) return '09:00:00';
+
+  const [hourStr, minuteStr] = localTime.split(':');
+  const hour = parseInt(hourStr ?? '0', 10) || 0;
+  const minute = parseInt(minuteStr ?? '0', 10) || 0;
+
+  const local = new Date();
+  local.setHours(hour, minute, 0, 0);
+
+  const utcHour = local.getUTCHours();
+  const utcMinute = local.getUTCMinutes();
+
+  return `${pad(utcHour)}:${pad(utcMinute)}:00`;
+}
+
 export default function EditDialog({
   call,
   isOpen,
   onClose,
   onSave,
 }: EditDialogProps) {
-  console.log({ call });
-
   const [step, setStep] = useState(1);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formData, setFormData] = useState<any>(defaultFormData);
@@ -63,7 +101,15 @@ export default function EditDialog({
   useEffect(() => {
     if (isOpen) {
       if (call) {
-        setFormData({ ...defaultFormData, ...call });
+        const frequencyTimeLocal = call.frequencyTime
+          ? utcClockToLocalTime(call.frequencyTime)
+          : defaultFormData.frequencyTime;
+
+        setFormData({
+          ...defaultFormData,
+          ...call,
+          frequencyTime: frequencyTimeLocal,
+        });
       } else {
         setFormData(defaultFormData);
       }
@@ -188,7 +234,13 @@ export default function EditDialog({
 
   const handleSave = () => {
     if (validateStep(4)) {
-      onSave(formData);
+      const payload = {
+        ...formData,
+        // convert local HH:MM from the input back to UTC "HH:MM:SS"
+        frequencyTime: localTimeToUtcClockTime(formData.frequencyTime),
+      };
+
+      onSave(payload);
       handleClose();
     }
   };

@@ -67,14 +67,18 @@ const ALL_DAYS: (
   'sunday',
 ];
 
-function localTimeToUtcClockTime(localTime: string): string {
-  const [hour, minute] = localTime.split(':').map(Number);
+export function localTimeToUtcClockTime(localTime: string): string {
+  const [hourStr, minuteStr] = localTime.split(':');
+  const hour = Number(hourStr);
+  const minute = Number(minuteStr ?? '0');
 
-  const localDate = new Date();
-  localDate.setHours(hour, minute, 0, 0);
+  // Build a Date at "today, HH:MM" in the browser's local timezone
+  const local = new Date();
+  local.setHours(hour, minute, 0, 0);
 
-  const utcHour = localDate.getUTCHours();
-  const utcMinute = localDate.getUTCMinutes();
+  // Read back the UTC clock time
+  const utcHour = local.getUTCHours();
+  const utcMinute = local.getUTCMinutes();
 
   return `${String(utcHour).padStart(2, '0')}:${String(utcMinute).padStart(
     2,
