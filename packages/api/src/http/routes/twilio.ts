@@ -45,6 +45,47 @@ function fullUrl(req: FastifyRequest) {
   return `${proto}://${host}${req.raw.url}`;
 }
 
+function getScriptForSchedule(schedule: any): string {
+  // 1) If there is a non-empty custom script, use that
+  const custom = schedule.script_content?.toString().trim();
+  if (custom && custom.length > 0) {
+    return custom;
+  }
+
+  // 2) Otherwise, build from template if available
+  const template = schedule.template as
+    | 'wellness'
+    | 'safety'
+    | 'medication'
+    | 'social'
+    | null;
+
+  const nameInScript =
+    schedule.name_in_script === 'caller' ? 'caller' : 'contact';
+
+  const contactName = (schedule.name ?? '').toString().trim();
+  const callerName = (schedule.caller_name ?? '').toString().trim();
+
+  const nameToUse =
+    nameInScript === 'contact'
+      ? contactName || 'there'
+      : callerName || 'your caller';
+
+  switch (template) {
+    case 'wellness':
+      return `Hello ${nameToUse}, this is an automated reassurance call to check in and make sure you're doing well today.`;
+    case 'safety':
+      return `Hello ${nameToUse}, this is an automated safety check-in to confirm that everything is okay where you are.`;
+    case 'medication':
+      return `Hello ${nameToUse}, this is an automated reminder to take your medication as prescribed.`;
+    case 'social':
+      return `Hello ${nameToUse}, this is an automated reassurance call just to say hello and see how you're doing today.`;
+    default:
+      // 3) Fallback if template is not set
+      return `Hello ${nameToUse}, this is your reassurance call. We are just checking in to see how you are doing.`;
+  }
+}
+
 const TWILIO_AUDIO_EXTS = new Set([
   '.mp3',
   '.wav',
@@ -1250,11 +1291,8 @@ async function routes(app: FastifyInstance) {
         return reply.type('text/xml').status(200).send(r.toString());
       }
 
-      const script =
-        schedule.script_content &&
-        schedule.script_content.toString().trim().length > 0
-          ? schedule.script_content
-          : 'Hello, this is your reassurance call. We are just checking in to see how you are doing.';
+      // ---- script selection: custom -> template -> fallback ----
+      const script = getScriptForSchedule(schedule);
 
       // 🔹 Gather a single digit after the script
       const gather = r.gather({
@@ -1265,7 +1303,7 @@ async function routes(app: FastifyInstance) {
         actionOnEmptyResult: true,
       });
 
-      // 1) Play the user script
+      // 1) Play the user (or template) script
       gather.say({ voice: 'Polly.Amy', language: 'en-US' }, script);
 
       // 2) Ask for confirmation

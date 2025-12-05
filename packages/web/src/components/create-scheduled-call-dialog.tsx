@@ -109,13 +109,19 @@ export default function SetupForm({ onSubmit }: SetupFormProps) {
     callerName: string,
     nameInScript: string
   ) => {
-    const nameToUse = nameInScript === 'contact' ? contactName : callerName;
+    const nameToUse =
+      nameInScript === 'contact'
+        ? contactName || 'there'
+        : callerName || 'your caller';
+
+    const closing =
+      ' If you understand this message and everything is okay, please press 1 now.';
 
     return {
-      wellness: `Hello ${nameToUse}, I'm calling from the Reassurance Service to check in and make sure you're doing well. How are you feeling today?`,
-      safety: `Good morning ${nameToUse}. This is your daily safety check-in. Is everything okay at home? Do you need any assistance?`,
-      medication: `Hi ${nameToUse}, just a friendly reminder to take your medication. Have you taken it today?`,
-      social: `Hello ${nameToUse}! Just wanted to say hello and see how your day is going. Any news to share?`,
+      wellness: `Hello ${nameToUse}, this is an automated reassurance call to check in and make sure you're doing well today.${closing}`,
+      safety: `Hello ${nameToUse}, this is an automated safety check-in to confirm that everything is okay where you are.${closing}`,
+      medication: `Hello ${nameToUse}, this is an automated reminder to take your medication as prescribed.${closing}`,
+      social: `Hello ${nameToUse}, this is an automated reassurance call just to say hello and see how you're doing today.${closing}`,
     };
   };
 
