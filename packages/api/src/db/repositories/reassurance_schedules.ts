@@ -1,5 +1,5 @@
 import pool from '@/lib/pg';
-import { ReassuranceCallSchedule } from '@/types/db';
+import { Call, ReassuranceCallSchedule } from '@/types/db';
 
 export const ReassuranceSchedulesRepository = {
   async include({
@@ -213,37 +213,37 @@ export const ReassuranceSchedulesRepository = {
     const limit = pageSize;
     const offset = (page - 1) * pageSize;
 
-    // --- Where clause for required company filter ---
+    // Only logs for schedules belonging to this tenant
     const where = `WHERE s.company_id = $1`;
     const params: any[] = [companyId];
 
-    // --- Total count query ---
+    // --- Total count ---
     const countRes = await pool.query<{ total: string }>(
       `
-      SELECT COUNT(*) AS total
-      FROM calls c
-      JOIN reassurance_call_schedules s
-        ON (c.meta->>'scheduleId')::int = s.id
-      ${where}
-      `,
+    SELECT COUNT(*) AS total
+    FROM calls c
+    JOIN reassurance_call_schedules s
+      ON (c.meta::jsonb->>'scheduleId') = s.id::text
+    ${where}
+    `,
       params
     );
 
     const total = parseInt(countRes.rows[0]?.total ?? '0', 10);
 
-    // --- Paginated data query ---
-    const dataQueryParams = [...params, limit, offset];
-    // companyId = $1, limit = $2, offset = $3
+    // --- Paginated data ---
+    const dataQueryParams = [...params, limit, offset]; // $1 = companyId, $2 = limit, $3 = offset
+
     const dataRes = await pool.query<Call>(
       `
-      SELECT c.*
-      FROM calls c
-      JOIN reassurance_call_schedules s
-        ON (c.meta->>'scheduleId')::int = s.id
-      ${where}
-      ORDER BY c.initiated_at DESC
-      LIMIT $2 OFFSET $3
-      `,
+    SELECT c.*
+    FROM calls c
+    JOIN reassurance_call_schedules s
+      ON (c.meta::jsonb->>'scheduleId') = s.id::text
+    ${where}
+    ORDER BY c.initiated_at DESC
+    LIMIT $2 OFFSET $3
+    `,
       dataQueryParams
     );
 
