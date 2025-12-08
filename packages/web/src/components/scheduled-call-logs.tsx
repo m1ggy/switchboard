@@ -19,10 +19,11 @@ function formatDuration(seconds?: number | null): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
-function mapStatus(call: any): 'completed' | 'failed' | 'in-progress' {
-  const meta = call.meta || {};
-  const duration = call.duration as number | null | undefined;
-  const rawStatus = (meta.status as string | undefined)?.toLowerCase();
+function mapStatus(
+  duration: number | null | undefined,
+  meta: { status?: string | null } | null | undefined
+): 'completed' | 'failed' | 'in-progress' {
+  const rawStatus = meta?.status?.toLowerCase();
 
   if (rawStatus) {
     if (rawStatus === 'completed') return 'completed';
@@ -41,10 +42,20 @@ function mapStatus(call: any): 'completed' | 'failed' | 'in-progress' {
   return 'failed';
 }
 
+type UiLogRow = {
+  id: string;
+  name: string;
+  phone: string;
+  date: string;
+  time: string;
+  status: 'completed' | 'failed' | 'in-progress';
+  duration: string;
+};
+
 export default function CallLog() {
   const trpc = useTRPC();
-
   const { activeCompany } = useMainStore();
+
   const { data, isLoading, isError } = useQuery(
     trpc.reassuranceSchedules.getScheduleCallLogs.queryOptions({
       page: 1,
@@ -52,6 +63,13 @@ export default function CallLog() {
       companyId: activeCompany?.id as string,
     })
   );
+  // data is now:
+  // {
+  //   data: Array<Call & { schedule: ReassuranceCallSchedule; number: NumberRow }>;
+  //   page: number;
+  //   pageSize: number;
+  //   total: number;
+  // }
 
   if (isLoading) {
     return (
@@ -87,9 +105,15 @@ export default function CallLog() {
   }
 
   // Map DB calls -> UI logs
-  const logs =
-    data.data?.map((call: any) => {
-      const meta = call.meta || {};
+  const logs: UiLogRow[] =
+    data.data?.map((call) => {
+      // meta is still where Twilio-ish stuff lives (status, to, etc.)
+      const meta = (call.meta ?? {}) as {
+        status?: string;
+        scheduleName?: string;
+        to?: string;
+      };
+
       const initiatedAt = call.initiated_at
         ? new Date(call.initiated_at)
         : null;
@@ -106,13 +130,27 @@ export default function CallLog() {
           minute: '2-digit',
         }) ?? '';
 
+      // Prefer joined schedule/number data, fall back to meta if needed
+      const name =
+        call.schedule?.name ?? meta.scheduleName ?? 'Unknown schedule';
+
+      // Based on your schema:
+      // - schedule.phone_number is likely the callee's number
+      // - number.number is the company/tenant's number
+      // previously you used meta.to, so we use schedule.phone_number first
+      const phone =
+        call.schedule?.phone_number ??
+        meta.to ??
+        call.number?.number ??
+        'Unknown number';
+
       return {
-        id: call.id,
-        name: meta.scheduleName || 'Unknown schedule',
-        phone: meta.to || 'Unknown number',
+        id: String(call.id),
+        name,
+        phone,
         date,
         time,
-        status: mapStatus(call),
+        status: mapStatus(call.duration, meta),
         duration: formatDuration(call.duration),
       };
     }) ?? [];

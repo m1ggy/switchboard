@@ -1,6 +1,19 @@
 import pool from '@/lib/pg';
 import { Call, ReassuranceCallSchedule } from '@/types/db';
 
+export interface NumberRow {
+  id: string;
+  company_id: string;
+  number: string;
+  created_at: string;
+  label: string | null;
+}
+
+export type ScheduleCallLogRow = Call & {
+  schedule: ReassuranceCallSchedule;
+  number: NumberRow;
+};
+
 export const ReassuranceSchedulesRepository = {
   async include({
     name,
@@ -203,9 +216,9 @@ export const ReassuranceSchedulesRepository = {
   }: {
     page?: number;
     pageSize?: number;
-    companyId: string; // required uuid filter (tenant)
+    companyId: string;
   }): Promise<{
-    data: Call[];
+    data: ScheduleCallLogRow[];
     page: number;
     pageSize: number;
     total: number;
@@ -213,11 +226,10 @@ export const ReassuranceSchedulesRepository = {
     const limit = pageSize;
     const offset = (page - 1) * pageSize;
 
-    // Only logs for schedules belonging to this tenant
     const where = `WHERE s.company_id = $1`;
     const params: any[] = [companyId];
 
-    // --- Total count ---
+    // --- Total count (no need to join numbers here) ---
     const countRes = await pool.query<{ total: string }>(
       `
     SELECT COUNT(*) AS total
@@ -231,15 +243,20 @@ export const ReassuranceSchedulesRepository = {
 
     const total = parseInt(countRes.rows[0]?.total ?? '0', 10);
 
-    // --- Paginated data ---
+    // --- Paginated data with schedule + number ---
     const dataQueryParams = [...params, limit, offset]; // $1 = companyId, $2 = limit, $3 = offset
 
-    const dataRes = await pool.query<Call>(
+    const dataRes = await pool.query<ScheduleCallLogRow>(
       `
-    SELECT c.*
+    SELECT
+      c.*,
+      row_to_json(s) AS schedule,
+      row_to_json(n) AS number
     FROM calls c
     JOIN reassurance_call_schedules s
       ON (c.meta::jsonb->>'scheduleId') = s.id::text
+    JOIN numbers n
+      ON c.number_id = n.id
     ${where}
     ORDER BY c.initiated_at DESC
     LIMIT $2 OFFSET $3
