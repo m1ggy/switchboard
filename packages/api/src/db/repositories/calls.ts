@@ -124,12 +124,21 @@ export const CallsRepository = {
   },
 
   async update(sid: string, updates: Partial<Call>): Promise<Call | null> {
-    const fields = [];
-    const values = [];
+    const fields: string[] = [];
+    const values: any[] = [];
     let paramIndex = 1;
 
     for (const [key, value] of Object.entries(updates)) {
-      fields.push(`${key} = $${paramIndex}`);
+      if (key === 'meta' && value && typeof value === 'object') {
+        // Merge the new meta JSON into the existing jsonb
+        // Existing keys stay unless overwritten; new keys are added
+        fields.push(
+          `meta = COALESCE(meta, '{}'::jsonb) || $${paramIndex}::jsonb`
+        );
+      } else {
+        fields.push(`${key} = $${paramIndex}`);
+      }
+
       values.push(value);
       paramIndex++;
     }
@@ -141,7 +150,10 @@ export const CallsRepository = {
     values.push(sid); // last value is the call_sid
 
     const res = await pool.query<Call>(
-      `UPDATE calls SET ${fields.join(', ')} WHERE call_sid = $${paramIndex} RETURNING *`,
+      `UPDATE calls
+     SET ${fields.join(', ')}
+     WHERE call_sid = $${paramIndex}
+     RETURNING *`,
       values
     );
 
