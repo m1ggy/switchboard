@@ -228,12 +228,10 @@ async function routes(app: FastifyInstance) {
     async (request, reply) => {
       const { To, From, CallerId, Direction, ParentCallSid, CallSid } =
         request.body as Record<string, string>;
-      const query = request.query as { ivr: string };
 
       const callerId = CallerId || From;
       const isInbound = Direction === 'inbound';
       const response = new twiml.VoiceResponse();
-      const hasPassedIVR = query.ivr === '1';
 
       if (!To) {
         response.say('Invalid destination number.');
@@ -266,38 +264,8 @@ async function routes(app: FastifyInstance) {
         return reply.type('text/xml').send(response.toString());
       }
 
-      if (isInbound && !hasPassedIVR) {
-        const company = await UserCompaniesRepository.findCompanyById(
-          numberRecord.company_id
-        );
-        const companyName = company?.name ?? 'our company';
-
-        response
-          .gather({
-            numDigits: 1,
-            timeout: 12,
-            action: `${SERVER_DOMAIN}/twilio/voice/handle-gather`,
-            method: 'POST',
-            actionOnEmptyResult: true,
-          })
-          .say(
-            { voice: 'Polly.Amy', language: 'en-US' },
-            `<speak>
-      <prosody rate="100%">
-        <break time="1000ms"/>
-        Thank you for calling ${companyName}.
-        <break time="700ms"/>
-        Press 1 to speak with an agent.
-        <break time="600ms"/>
-        Or, if you'd like to send a fax, please stay on the line.
-      </prosody>
-    </speak>`
-          );
-
-        return reply.type('text/xml').status(200).send(response.toString());
-      }
-
-      if (hasPassedIVR) {
+      // 🆕 Always treat inbound calls as "ready to route"
+      if (isInbound) {
         const existing = await CallsRepository.findBySID(CallSid);
         if (!existing) {
           const contact = await ContactsRepository.findOrCreate({
@@ -418,9 +386,12 @@ async function routes(app: FastifyInstance) {
           from: slackMessageFromFormatted,
           to: slackMessageToFormatted,
         });
+
         const company = await UserCompaniesRepository.findCompanyById(
           number?.company_id as string
         );
+
+        // No more fax mention here
         response.say(
           `Welcome to ${company?.name} Hotline, please wait while we connect you to an agent`
         );
@@ -440,6 +411,7 @@ async function routes(app: FastifyInstance) {
           badge: '/icons/icon-192.png',
           tag: 'call',
         });
+
         response.dial().conference(
           {
             startConferenceOnEnter: false,
@@ -447,7 +419,9 @@ async function routes(app: FastifyInstance) {
             statusCallback: `${SERVER_DOMAIN}/twilio/voice/conference-events`,
             statusCallbackEvent: ['leave', 'join'],
             statusCallbackMethod: 'POST',
-            waitUrl: `${SERVER_DOMAIN}/twilio/voice/hold-music?companyId=${encodeURIComponent(numberRecord.company_id)}`,
+            waitUrl: `${SERVER_DOMAIN}/twilio/voice/hold-music?companyId=${encodeURIComponent(
+              numberRecord.company_id
+            )}`,
             waitMethod: 'GET',
           },
           queueRoom
@@ -467,7 +441,9 @@ async function routes(app: FastifyInstance) {
 
             await twilioClient.client.calls(CallSid).update({
               method: 'POST',
-              url: `${SERVER_DOMAIN}/twilio/voice/voicemail?to=${encodeURIComponent(To)}`,
+              url: `${SERVER_DOMAIN}/twilio/voice/voicemail?to=${encodeURIComponent(
+                To
+              )}`,
             });
           } catch (err) {
             console.error('Voicemail redirect failed', err);
