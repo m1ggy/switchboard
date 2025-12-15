@@ -282,3 +282,34 @@ export interface ReassuranceCallJob {
   last_error: string | null;
   created_at: Date;
 }
+
+export type ReassuranceCallSession = {
+  id: string;
+  schedule_id: number;
+  job_id: string | null;
+  call_id: string;
+  contact_id: string;
+  started_at: Date;
+  ended_at: Date | null;
+  status: 'in_progress' | 'completed' | 'user_hung_up' | 'failed' | 'escalated';
+  risk_level: string | null;
+  ai_summary: string | null;
+  notes_for_human: string | null;
+  ai_model: string | null;
+  created_at: Date;
+};
+
+export type ReassuranceCallTurn = {
+  id: string;
+  session_id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  created_at: Date;
+  meta: any | null; // jsonb
+};
+
+export type ReassuranceContactMemorySummary = {
+  contact_id: string;
+  summary_text: string;
+  last_updated_at: Date;
+};

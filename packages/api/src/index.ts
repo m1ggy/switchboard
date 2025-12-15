@@ -17,9 +17,11 @@ import { auth } from './lib/firebase';
 import { appRouter } from './trpc';
 import { createContext } from './trpc/context';
 
+import fastifyWebsocket from '@fastify/websocket';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import companiesRoutes from './http/routes/companies';
+import { twilioMediaStreamRoutes } from './http/routes/mediastreams';
 import { registerReassuranceCron } from './lib/jobs/reassurance';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -106,6 +108,7 @@ app.get('/', (_, reply) => {
 app.get('/health', () => {
   return { message: 'OK' };
 });
+app.register(fastifyWebsocket);
 
 app.register(twilioRoutes, { prefix: '/twilio' });
 app.register(jitsiRoutes, { prefix: '/jitsi' });
@@ -113,6 +116,8 @@ app.register(faxRoutes, { prefix: '/fax' });
 app.register(stripeRoutes, { prefix: '/stripe' });
 
 app.register(companiesRoutes, { prefix: '/companies' });
+
+app.register(twilioMediaStreamRoutes, { prefix: '/twilio' });
 
 registerReassuranceCron(app);
 
