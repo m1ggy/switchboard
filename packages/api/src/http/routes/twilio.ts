@@ -1472,6 +1472,28 @@ async function routes(app: FastifyInstance) {
       return reply.status(204).send();
     }
   );
+
+  app.post('/voice/test-stream', async (req, reply) => {
+    const r = new twilio.twiml.VoiceResponse();
+
+    const wsUrl = `wss://api.calliya.com/twilio/voice/stream?test=1`;
+
+    r.say(
+      'Starting media stream test now. Please say something after the beep.'
+    );
+    r.pause({ length: 20 }); // keep the call alive
+
+    // IMPORTANT: Connect Stream should be inside the call flow:
+    r.connect().stream({ url: wsUrl });
+
+    // Keep alive long enough to talk
+    r.pause({ length: 30 });
+
+    r.say('Test complete. Goodbye.');
+    r.hangup();
+
+    return reply.type('text/xml').status(200).send(r.toString());
+  });
 }
 
 export default routes;
