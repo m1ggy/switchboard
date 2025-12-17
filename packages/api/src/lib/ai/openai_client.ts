@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import OpenAI from 'openai';
 
 export interface GenerateTextOptions {
   input: string | { role: string; content: string }[];
@@ -16,7 +16,7 @@ export class OpenAIClient {
   private client: OpenAI;
   private defaultModel: string;
 
-  constructor(apiKey: string, defaultModel = "gpt-5") {
+  constructor(apiKey: string, defaultModel = 'gpt-5') {
     this.client = new OpenAI({
       apiKey,
     });
@@ -40,28 +40,25 @@ export class OpenAIClient {
       model: model ?? this.defaultModel,
       input,
       instructions,
-      temperature,
       max_output_tokens: maxOutputTokens,
     });
 
     // Responses API exposes a convenience string:
     // https://platform.openai.com/docs/guides/text
-    return response.output_text ?? "";
+    return response.output_text ?? '';
   }
 
   /**
    * Helper for “JSON-shaped” responses.
    * The prompt must clearly say: "Return ONLY valid JSON with this shape: …"
    */
-  async generateJson<T = any>(
-    options: GenerateTextOptions
-  ): Promise<T> {
+  async generateJson<T = any>(options: GenerateTextOptions): Promise<T> {
     const text = await this.generateText(options);
 
     try {
       return JSON.parse(text) as T;
     } catch (err) {
-      console.error("Failed to parse JSON from model:", text);
+      console.error('Failed to parse JSON from model:', text);
       throw err;
     }
   }
