@@ -6,10 +6,6 @@ export type SimpleMessage = {
 };
 
 export interface GenerateTextOptions {
-  /**
-   * You can pass either a plain string OR a simple chat-style array.
-   * We'll normalize it to the Responses API format.
-   */
   input: string | SimpleMessage[];
   instructions?: string;
   temperature?: number;
@@ -18,7 +14,7 @@ export interface GenerateTextOptions {
 }
 
 type JsonSchemaDef = {
-  name: string;
+  name?: string; // optional label (handy for debugging)
   schema: Record<string, any>;
 };
 
@@ -37,7 +33,6 @@ export class OpenAIClient {
 
   /**
    * Convert "simple messages" into Responses API input format.
-   *
    * Responses expects:
    * input: [
    *   { type: "message", role: "user", content: [{ type: "input_text", text: "..." }] }
@@ -55,6 +50,10 @@ export class OpenAIClient {
     }));
   }
 
+  /**
+   * Basic text generation helper.
+   * Returns a single string (concatenated output_text).
+   */
   async generateText(options: GenerateTextOptions): Promise<string> {
     const {
       input,
@@ -70,12 +69,16 @@ export class OpenAIClient {
       instructions,
       temperature,
       max_output_tokens: maxOutputTokens,
+      // No need to set text.format here; default is plain text. :contentReference[oaicite:2]{index=2}
     });
 
-    const text = (response as any).output_text ?? '';
-    return typeof text === 'string' ? text : '';
+    return typeof response.output_text === 'string' ? response.output_text : '';
   }
 
+  /**
+   * Strict JSON helper using Structured Outputs via `text.format`.
+   * (Replaces the old `response_format` parameter.) :contentReference[oaicite:3]{index=3}
+   */
   async generateJson<T = any>(options: GenerateJsonOptions): Promise<T> {
     const {
       input,
@@ -92,18 +95,18 @@ export class OpenAIClient {
       instructions,
       temperature,
       max_output_tokens: maxOutputTokens,
-      response_format: {
-        type: 'json_schema',
-        json_schema: {
-          name: schema.name,
+      text: {
+        format: {
+          type: 'json_schema',
           strict: true,
+          // `name` is optional; include if you want a label for logs/debugging.
+          ...(schema.name ? { name: schema.name } : {}),
           schema: schema.schema,
         },
       },
     });
 
-    const raw = ((response as any).output_text ?? '').trim();
-
+    const raw = (response.output_text ?? '').trim();
     if (!raw) {
       throw new Error(
         `OpenAI returned empty output_text while expecting JSON. response_id=${(response as any).id ?? 'unknown'}`
@@ -115,9 +118,7 @@ export class OpenAIClient {
     } catch (err: any) {
       const preview = raw.length > 2000 ? raw.slice(0, 2000) + '…' : raw;
       console.error('Failed to parse JSON from model output_text:', preview);
-      throw new Error(
-        `Failed to parse JSON from model output_text: ${err?.message ?? String(err)}`
-      );
+      throw new Error(`Failed to parse JSON: ${err?.message ?? String(err)}`);
     }
   }
 }
