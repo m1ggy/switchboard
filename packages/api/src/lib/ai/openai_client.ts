@@ -9,10 +9,7 @@ export interface GenerateTextOptions {
   input: string | SimpleMessage[];
   instructions?: string;
 
-  /**
-   * IMPORTANT: do not default this. Some models (e.g., gpt-5 reasoning)
-   * reject temperature entirely if it is present. :contentReference[oaicite:1]{index=1}
-   */
+  // IMPORTANT: some models reject temperature if present; only send when supported
   temperature?: number;
 
   maxOutputTokens?: number;
@@ -49,21 +46,40 @@ export class OpenAIClient {
     }));
   }
 
-  /**
-   * Reasoning model families (like gpt-5) do not support temperature/top_p/etc.
-   * Keep this conservative; you can expand as you use more models. :contentReference[oaicite:2]{index=2}
-   */
   private supportsTemperature(model: string): boolean {
-    // gpt-5* (reasoning) -> no temperature
     if (model.startsWith('gpt-5')) return false;
-
-    // Common reasoning families -> no temperature (optional but usually correct)
-    // If you don't use these, you can remove them.
     if (model.startsWith('o1')) return false;
     if (model.startsWith('o3')) return false;
     if (model.startsWith('o4')) return false;
-
     return true;
+  }
+
+  /**
+   * Extract concatenated output_text from the response.output array
+   * (not just response.output_text convenience field). :contentReference[oaicite:2]{index=2}
+   */
+  private extractOutputTextFromItems(response: any): string {
+    const out: string[] = [];
+    for (const item of response?.output ?? []) {
+      for (const c of item?.content ?? []) {
+        if (c?.type === 'output_text' && typeof c.text === 'string')
+          out.push(c.text);
+      }
+    }
+    return out.join('').trim();
+  }
+
+  /**
+   * Extract structured JSON from the response.output array if present.
+   * Some responses may have output_json (already parsed) instead of output_text.
+   */
+  private extractOutputJsonFromItems(response: any): unknown | undefined {
+    for (const item of response?.output ?? []) {
+      for (const c of item?.content ?? []) {
+        if (c?.type === 'output_json' && c.json !== undefined) return c.json;
+      }
+    }
+    return undefined;
   }
 
   async generateText(options: GenerateTextOptions): Promise<string> {
@@ -74,7 +90,6 @@ export class OpenAIClient {
       maxOutputTokens = 512,
       model,
     } = options;
-
     const chosenModel = model ?? this.defaultModel;
 
     const req: OpenAI.Responses.ResponseCreateParamsNonStreaming = {
@@ -84,13 +99,18 @@ export class OpenAIClient {
       max_output_tokens: maxOutputTokens,
     };
 
-    // Only include temperature if explicitly provided AND model supports it.
     if (temperature !== undefined && this.supportsTemperature(chosenModel)) {
       (req as any).temperature = temperature;
     }
 
     const response = await this.client.responses.create(req);
-    return typeof response.output_text === 'string' ? response.output_text : '';
+
+    // Prefer SDK convenience if present, but fall back to walking response.output :contentReference[oaicite:3]{index=3}
+    const t0 =
+      typeof (response as any).output_text === 'string'
+        ? (response as any).output_text
+        : '';
+    return t0?.trim?.() || this.extractOutputTextFromItems(response);
   }
 
   async generateJson<T = any>(options: GenerateJsonOptions): Promise<T> {
@@ -102,7 +122,6 @@ export class OpenAIClient {
       model,
       schema,
     } = options;
-
     const chosenModel = model ?? this.defaultModel;
 
     const req: OpenAI.Responses.ResponseCreateParamsNonStreaming = {
@@ -111,6 +130,7 @@ export class OpenAIClient {
       instructions,
       max_output_tokens: maxOutputTokens,
       text: {
+        // Structured Outputs via Responses API uses text.format :contentReference[oaicite:4]{index=4}
         format: {
           type: 'json_schema',
           strict: true,
@@ -120,17 +140,27 @@ export class OpenAIClient {
       },
     };
 
-    // Only include temperature if explicitly provided AND model supports it.
     if (temperature !== undefined && this.supportsTemperature(chosenModel)) {
       (req as any).temperature = temperature;
     }
 
     const response = await this.client.responses.create(req);
 
-    const raw = (response.output_text ?? '').trim();
+    // 1) Best case: output_json exists (already parsed)
+    const j = this.extractOutputJsonFromItems(response);
+    if (j !== undefined) return j as T;
+
+    // 2) Next: output_text exists somewhere in output items (may be empty in response.output_text)
+    const raw =
+      (typeof (response as any).output_text === 'string'
+        ? (response as any).output_text
+        : ''
+      ).trim() || this.extractOutputTextFromItems(response);
+
     if (!raw) {
+      // Don’t lie: genuinely nothing usable came back
       throw new Error(
-        `OpenAI returned empty output_text while expecting JSON. response_id=${(response as any).id ?? 'unknown'}`
+        `OpenAI response contained no output_text or output_json items. response_id=${(response as any).id ?? 'unknown'}`
       );
     }
 
@@ -138,7 +168,7 @@ export class OpenAIClient {
       return JSON.parse(raw) as T;
     } catch (err: any) {
       const preview = raw.length > 2000 ? raw.slice(0, 2000) + '…' : raw;
-      console.error('Failed to parse JSON from model output_text:', preview);
+      console.error('Failed to parse JSON from model output:', preview);
       throw new Error(`Failed to parse JSON: ${err?.message ?? String(err)}`);
     }
   }
