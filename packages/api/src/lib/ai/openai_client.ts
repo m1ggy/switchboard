@@ -29,7 +29,7 @@ export class OpenAIClient {
   private client: OpenAI;
   private defaultModel: string;
 
-  constructor(apiKey: string, defaultModel = 'gpt-5-nano-2025-08-07') {
+  constructor(apiKey: string, defaultModel = 'gpt-4o-mini-2024-07-18') {
     this.client = new OpenAI({ apiKey });
     this.defaultModel = defaultModel;
   }
