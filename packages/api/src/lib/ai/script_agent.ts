@@ -1,18 +1,18 @@
-import { OpenAIClient } from './openai_client';
+import { OpenAIClient, SimpleMessage } from './openai_client';
 
 export type ScriptIntent = 'opening' | 'followup' | 'closing';
 
 export interface ScriptSegment {
   id: string;
-  text: string; // what you send to ElevenLabs
+  text: string;
   tone: 'calm' | 'warm' | 'reassuring';
-  maxDurationSeconds: number; // hint for how long this segment should be
+  maxDurationSeconds: number;
 }
 
 export interface ScriptPayload {
   intent: ScriptIntent;
   segments: ScriptSegment[];
-  notesForHumanSupervisor?: string;
+  notesForHumanSupervisor: string | null;
 }
 
 export interface UserProfile {
@@ -20,15 +20,44 @@ export interface UserProfile {
   name?: string;
   preferredName?: string;
   ageRange?: 'child' | 'adult' | 'senior';
-  relationshipToCaller?: string; // e.g., "care agency", "clinic", "friend"
-  locale?: string; // "en-US", "en-GB", etc.
+  relationshipToCaller?: string;
+  locale?: string;
 }
 
 export interface CallContext {
   userProfile: UserProfile;
-  lastCheckInSummary?: string; // short text summary from previous call
+  lastCheckInSummary?: string;
   riskLevel?: 'low' | 'medium' | 'high';
 }
+
+// ✅ Strict JSON Schema for Structured Outputs
+const scriptPayloadSchema = {
+  name: 'ScriptPayload',
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      intent: { type: 'string', enum: ['opening', 'followup', 'closing'] },
+      segments: {
+        type: 'array',
+        minItems: 1,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            id: { type: 'string' },
+            text: { type: 'string' },
+            tone: { type: 'string', enum: ['calm', 'warm', 'reassuring'] },
+            maxDurationSeconds: { type: 'number' },
+          },
+          required: ['id', 'text', 'tone', 'maxDurationSeconds'],
+        },
+      },
+      notesForHumanSupervisor: { type: ['string', 'null'] },
+    },
+    required: ['intent', 'segments', 'notesForHumanSupervisor'],
+  },
+};
 
 export class ScriptGeneratorAgent {
   constructor(
@@ -36,18 +65,11 @@ export class ScriptGeneratorAgent {
     private systemInstructions: string = defaultSystemInstructions
   ) {}
 
-  /**
-   * Generate the **opening script** for a reassurance call.
-   * Use this at the start of each call.
-   */
   async generateOpeningScript(context: CallContext): Promise<ScriptPayload> {
     const { userProfile, lastCheckInSummary, riskLevel = 'low' } = context;
 
-    const input = [
-      {
-        role: 'system',
-        content: this.systemInstructions,
-      },
+    const input: SimpleMessage[] = [
+      { role: 'system', content: this.systemInstructions },
       {
         role: 'user',
         content: [
@@ -65,44 +87,38 @@ export class ScriptGeneratorAgent {
           `Estimated current risk level: ${riskLevel}`,
           ``,
           `Task:`,
-          `1. Greet the person warmly.`,
-          `2. Remind them who is calling and why.`,
-          `3. Briefly acknowledge any relevant past info (if provided).`,
-          `4. Ask one gentle, open-ended question about how they are doing today.`,
+          `1) Greet the person warmly.`,
+          `2) Remind them who is calling and why.`,
+          `3) Briefly acknowledge any relevant past info (if provided).`,
+          `4) Ask one gentle, open-ended question about how they are doing today.`,
           ``,
-          `Output requirements:`,
-          `- Return ONLY valid JSON.`,
-          `- Shape: { "intent": "opening", "segments": [ ... ], "notesForHumanSupervisor": string | null }.`,
-          `- Each segment MUST be short (1–2 sentences max).`,
-          `- Use clear, simple language suitable for voice.`,
-          `- Do not include any markup, no quotes around the whole script, no emojis.`,
+          `Constraints:`,
+          `- Each segment must be 1–2 sentences.`,
+          `- Simple language suitable for voice.`,
+          `- No markup, no emojis.`,
+          `- notesForHumanSupervisor can be null.`,
         ].join('\n'),
       },
     ];
 
     return this.openai.generateJson<ScriptPayload>({
       input,
+      schema: scriptPayloadSchema,
       temperature: 0.6,
       maxOutputTokens: 350,
     });
   }
 
-  /**
-   * Generate a follow-up script in response to what the user just said.
-   */
   async generateFollowupScript(params: {
     context: CallContext;
     lastUserUtterance: string;
-    runningSummary?: string; // summary of this call so far
+    runningSummary?: string;
   }): Promise<ScriptPayload> {
     const { context, lastUserUtterance, runningSummary } = params;
     const { userProfile, riskLevel = 'low' } = context;
 
-    const input = [
-      {
-        role: 'system',
-        content: this.systemInstructions,
-      },
+    const input: SimpleMessage[] = [
+      { role: 'system', content: this.systemInstructions },
       {
         role: 'user',
         content: [
@@ -118,39 +134,34 @@ export class ScriptGeneratorAgent {
           `${runningSummary ?? 'No summary yet.'}`,
           ``,
           `Most recent user utterance (transcribed):`,
-          `"${lastUserUtterance}"`,
+          `${lastUserUtterance}`,
           ``,
           `Estimated risk level for this user: ${riskLevel}`,
           ``,
           `Task:`,
-          `1. Acknowledge what the user just said.`,
-          `2. Respond empathically and validate feelings.`,
-          `3. Ask one appropriate follow-up question (open-ended if possible).`,
-          `4. If user sounds distressed or mentions safety issues, gently encourage them to reach out to emergency services or a trusted contact (but DO NOT invent phone numbers).`,
+          `1) Acknowledge what the user just said.`,
+          `2) Respond empathically and validate feelings.`,
+          `3) Ask one appropriate follow-up question (open-ended if possible).`,
+          `4) If user sounds distressed or mentions safety issues, encourage reaching out to emergency services or a trusted contact (do NOT invent phone numbers).`,
           ``,
-          `Output requirements:`,
-          `- Return ONLY valid JSON.`,
-          `- Shape: { "intent": "followup", "segments": [ ... ], "notesForHumanSupervisor": string | null }.`,
-          `- Each segment MUST be short (1–2 sentences max).`,
-          `- Use clear, simple language suitable for voice.`,
-          `- No emojis, no markup.`,
-          `- If there are any subtle safety concerns, mention them in "notesForHumanSupervisor".`,
+          `Constraints:`,
+          `- Each segment must be 1–2 sentences.`,
+          `- Simple language suitable for voice.`,
+          `- No markup, no emojis.`,
+          `- If subtle safety concerns exist, mention them in notesForHumanSupervisor.`,
         ].join('\n'),
       },
     ];
 
     return this.openai.generateJson<ScriptPayload>({
       input,
+      schema: scriptPayloadSchema,
       temperature: 0.7,
       maxOutputTokens: 400,
     });
   }
 }
 
-/**
- * Shared system prompt for the agent.
- * You can tune this over time.
- */
 const defaultSystemInstructions = `
 You are an AI assistant that writes short, natural-sounding scripts
 for voice-based reassurance / wellbeing phone calls.
