@@ -325,7 +325,8 @@ function Settings() {
       ? Math.max(0, (maxCompanies as number) - companyCount)
       : 0; // if plan unknown, show 0 remaining to be safe
 
-  const canAddCompany = isAdmin || remainingSlots > 0;
+  const canAddCompany =
+    isAdmin || remainingSlots > 0 || !sub || sub.status === 'canceled';
 
   /* -----------------------------------------------------------------------
    * Notifications card state
