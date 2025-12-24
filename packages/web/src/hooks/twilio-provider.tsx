@@ -102,6 +102,8 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
     });
 
     client.initialize().then(() => {
+      if (clientRef.current) clientRef.current?.destroy?.();
+
       clientRef.current = client;
       setReady(true);
     });

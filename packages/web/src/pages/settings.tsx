@@ -326,7 +326,7 @@ function Settings() {
       : 0; // if plan unknown, show 0 remaining to be safe
 
   const canAddCompany =
-    isAdmin || remainingSlots > 0 || !sub || sub.status === 'canceled';
+    isAdmin || remainingSlots > 0 || (sub && sub.status !== 'canceled');
 
   /* -----------------------------------------------------------------------
    * Notifications card state

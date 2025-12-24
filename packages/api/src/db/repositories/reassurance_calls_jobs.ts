@@ -191,4 +191,49 @@ export const ReassuranceCallJobsRepository = {
 
     return res.rows;
   },
+
+  /**
+   * Check if schedule already has an upcoming run (pending/processing)
+   * at or after a given time.
+   *
+   * Used by cron seeding: if none exists, create a new run.
+   */
+  async existsUpcomingForSchedule(
+    scheduleId: number,
+    fromRunAt: Date
+  ): Promise<boolean> {
+    const res = await pool.query<{ exists: boolean }>(
+      `
+      SELECT EXISTS(
+        SELECT 1
+        FROM reassurance_call_jobs
+        WHERE schedule_id = $1
+          AND status IN ('pending', 'processing')
+          AND run_at >= $2
+      ) AS exists
+      `,
+      [scheduleId, fromRunAt.toISOString()]
+    );
+
+    return Boolean(res.rows[0]?.exists);
+  },
+
+  /**
+   * Atomically claim a pending job for processing.
+   * Returns true if this worker claimed it, false if it was already claimed.
+   */
+  async claimPending(id: string): Promise<boolean> {
+    const res = await pool.query(
+      `
+      UPDATE reassurance_call_jobs
+      SET status = 'processing'
+      WHERE id = $1
+        AND status = 'pending'
+      RETURNING id
+      `,
+      [id]
+    );
+
+    return res.rowCount === 1;
+  },
 };

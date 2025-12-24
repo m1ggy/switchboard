@@ -221,7 +221,7 @@ async function notifyEmergencyContact({
 }
 
 async function routes(app: FastifyInstance) {
-  // 🔹 Voice Entry Point
+  // 🔹 Voice Entry Point (UPDATED: Option 1 - ring client first)
   app.post(
     '/voice',
     { preHandler: verifyTwilioRequest },
@@ -244,6 +244,7 @@ async function routes(app: FastifyInstance) {
       const isToPSTN = To.startsWith('+');
       const isOutboundToPSTN = isFromClient && isToPSTN && !numberRecord;
 
+      // Existing outbound-to-PSTN behavior
       if (isOutboundToPSTN) {
         response.say('Connecting your call...');
         response.dial({ callerId }, To);
@@ -255,16 +256,16 @@ async function routes(app: FastifyInstance) {
         return reply.type('text/xml').status(200).send(response.toString());
       }
 
-      const agentIdentity = numberRecord.number;
+      const agentIdentity = numberRecord.number; // your chosen client identity (E.164)
 
-      // 🆕 Prevent loop
+      // Prevent dial loop (existing)
       const isDialLoop = isInbound && ParentCallSid;
       if (isDialLoop) {
         response.say('Sorry, we could not connect your call.');
         return reply.type('text/xml').send(response.toString());
       }
 
-      // 🆕 Always treat inbound calls as "ready to route"
+      // Persist inbound call record (existing)
       if (isInbound) {
         const existing = await CallsRepository.findBySID(CallSid);
         if (!existing) {
@@ -289,7 +290,7 @@ async function routes(app: FastifyInstance) {
           await InboxesRepository.updateLastCall(inbox.id, call.id);
         }
 
-        // Track active call
+        // Track active call (initiated)
         activeCallStore.add({
           sid: CallSid,
           from: From,
@@ -300,6 +301,7 @@ async function routes(app: FastifyInstance) {
         });
       }
 
+      // Keep your notification (optional but fine)
       await notifyIncomingCall({
         callerId,
         toNumber: To,
@@ -307,154 +309,172 @@ async function routes(app: FastifyInstance) {
         app,
       });
 
-      const agentIsAvailable = presenceStore.isAvailable(agentIdentity);
+      /**
+       * ✅ OPTION 1: Always ring the browser first.
+       * This is what triggers Twilio Voice SDK "incoming" in the UI.
+       */
+      const dial = response.dial({
+        timeout: 20,
+        answerOnBridge: true,
+        action: `${SERVER_DOMAIN}/twilio/voice/no-answer?agent=${encodeURIComponent(
+          agentIdentity
+        )}&to=${encodeURIComponent(To)}&from=${encodeURIComponent(callerId)}`,
+        method: 'POST',
+      });
 
-      if (agentIsAvailable) {
-        presenceStore.setStatus(agentIdentity, 'on-call');
+      dial.client(agentIdentity);
 
-        await twilioClient.bridgeCallToClient(
-          CallSid,
-          agentIdentity,
-          `${SERVER_DOMAIN}/twilio/voice/bridge`
+      return reply.type('text/xml').status(200).send(response.toString());
+    }
+  );
+
+  // 🔹 Fallback when client did not answer / is offline / rejected
+  app.post(
+    '/voice/no-answer',
+    { preHandler: verifyTwilioRequest },
+    async (req, reply) => {
+      const { DialCallStatus, CallSid } = req.body as Record<string, string>;
+      const { agent, to, from } = req.query as Record<string, string>;
+
+      const agentIdentity = agent;
+      const To = to;
+      const callerId = from;
+
+      // If the dial somehow "worked", do nothing else
+      // DialCallStatus values: completed, answered, no-answer, busy, failed, canceled
+      if (DialCallStatus === 'completed' || DialCallStatus === 'answered') {
+        const r = new twiml.VoiceResponse();
+        return reply.type('text/xml').status(200).send(r.toString());
+      }
+
+      const response = new twiml.VoiceResponse();
+
+      // Re-load numberRecord/company for hold music + notifications (same as your old branch)
+      const numberRecord = await NumbersRepository.findByNumber(To);
+      if (!numberRecord) {
+        response.say('We could not route your call at this time.');
+        response.hangup();
+        return reply.type('text/xml').status(200).send(response.toString());
+      }
+
+      // Enqueue caller
+      const queueRoom = `queue-${agentIdentity}`;
+
+      callQueueManager.enqueue(agentIdentity, {
+        callSid: CallSid,
+        callerId,
+        toNumber: To,
+        enqueueTime: Date.now(),
+        agentId: agentIdentity,
+        companyId: numberRecord.company_id,
+      });
+
+      // Slack formatting logic (copied from your existing else branch)
+      let slackMessageToFormatted = To;
+      let slackMessageFromFormatted = callerId;
+
+      console.log('[Slack Alert] Incoming call (no-answer fallback):', {
+        from: callerId,
+        to: To,
+        agentIdentity,
+        dialStatus: DialCallStatus,
+      });
+
+      const number = await NumbersRepository.findByNumber(agentIdentity);
+      if (!number) {
+        console.warn(
+          '[Slack Alert] No number found for agentIdentity:',
+          agentIdentity
         );
-
-        response.say('Connecting you to an agent now.');
       } else {
-        const queueRoom = `queue-${agentIdentity}`;
+        const company = await UserCompaniesRepository.findCompanyById(
+          number.company_id
+        );
+        if (company) {
+          slackMessageToFormatted = `${To} (${company.name})`;
 
-        callQueueManager.enqueue(agentIdentity, {
-          callSid: CallSid,
-          callerId,
-          toNumber: To,
-          enqueueTime: Date.now(),
-          agentId: agentIdentity,
-          companyId: numberRecord.company_id,
-        });
-
-        let slackMessageToFormatted = To;
-        let slackMessageFromFormatted = From;
-
-        console.log('[Slack Alert] Incoming call:', {
-          From,
-          To,
-          agentIdentity,
-        });
-
-        const number = await NumbersRepository.findByNumber(agentIdentity);
-        if (!number) {
-          console.warn(
-            '[Slack Alert] No number found for agentIdentity:',
-            agentIdentity
+          const contact = await ContactsRepository.findByNumber(
+            callerId,
+            company.id
           );
-        } else {
-          console.log('[Slack Alert] Found number:', number);
-
-          const company = await UserCompaniesRepository.findCompanyById(
-            number.company_id
-          );
-          if (!company) {
-            console.warn(
-              '[Slack Alert] No company found for number.company_id:',
-              number.company_id
-            );
-          } else {
-            console.log('[Slack Alert] Found company:', company.name);
-            slackMessageToFormatted = `${To} (${company.name})`;
-
-            const contact = await ContactsRepository.findByNumber(
-              From,
-              company.id
-            );
-            if (!contact) {
-              console.log('[Slack Alert] No contact found for:', From);
-            } else {
-              console.log('[Slack Alert] Found contact:', contact);
-
-              if (contact.label !== From) {
-                slackMessageFromFormatted = `${From} (${contact.label})`;
-              }
-            }
+          if (contact && contact.label !== callerId) {
+            slackMessageFromFormatted = `${callerId} (${contact.label})`;
           }
         }
-
-        console.log('[Slack Alert] Final Slack message formatting:', {
-          from: slackMessageFromFormatted,
-          to: slackMessageToFormatted,
-        });
-
-        await sendCallAlertToSlack({
-          from: slackMessageFromFormatted,
-          to: slackMessageToFormatted,
-        });
-
-        const company = await UserCompaniesRepository.findCompanyById(
-          number?.company_id as string
-        );
-
-        // No more fax mention here
-        response.say(
-          `Welcome to ${company?.name} Hotline, please wait while we connect you to an agent`
-        );
-
-        const userCompany = await UserCompaniesRepository.findUserIdById(
-          company?.id as string
-        );
-
-        const user = await UsersRepository.findByFirebaseUid(
-          userCompany?.user_id as string
-        );
-        await sendPushToUser(user?.user_id as string, {
-          title: 'Incoming call from ' + slackMessageFromFormatted,
-          body: `You have an incoming call for ${slackMessageToFormatted}`,
-          url: '/dashboard',
-          icon: '/icons/icon-192.png',
-          badge: '/icons/icon-192.png',
-          tag: 'call',
-        });
-
-        response.dial().conference(
-          {
-            startConferenceOnEnter: false,
-            endConferenceOnExit: false,
-            statusCallback: `${SERVER_DOMAIN}/twilio/voice/conference-events`,
-            statusCallbackEvent: ['leave', 'join'],
-            statusCallbackMethod: 'POST',
-            waitUrl: `${SERVER_DOMAIN}/twilio/voice/hold-music?companyId=${encodeURIComponent(
-              numberRecord.company_id
-            )}`,
-            waitMethod: 'GET',
-          },
-          queueRoom
-        );
-
-        const VOICEMAIL_TIMEOUT_MS = 120_000; // 2 minutes
-
-        const timerId = setTimeout(async () => {
-          try {
-            // Only redirect if still held (not bridged yet)
-            const held = activeCallStore.isHeld(CallSid);
-            if (!held) return;
-
-            // Recheck presence to avoid false positive
-            const stillBusy = !presenceStore.isAvailable(agentIdentity);
-            if (!stillBusy) return;
-
-            await twilioClient.client.calls(CallSid).update({
-              method: 'POST',
-              url: `${SERVER_DOMAIN}/twilio/voice/voicemail?to=${encodeURIComponent(
-                To
-              )}`,
-            });
-          } catch (err) {
-            console.error('Voicemail redirect failed', err);
-          }
-        }, VOICEMAIL_TIMEOUT_MS);
-
-        // track timer in your activeCallStore so you can cancel it
-        activeCallStore.attachTimer(CallSid, timerId);
-
-        activeCallStore.updateStatus(CallSid, 'held', agentIdentity);
       }
+
+      await sendCallAlertToSlack({
+        from: slackMessageFromFormatted,
+        to: slackMessageToFormatted,
+      });
+
+      const company = await UserCompaniesRepository.findCompanyById(
+        numberRecord.company_id
+      );
+
+      response.say(
+        `Welcome to ${company?.name ?? 'our'} Hotline, please wait while we connect you to an agent`
+      );
+
+      // Push notification (copied from your else branch)
+      const userCompany = await UserCompaniesRepository.findUserIdById(
+        company?.id as string
+      );
+      if (userCompany) {
+        const user = await UsersRepository.findByFirebaseUid(
+          userCompany.user_id
+        );
+        if (user?.user_id) {
+          await sendPushToUser(user.user_id, {
+            title: 'Incoming call from ' + slackMessageFromFormatted,
+            body: `You have an incoming call for ${slackMessageToFormatted}`,
+            url: '/dashboard',
+            icon: '/icons/icon-192.png',
+            badge: '/icons/icon-192.png',
+            tag: 'call',
+          });
+        }
+      }
+
+      // Put caller into conference queue (same as your else branch)
+      response.dial().conference(
+        {
+          startConferenceOnEnter: false,
+          endConferenceOnExit: false,
+          statusCallback: `${SERVER_DOMAIN}/twilio/voice/conference-events`,
+          statusCallbackEvent: ['join', 'leave'],
+          statusCallbackMethod: 'POST',
+          waitUrl: `${SERVER_DOMAIN}/twilio/voice/hold-music?companyId=${encodeURIComponent(
+            numberRecord.company_id
+          )}`,
+          waitMethod: 'GET',
+        },
+        queueRoom
+      );
+
+      // Voicemail timeout logic (same as your else branch)
+      const VOICEMAIL_TIMEOUT_MS = 120_000; // 2 minutes
+
+      const timerId = setTimeout(async () => {
+        try {
+          const held = activeCallStore.isHeld(CallSid);
+          if (!held) return;
+
+          // Recheck presence (optional; still in-memory)
+          const stillBusy = !presenceStore.isAvailable(agentIdentity);
+          if (!stillBusy) return;
+
+          await twilioClient.client.calls(CallSid).update({
+            method: 'POST',
+            url: `${SERVER_DOMAIN}/twilio/voice/voicemail?to=${encodeURIComponent(To)}`,
+          });
+        } catch (err) {
+          console.error('Voicemail redirect failed', err);
+        }
+      }, VOICEMAIL_TIMEOUT_MS);
+
+      activeCallStore.attachTimer(CallSid, timerId);
+      activeCallStore.updateStatus(CallSid, 'held', agentIdentity);
 
       return reply.type('text/xml').status(200).send(response.toString());
     }

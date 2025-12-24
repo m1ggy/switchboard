@@ -8,6 +8,7 @@ import { TwilioClient } from '@/lib/twilio';
 import crypto from 'crypto';
 import type { FastifyInstance } from 'fastify';
 import cron from 'node-cron';
+import { getNextRunAtForSchedule } from './getNextRunAtForSchedule';
 
 const twilioClient = new TwilioClient(
   process.env.TWILIO_ACCOUNT_SID!,
@@ -15,10 +16,70 @@ const twilioClient = new TwilioClient(
 );
 const SERVER_DOMAIN = process.env.SERVER_DOMAIN!;
 
+async function seedUpcomingJobs(app: FastifyInstance) {
+  // Batch through active schedules and ensure each has an upcoming job
+  const limit = 500;
+  let offset = 0;
+
+  while (true) {
+    const schedules = await ReassuranceSchedulesRepository.findActive({
+      limit,
+      offset,
+    });
+
+    if (!schedules.length) break;
+
+    for (const schedule of schedules) {
+      try {
+        if (!schedule.is_active) continue;
+
+        const nextRunAt = getNextRunAtForSchedule(schedule);
+
+        const hasUpcoming =
+          await ReassuranceCallJobsRepository.existsUpcomingForSchedule(
+            schedule.id,
+            nextRunAt
+          );
+
+        if (hasUpcoming) continue;
+
+        await ReassuranceCallJobsRepository.include({
+          id: crypto.randomUUID(),
+          schedule_id: schedule.id,
+          run_at: nextRunAt,
+          attempt: 1,
+          status: 'pending',
+        });
+
+        app.log.info(
+          { scheduleId: schedule.id, nextRunAt },
+          'Seeded upcoming reassurance job'
+        );
+      } catch (err: any) {
+        app.log.error(
+          { err, scheduleId: schedule.id },
+          'Failed seeding upcoming reassurance job'
+        );
+      }
+    }
+
+    offset += schedules.length;
+    if (schedules.length < limit) break;
+  }
+}
+
 export async function registerReassuranceCron(app: FastifyInstance) {
   cron.schedule('* * * * *', async () => {
     const startTime = Date.now();
     app.log.info('Reassurance cron started');
+
+    // 0) Ensure upcoming jobs exist for active schedules
+    try {
+      await seedUpcomingJobs(app);
+    } catch (err: any) {
+      app.log.error({ err }, 'Failed to seed upcoming reassurance jobs');
+      // continue anyway; due-job processing can still run
+    }
 
     let jobs: any[] = [];
 
@@ -45,6 +106,10 @@ export async function registerReassuranceCron(app: FastifyInstance) {
       );
 
       try {
+        // If you added claimPending(), prefer it over markProcessing() to avoid double-processing:
+        // const claimed = await ReassuranceCallJobsRepository.claimPending(job.id);
+        // if (!claimed) continue;
+
         await ReassuranceCallJobsRepository.markProcessing(job.id);
         app.log.debug(
           { jobId: job.id },
@@ -266,6 +331,41 @@ export async function registerReassuranceCron(app: FastifyInstance) {
           );
         }
         // -------------------------------------------------------------
+
+        // Mark job completed (call has been successfully triggered)
+        await ReassuranceCallJobsRepository.markCompleted(job.id);
+
+        // Seed the next run for this schedule (idempotent via existsUpcoming check)
+        try {
+          const nextRunAt = getNextRunAtForSchedule(schedule);
+
+          const hasUpcoming =
+            await ReassuranceCallJobsRepository.existsUpcomingForSchedule(
+              schedule.id,
+              nextRunAt
+            );
+
+          if (!hasUpcoming) {
+            await ReassuranceCallJobsRepository.include({
+              id: crypto.randomUUID(),
+              schedule_id: schedule.id,
+              run_at: nextRunAt,
+              attempt: 1,
+              status: 'pending',
+            });
+
+            app.log.info(
+              { scheduleId: schedule.id, nextRunAt, completedJobId: job.id },
+              'Seeded next reassurance job after completion'
+            );
+          }
+        } catch (err: any) {
+          // Don't fail the completed job if seeding next run fails; cron will retry next minute
+          app.log.error(
+            { err, scheduleId: schedule.id, completedJobId: job.id },
+            'Failed to seed next reassurance job after completion'
+          );
+        }
       } catch (err: any) {
         app.log.error(
           { err, jobId: job.id, scheduleId: job.schedule_id },

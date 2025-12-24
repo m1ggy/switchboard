@@ -271,4 +271,37 @@ export const ReassuranceSchedulesRepository = {
       total,
     };
   },
+
+  /**
+   * Find active schedules (optionally batched)
+   * Used by cron to seed upcoming jobs.
+   */
+  async findActive({
+    limit = 500,
+    offset = 0,
+    companyId,
+  }: {
+    limit?: number;
+    offset?: number;
+    companyId?: string;
+  }): Promise<ReassuranceCallSchedule[]> {
+    const params: any[] = [limit, offset];
+    const companyClause = companyId ? `AND company_id = $3` : '';
+
+    if (companyId) params.push(companyId);
+
+    const res = await pool.query<ReassuranceCallSchedule>(
+      `
+      SELECT *
+      FROM reassurance_call_schedules
+      WHERE is_active = true
+      ${companyClause}
+      ORDER BY id ASC
+      LIMIT $1 OFFSET $2
+      `,
+      params
+    );
+
+    return res.rows;
+  },
 };
