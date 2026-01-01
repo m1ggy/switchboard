@@ -1,3 +1,4 @@
+import { useTwilioVoice } from '@/hooks/twilio-provider';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -5,6 +6,7 @@ import type { GetUserCompaniesOutput } from 'api/trpc/types';
 import clsx from 'clsx';
 import { formatDate } from 'date-fns';
 import { Check, ChevronLeft, X } from 'lucide-react';
+
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardTitle } from './ui/card';
 import {
@@ -24,35 +26,51 @@ function CompanySwitcherDialog() {
     activeCompany,
     setActiveCompany,
     setActiveNumber,
-    activeNumber,
   } = useMainStore();
 
   const trpc = useTRPC();
+
+  // ✅ NEW: access twilio lifecycle helpers
+  const { destroyClient, setTokenOverride } = useTwilioVoice();
+
   const { data: companies, isFetching } = useQuery({
     ...trpc.companies.getUserCompanies.queryOptions(),
     refetchOnWindowFocus: false,
   });
 
-  const { mutateAsync: mutate } = useMutation(
+  const { mutateAsync: mutatePresence } = useMutation(
     trpc.twilio.presence.mutationOptions()
-  );
-
-  const { refetch: refetchToken } = useQuery(
-    trpc.twilio.token.queryOptions({
-      identity: activeNumber?.number as string,
-    })
   );
 
   const onSelectCompany = async (company: GetUserCompaniesOutput) => {
     const { numbers, ...baseCompany } = company;
+
     setActiveCompany(baseCompany);
 
-    if (numbers.length) {
-      const mainNumber = numbers[0];
-      setActiveNumber(mainNumber);
-      await mutate({ identity: mainNumber.number });
-      await refetchToken();
+    if (!numbers.length) {
+      setCompanySwitcherDialogShown(false);
+      return;
     }
+
+    const mainNumber = numbers[0];
+
+    // ✅ 1) Destroy old device first so we don't miss calls or double-register
+    destroyClient();
+
+    // ✅ 2) Update store with new identity
+    setActiveNumber(mainNumber);
+
+    // ✅ 3) Ping presence for new identity
+    await mutatePresence({ identity: mainNumber.number });
+
+    // ✅ 4) Fetch the token for the NEW identity (not activeNumber!)
+    const newToken = await trpc.twilio.token.fetch({
+      identity: mainNumber.number,
+    });
+
+    // ✅ 5) Apply token immediately so provider initializes right away
+    setTokenOverride(newToken);
+
     setCompanySwitcherDialogShown(false);
   };
 
@@ -62,15 +80,14 @@ function CompanySwitcherDialog() {
       onOpenChange={setCompanySwitcherDialogShown}
     >
       <DialogContent
-        // Mobile: full-height sheet w/ sticky header & safe areas
         className={clsx(
           'p-0 sm:p-6 sm:max-w-lg',
           'sm:rounded-lg',
-          'h-[92dvh] sm:h-auto', // near full height on mobile
+          'h-[92dvh] sm:h-auto',
           'overflow-hidden'
         )}
       >
-        {/* Mobile header (visible on <sm), desktop uses DialogHeader below */}
+        {/* Mobile header */}
         <div
           className="sm:hidden sticky top-0 z-10 flex items-center justify-between px-3 py-3 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60"
           style={{ paddingTop: 'max(env(safe-area-inset-top),0px)' }}
@@ -100,14 +117,13 @@ function CompanySwitcherDialog() {
           <DialogDescription>Switch from the current company</DialogDescription>
         </DialogHeader>
 
-        {/* Content area */}
+        {/* Content */}
         <div className="px-3 sm:px-0 pb-3 sm:pb-0">
           <div
             className={clsx(
-              // Mobile: take remaining height; Desktop: keep your original max height
               'overflow-y-auto',
               'max-h-[unset] sm:max-h-[60vh]',
-              'h-[calc(92dvh-56px)] sm:h-auto' // subtract mobile header height
+              'h-[calc(92dvh-56px)] sm:h-auto'
             )}
             style={{ paddingBottom: 'max(env(safe-area-inset-bottom),0px)' }}
           >
@@ -131,7 +147,6 @@ function CompanySwitcherDialog() {
                       tabIndex={disabled ? -1 : 0}
                       aria-disabled={disabled}
                       className={clsx(
-                        // larger tap target on mobile
                         'transition-colors select-none',
                         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                         disabled

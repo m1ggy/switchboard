@@ -1,6 +1,7 @@
 // src/db/repositories/reassuranceCallJobs.ts
 import pool from '@/lib/pg';
 import { ReassuranceCallJob } from '@/types/db';
+import { type PoolClient } from 'pg';
 
 export const ReassuranceCallJobsRepository = {
   async findActiveForSchedule(
@@ -24,36 +25,32 @@ export const ReassuranceCallJobsRepository = {
   /**
    * Create a new job (include)
    */
-  async include({
-    id,
-    schedule_id,
-    run_at,
-    attempt = 1,
-    status = 'pending',
-  }: {
-    id: string;
-    schedule_id: number;
-    run_at: Date;
-    attempt?: number;
-    status?: ReassuranceCallJob['status'];
-  }): Promise<ReassuranceCallJob> {
-    const res = await pool.query<ReassuranceCallJob>(
+  async include(
+    {
+      id,
+      schedule_id,
+      run_at,
+      attempt,
+      status,
+    }: {
+      id: string;
+      schedule_id: number;
+      run_at: Date;
+      attempt: number;
+      status: 'pending' | 'running' | 'completed' | 'failed';
+    },
+    db: PoolClient | typeof pool = pool
+  ) {
+    await db.query(
       `
       INSERT INTO reassurance_call_jobs (
-        id,
-        schedule_id,
-        run_at,
-        attempt,
-        status
+        id, schedule_id, run_at, attempt, status
       ) VALUES (
         $1, $2, $3, $4, $5
       )
-      RETURNING *
       `,
-      [id, schedule_id, run_at.toISOString(), attempt, status]
+      [id, schedule_id, run_at, attempt, status]
     );
-
-    return res.rows[0];
   },
 
   /**

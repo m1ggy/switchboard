@@ -1,5 +1,6 @@
 import pool from '@/lib/pg';
 import { Call, ReassuranceCallSchedule } from '@/types/db';
+import type { PoolClient } from 'pg';
 
 export interface NumberRow {
   id: string;
@@ -15,48 +16,30 @@ export type ScheduleCallLogRow = Call & {
 };
 
 export const ReassuranceSchedulesRepository = {
-  async include({
-    name,
-    phone_number,
-    caller_name,
-    // NEW:
-    emergency_contact_name,
-    emergency_contact_phone_number,
-    script_type,
-    template,
-    script_content,
-    name_in_script,
-    frequency,
-    frequency_days,
-    frequency_time,
-    selected_days,
-    calls_per_day,
-    max_attempts,
-    retry_interval,
-    company_id,
-    number_id,
-  }: {
-    name: string;
-    phone_number: string; // callee
-    caller_name?: string | null;
-    // NEW:
-    emergency_contact_name?: string | null;
-    emergency_contact_phone_number?: string | null;
-    script_type: 'template' | 'custom';
-    template?: string | null;
-    script_content?: string | null;
-    name_in_script: 'contact' | 'caller';
-    frequency: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'custom';
-    frequency_days?: number | null;
-    frequency_time: string; // 'HH:MM'
-    selected_days?: string[] | null;
-    calls_per_day: number;
-    max_attempts: number;
-    retry_interval: number; // minutes
-    company_id: string; // uuid (tenant id)
-    number_id: string; // uuid (FK to numbers.id)
-  }): Promise<ReassuranceCallSchedule> {
-    const res = await pool.query<ReassuranceCallSchedule>(
+  async include(
+    input: {
+      name: string;
+      phone_number: string;
+      caller_name?: string | null;
+      emergency_contact_name?: string | null;
+      emergency_contact_phone_number?: string | null;
+      script_type: 'template' | 'custom';
+      template?: string | null;
+      script_content?: string | null;
+      name_in_script: 'contact' | 'caller';
+      frequency: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'custom';
+      frequency_days?: number | null;
+      frequency_time: string;
+      selected_days?: string[] | null;
+      calls_per_day: number;
+      max_attempts: number;
+      retry_interval: number;
+      company_id: string;
+      number_id: string;
+    },
+    db: PoolClient | typeof pool = pool
+  ): Promise<ReassuranceCallSchedule> {
+    const res = await db.query<ReassuranceCallSchedule>(
       `
       INSERT INTO reassurance_call_schedules (
         name,
@@ -78,30 +61,29 @@ export const ReassuranceSchedulesRepository = {
         company_id,
         number_id
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7,
-        $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18
       )
       RETURNING *
       `,
       [
-        name, // $1
-        phone_number, // $2
-        emergency_contact_name ?? null, // $3
-        emergency_contact_phone_number ?? null, // $4
-        caller_name ?? null, // $5
-        script_type, // $6
-        template ?? null, // $7
-        script_content ?? null, // $8
-        name_in_script, // $9
-        frequency, // $10
-        frequency_days ?? null, // $11
-        frequency_time, // $12
-        selected_days ?? ['monday'], // $13
-        calls_per_day, // $14
-        max_attempts, // $15
-        retry_interval, // $16
-        company_id, // $17
-        number_id, // $18
+        input.name,
+        input.phone_number,
+        input.emergency_contact_name ?? null,
+        input.emergency_contact_phone_number ?? null,
+        input.caller_name ?? null,
+        input.script_type,
+        input.template ?? null,
+        input.script_content ?? null,
+        input.name_in_script,
+        input.frequency,
+        input.frequency_days ?? null,
+        input.frequency_time,
+        input.selected_days ?? ['monday'],
+        input.calls_per_day,
+        input.max_attempts,
+        input.retry_interval,
+        input.company_id,
+        input.number_id,
       ]
     );
 

@@ -687,7 +687,10 @@ async function routes(app: FastifyInstance) {
     activeCallStore.remove(CallSid);
 
     if (CallStatus === 'completed') {
-      presenceStore.setStatus(To, 'idle');
+      const normalize = (s?: string) =>
+        s?.startsWith('client:') ? s.slice(7) : s;
+      const id = normalize(To) as string;
+      presenceStore.setStatus(id, 'idle');
 
       const next = callQueueManager.dequeue(To);
       if (next) {

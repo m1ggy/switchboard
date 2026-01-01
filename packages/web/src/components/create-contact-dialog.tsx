@@ -1,3 +1,5 @@
+'use client';
+
 import { getQueryClient } from '@/App';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
@@ -34,13 +36,27 @@ const schema = z.object({
 
 type Schema = z.infer<typeof schema>;
 
-function CreateContactDialog() {
+type Props = {
+  onCreated?: (id: string) => void;
+  /**
+   * Optional: if you want parent to refresh after create
+   */
+  onSuccess?: () => void;
+};
+
+function CreateContactDialog({ onCreated, onSuccess }: Props) {
   const trpc = useTRPC();
   const queryClient = getQueryClient();
 
   const { activeCompany, activeNumber } = useMainStore();
-  const { mutateAsync: createContact, isPending: contactCreationLoading } =
-    useMutation(trpc.contacts.createContact.mutationOptions());
+
+  /**
+   * ✅ createContactFull endpoint
+   */
+  const { mutateAsync: createContactFull, isPending: contactCreationLoading } =
+    useMutation(
+      trpc.reassuranceContactProfiles.createContactFull.mutationOptions()
+    );
 
   const { refetch: refetchContacts } = useQuery(
     trpc.contacts.getCompanyContacts.queryOptions({
@@ -63,23 +79,94 @@ function CreateContactDialog() {
 
   const onSubmit: SubmitHandler<Schema> = async (data) => {
     try {
-      if (activeCompany) {
-        await createContact({
-          number: data.number,
-          label: data.label,
-          companyId: activeCompany?.id as string,
-        });
-        await queryClient.invalidateQueries({
-          queryKey: trpc.contacts.getCompanyContacts.queryOptions({
-            companyId: activeCompany.id as string,
-          }).queryKey,
-        });
-        await refetchContacts();
-        await refetchInboxes();
-        setCreateContactModalShown(false);
-        toast.success('Contact created');
+      if (!activeCompany) return;
+
+      // If you're auto-creating schedules, we need activeNumber.
+      if (!activeNumber) {
+        toast.error('Please select a number first.');
+        return;
       }
-    } catch {
+
+      const created = await createContactFull({
+        label: data.label,
+        number: data.number,
+        companyId: activeCompany.id,
+
+        // ✅ profile created automatically
+        profile: {
+          preferredName: data.label,
+          timezone: 'UTC',
+          locale: 'en-US',
+          medicalNotes: '',
+          goals: '',
+          riskFlags: [],
+        },
+
+        // ✅ schedule auto-created with defaults
+        schedule: {
+          name: 'Check in',
+          callerName: null,
+
+          scriptType: 'template',
+          template: 'wellness',
+          scriptContent: null,
+          nameInScript: 'contact',
+
+          frequency: 'weekly',
+          frequencyDays: 7,
+          frequencyTime: '10:00',
+          selectedDays: ['monday', 'wednesday', 'friday'],
+
+          callsPerDay: 1,
+          maxAttempts: 3,
+          retryInterval: 15,
+
+          // You can replace this later with real form fields
+          emergencyContactName: 'Emergency Contact',
+          emergencyContactPhone: '+10000000000',
+
+          numberId: activeNumber.id,
+        },
+      });
+
+      /**
+       * ✅ invalidate contacts list
+       */
+      await queryClient.invalidateQueries({
+        queryKey: trpc.contacts.getCompanyContacts.queryOptions({
+          companyId: activeCompany.id,
+        }).queryKey,
+      });
+
+      /**
+       * ✅ invalidate new "profiles + schedules" list
+       * This is what your dashboard uses now
+       */
+      await queryClient.invalidateQueries({
+        queryKey:
+          trpc.reassuranceContactProfiles.getAllWithSchedulesByCompanyId.queryOptions(
+            {
+              companyId: activeCompany.id,
+            }
+          ).queryKey,
+      });
+
+      // optional refetches
+      await refetchContacts();
+      await refetchInboxes();
+
+      setCreateContactModalShown(false);
+      toast.success('Contact created');
+
+      if (created?.contact?.id) {
+        onCreated?.(created.contact.id);
+      }
+
+      onSuccess?.();
+
+      form.reset();
+    } catch (err) {
+      console.error(err);
       toast.error('Failed to create contact');
     }
   };
@@ -90,8 +177,6 @@ function CreateContactDialog() {
       onOpenChange={setCreateContactModalShown}
     >
       <DialogContent
-        // Mobile-first: full-height sheet style with internal scrolling;
-        // desktop: regular centered dialog with larger padding and rounded corners
         className="
           w-[100vw] max-w-none sm:max-w-lg md:max-w-xl
           h-[100dvh] sm:h-auto
@@ -101,7 +186,6 @@ function CreateContactDialog() {
           overflow-hidden
         "
       >
-        {/* Scrollable body section so header/footer stay visible on mobile */}
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <DialogHeader className="shrink-0">
             <DialogTitle>Create Contact</DialogTitle>
@@ -139,6 +223,7 @@ function CreateContactDialog() {
                     </FormItem>
                   )}
                 />
+
                 <FormField
                   control={form.control}
                   name="number"
@@ -150,7 +235,6 @@ function CreateContactDialog() {
                           {...field}
                           disablePortal
                           aria-label="Phone number"
-                          // Helps mobile keyboards show the numeric pad
                           inputMode="tel"
                         />
                       </FormControl>
@@ -163,7 +247,6 @@ function CreateContactDialog() {
           </div>
         </div>
 
-        {/* Sticky footer on mobile; normal footer spacing on larger screens */}
         <DialogFooter
           className="
             sticky sm:static bottom-0 left-0 right-0
@@ -179,10 +262,9 @@ function CreateContactDialog() {
             form="create-contact"
             type="submit"
             disabled={contactCreationLoading}
-            // Easier to tap on mobile
             className="w-full sm:w-auto"
           >
-            Create
+            {contactCreationLoading ? 'Creating…' : 'Create'}
           </Button>
         </DialogFooter>
       </DialogContent>
