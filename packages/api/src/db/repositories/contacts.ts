@@ -101,4 +101,18 @@ export const ContactsRepository = {
     );
     return res.rows[0] || null;
   },
+
+  async findByCompany(
+    companyId: string,
+    db: PoolClient | typeof pool = pool
+  ): Promise<Contact[]> {
+    const res = await db.query<Contact>(
+      `SELECT *
+       FROM contacts
+       WHERE company_id = $1
+       ORDER BY created_at DESC`,
+      [companyId]
+    );
+    return res.rows;
+  },
 };
