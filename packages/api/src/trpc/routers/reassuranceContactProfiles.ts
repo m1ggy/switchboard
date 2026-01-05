@@ -227,8 +227,6 @@ export const reassuranceContactProfilesRouter = t.router({
       try {
         await client.query('BEGIN');
 
-        const contactId = crypto.randomUUID();
-
         // 1️⃣ Contact
         const contact = await ContactsRepository.findOrCreate(
           {
@@ -238,6 +236,7 @@ export const reassuranceContactProfilesRouter = t.router({
           },
           client
         );
+        const contactId = contact.id;
 
         // 2️⃣ Profile
         const profile = await ReassuranceContactProfilesRepository.upsert(
