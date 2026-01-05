@@ -158,73 +158,75 @@ export default function CallLog() {
   const displayLogs = logs.length > 0 ? logs : [];
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Call History</CardTitle>
-        <CardDescription>
-          Record of all completed and attempted calls
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left py-3 px-4 font-medium">Schedule</th>
-                <th className="text-left py-3 px-4 font-medium">Phone</th>
-                <th className="text-left py-3 px-4 font-medium">
-                  Date &amp; Time
-                </th>
-                <th className="text-left py-3 px-4 font-medium">Status</th>
-                <th className="text-left py-3 px-4 font-medium">Duration</th>
-              </tr>
-            </thead>
-            <tbody>
-              {displayLogs.map((log) => (
-                <tr
-                  key={log.id}
-                  className="border-b border-border hover:bg-muted/50"
-                >
-                  <td className="py-3 px-4">{log.name}</td>
-                  <td className="py-3 px-4 font-mono text-xs text-muted-foreground">
-                    {log.phone}
-                  </td>
-                  <td className="py-3 px-4">
-                    <span className="text-sm">
-                      {log.date} {log.time}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4">
-                    <div className="flex items-center gap-2">
-                      {log.status === 'completed' ? (
-                        <>
-                          <CheckCircle className="w-4 h-4 text-green-500" />
-                          <span className="text-green-600 dark:text-green-400">
-                            Completed
-                          </span>
-                        </>
-                      ) : log.status === 'failed' ? (
-                        <>
-                          <XCircle className="w-4 h-4 text-destructive" />
-                          <span className="text-destructive">Failed</span>
-                        </>
-                      ) : (
-                        <>
-                          <Clock className="w-4 h-4 text-yellow-500" />
-                          <span className="text-yellow-600 dark:text-yellow-400">
-                            In Progress
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                  <td className="py-3 px-4 font-mono">{log.duration}</td>
+    <div className="p-8">
+      <Card>
+        <CardHeader>
+          <CardTitle>Call History</CardTitle>
+          <CardDescription>
+            Record of all completed and attempted calls
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="text-left py-3 px-4 font-medium">Schedule</th>
+                  <th className="text-left py-3 px-4 font-medium">Phone</th>
+                  <th className="text-left py-3 px-4 font-medium">
+                    Date &amp; Time
+                  </th>
+                  <th className="text-left py-3 px-4 font-medium">Status</th>
+                  <th className="text-left py-3 px-4 font-medium">Duration</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </CardContent>
-    </Card>
+              </thead>
+              <tbody>
+                {displayLogs.map((log) => (
+                  <tr
+                    key={log.id}
+                    className="border-b border-border hover:bg-muted/50"
+                  >
+                    <td className="py-3 px-4">{log.name}</td>
+                    <td className="py-3 px-4 font-mono text-xs text-muted-foreground">
+                      {log.phone}
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="text-sm">
+                        {log.date} {log.time}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-2">
+                        {log.status === 'completed' ? (
+                          <>
+                            <CheckCircle className="w-4 h-4 text-green-500" />
+                            <span className="text-green-600 dark:text-green-400">
+                              Completed
+                            </span>
+                          </>
+                        ) : log.status === 'failed' ? (
+                          <>
+                            <XCircle className="w-4 h-4 text-destructive" />
+                            <span className="text-destructive">Failed</span>
+                          </>
+                        ) : (
+                          <>
+                            <Clock className="w-4 h-4 text-yellow-500" />
+                            <span className="text-yellow-600 dark:text-yellow-400">
+                              In Progress
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 font-mono">{log.duration}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
