@@ -193,6 +193,8 @@ export default function ScheduleForm({
           const fieldName = error.path.join('.');
           fieldErrors[fieldName] = error.message;
         });
+
+        console.log(fieldErrors);
         setErrors(fieldErrors);
       }
     } finally {
