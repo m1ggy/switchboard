@@ -230,12 +230,11 @@ export const reassuranceContactProfilesRouter = t.router({
         const contactId = crypto.randomUUID();
 
         // 1️⃣ Contact
-        const contact = await ContactsRepository.create(
+        const contact = await ContactsRepository.findOrCreate(
           {
-            id: contactId,
             number: input.number,
             label: input.label,
-            company_id: input.companyId, // ✅ snake_case
+            companyId: input.companyId,
           },
           client
         );
