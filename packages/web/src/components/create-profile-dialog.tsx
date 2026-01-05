@@ -122,58 +122,86 @@ export default function CreateDialog({
     setSelectedSchedule(scheduleData);
     setActiveTab('summary');
   };
-
   const handleFinalSubmit = async () => {
     if (!selectedContact || !selectedProfile || !selectedSchedule) return;
+
     if (!activeCompany?.id) {
       console.error('No active company selected');
+      return;
+    }
+
+    if (!activeNumber?.id) {
+      console.error('No active number selected');
       return;
     }
 
     setIsSubmitting(true);
 
     try {
+      const should_send_selected_days = ['weekly', 'biweekly'].includes(
+        selectedSchedule.frequency
+      );
+
+      const computed_frequency_days =
+        selectedSchedule.frequency === 'custom'
+          ? (selectedSchedule.frequency_days ?? null)
+          : selectedSchedule.frequency === 'monthly'
+            ? 30
+            : null;
+
       const payload = {
         number: selectedContact.number,
         label: selectedContact.label,
         companyId: activeCompany.id,
 
         profile: {
-          preferredName: selectedProfile.preferred_name ?? null,
+          preferred_name: selectedProfile.preferred_name ?? null,
           timezone: selectedProfile.timezone ?? null,
           locale: selectedProfile.locale ?? null,
-          medicalNotes: selectedProfile.medical_notes ?? null,
+          medical_notes: selectedProfile.medical_notes ?? null,
           goals: selectedProfile.goals ?? null,
-          riskFlags: selectedProfile.risk_flags ?? null,
+          risk_flags: selectedProfile.risk_flags ?? null,
         },
 
         schedule: {
           // ✅ required by backend
           name: selectedSchedule.name,
           frequency: selectedSchedule.frequency,
-          frequencyTime: selectedSchedule.frequency_time,
-          selectedDays: selectedSchedule.selected_days.map((x) =>
-            x.toLocaleLowerCase()
-          ) ?? ['monday'],
+          frequency_time: selectedSchedule.frequency_time,
 
-          emergencyContactName: selectedSchedule.emergency_contact_name ?? '',
-          emergencyContactPhone: selectedSchedule.emergency_contact_phone ?? '',
+          selected_days: should_send_selected_days
+            ? (selectedSchedule.selected_days?.map((x) => x.toLowerCase()) ?? [
+                'monday',
+              ])
+            : null,
 
-          scriptType: selectedSchedule.script_type,
-          nameInScript: selectedSchedule.name_in_script,
+          emergency_contact_name: selectedSchedule.emergency_contact_name ?? '',
+          emergency_contact_phone:
+            selectedSchedule.emergency_contact_phone ?? '',
 
-          // ✅ optional fields
-          callerName: selectedSchedule.caller_name ?? null,
-          template: null,
-          frequencyDays: selectedSchedule.frequency_days ?? null,
+          script_type: selectedSchedule.script_type,
+          name_in_script: selectedSchedule.name_in_script,
+
+          // ✅ optional
+          caller_name: selectedSchedule.caller_name ?? null,
+          template:
+            selectedSchedule.script_type === 'template'
+              ? (selectedSchedule.template ?? 'wellness')
+              : null,
+          script_content:
+            selectedSchedule.script_type === 'custom'
+              ? (selectedSchedule.script_content ?? null)
+              : null,
+
+          frequency_days: computed_frequency_days,
 
           // ✅ retry settings
-          callsPerDay: selectedSchedule.calls_per_day,
-          maxAttempts: selectedSchedule.max_attempts,
-          retryInterval: selectedSchedule.retry_interval,
+          calls_per_day: selectedSchedule.calls_per_day,
+          max_attempts: selectedSchedule.max_attempts,
+          retry_interval: selectedSchedule.retry_interval,
 
-          // ✅ numberId required
-          numberId: activeNumber?.id as string,
+          // ✅ required
+          number_id: activeNumber.id,
         },
       };
 
