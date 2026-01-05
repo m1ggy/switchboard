@@ -152,7 +152,9 @@ export default function CreateDialog({
           name: selectedSchedule.name,
           frequency: selectedSchedule.frequency,
           frequencyTime: selectedSchedule.frequency_time,
-          selectedDays: selectedSchedule.selected_days ?? ['monday'],
+          selectedDays: selectedSchedule.selected_days.map((x) =>
+            x.toLocaleLowerCase()
+          ) ?? ['monday'],
 
           emergencyContactName: selectedSchedule.emergency_contact_name ?? '',
           emergencyContactPhone: selectedSchedule.emergency_contact_phone ?? '',
