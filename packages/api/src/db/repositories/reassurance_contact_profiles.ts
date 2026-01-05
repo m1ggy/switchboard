@@ -171,14 +171,15 @@ export const ReassuranceContactProfilesRepository = {
   ) {
     const res = await db.query(
       `
-      SELECT
-        p.*,
-        row_to_json(c) AS contact
-      FROM reassurance_contact_profiles p
-      JOIN contacts c ON c.id = p.contact_id
-      WHERE c.company_id = $1
-      ORDER BY c.created_at DESC
-      `,
+    SELECT
+      p.*,
+      row_to_json(c) AS contact
+    FROM contacts c
+    INNER JOIN reassurance_contact_profiles p
+      ON p.contact_id = c.id
+    WHERE c.company_id = $1
+    ORDER BY c.created_at DESC
+    `,
       [companyId]
     );
 
