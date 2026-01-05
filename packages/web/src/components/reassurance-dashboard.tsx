@@ -269,7 +269,7 @@ export default function Dashboard({
                               )}
 
                               <Link
-                                to={`/logs?schedule=${schedule.id}&name=${encodeURIComponent(
+                                to={`/dashboard/automated-calls/logs?schedule=${schedule.id}&name=${encodeURIComponent(
                                   schedule.name
                                 )}`}
                                 className="p-1 hover:bg-background rounded transition-colors"

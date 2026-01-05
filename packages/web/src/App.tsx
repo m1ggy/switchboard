@@ -7,6 +7,7 @@ import { BrowserRouter, Route, Routes } from 'react-router';
 import AppRoot from './AppRoot';
 import InstallPromptDialog from './components/install-app-dialog';
 import Layout from './components/main-layout';
+import CallLog from './components/scheduled-call-logs';
 import { ThemeProvider } from './components/theme-provider';
 import { AuthProvider } from './hooks/auth-provider';
 import { auth } from './lib/firebase';
@@ -100,6 +101,7 @@ function App() {
                   <Route path="add-contact" element={<AddContact />} />
                   <Route path="all-contacts" element={<AllContacts />} />
                   <Route path="automated-calls" element={<AutomatedCalls />} />
+                  <Route path="automated-calls/logs" element={<CallLog />} />
                   <Route path="settings" element={<Settings />} />
                   <Route path="*" element={<NotFound />} />
                 </Route>
