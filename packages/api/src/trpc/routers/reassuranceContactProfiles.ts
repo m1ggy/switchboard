@@ -50,22 +50,22 @@ const createContactFullInput = z.object({
   // Schedule (optional)
   schedule: z
     .object({
-      name: z.string().min(1),
-      callerName: z.string().optional().nullable(),
+      name: z.string().min(1, 'required'),
+      caller_name: z.string().optional().nullable(),
 
-      scriptType: z.enum(['template', 'custom']),
+      script_type: z.enum(['template', 'custom']),
       template: z
         .enum(['wellness', 'safety', 'medication', 'social'])
         .optional()
         .nullable(),
-      scriptContent: z.string().optional().nullable(),
-      nameInScript: z.enum(['contact', 'caller']),
+      script_content: z.string().optional().nullable(),
+      name_in_script: z.enum(['contact', 'caller']),
 
       frequency: z.enum(['daily', 'weekly', 'biweekly', 'monthly', 'custom']),
-      frequencyDays: z.number().int().positive().optional().nullable(),
-      frequencyTime: z.string().min(1),
+      frequency_days: z.number().int().positive().optional().nullable(),
+      frequency_time: z.string().min(1, 'required'),
 
-      selectedDays: z
+      selected_days: z
         .array(
           z.enum([
             'monday',
@@ -80,14 +80,86 @@ const createContactFullInput = z.object({
         .optional()
         .nullable(),
 
-      callsPerDay: z.number().int().positive(),
-      maxAttempts: z.number().int().positive(),
-      retryInterval: z.number().int().positive(),
+      calls_per_day: z.number().int().positive(),
+      max_attempts: z.number().int().positive(),
+      retry_interval: z.number().int().positive(),
 
-      emergencyContactName: z.string().min(1),
-      emergencyContactPhone: z.string().min(1),
+      emergency_contact_name: z.string().min(1, 'required'),
+      emergency_contact_phone: z.string().min(1, 'required'),
 
-      numberId: z.string().uuid(),
+      number_id: z.string().uuid(),
+    })
+    .superRefine((data, ctx) => {
+      /**
+       * WEEKLY / BIWEEKLY
+       * must have selected_days
+       */
+      if (data.frequency === 'weekly' || data.frequency === 'biweekly') {
+        if (!data.selected_days || data.selected_days.length === 0) {
+          ctx.addIssue({
+            path: ['selected_days'],
+            code: z.ZodIssueCode.custom,
+            message: 'selected_days is required for weekly/biweekly frequency',
+          });
+        }
+      }
+
+      /**
+       * CUSTOM
+       * must have frequency_days
+       */
+      if (data.frequency === 'custom') {
+        if (!data.frequency_days || data.frequency_days <= 0) {
+          ctx.addIssue({
+            path: ['frequency_days'],
+            code: z.ZodIssueCode.custom,
+            message: 'frequency_days is required for custom frequency',
+          });
+        }
+      }
+
+      /**
+       * MONTHLY
+       * should always be 30 days (if provided)
+       * (we enforce logic so it doesn’t become ambiguous)
+       */
+      if (data.frequency === 'monthly') {
+        if (data.frequency_days && data.frequency_days !== 30) {
+          ctx.addIssue({
+            path: ['frequency_days'],
+            code: z.ZodIssueCode.custom,
+            message: 'monthly frequency must use frequency_days = 30',
+          });
+        }
+      }
+
+      /**
+       * TEMPLATE SCRIPT
+       * must have template
+       */
+      if (data.script_type === 'template') {
+        if (!data.template) {
+          ctx.addIssue({
+            path: ['template'],
+            code: z.ZodIssueCode.custom,
+            message: 'template is required when script_type = template',
+          });
+        }
+      }
+
+      /**
+       * CUSTOM SCRIPT
+       * must have script_content
+       */
+      if (data.script_type === 'custom') {
+        if (!data.script_content || data.script_content.trim().length === 0) {
+          ctx.addIssue({
+            path: ['script_content'],
+            code: z.ZodIssueCode.custom,
+            message: 'script_content is required when script_type = custom',
+          });
+        }
+      }
     })
     .optional()
     .nullable(),
@@ -148,7 +220,7 @@ export const reassuranceContactProfilesRouter = t.router({
    * ✅ Create contact + profile + schedule + job in one transaction
    */
   createContactFull: protectedProcedure
-    .input(createContactFullInput)
+    .input(createContactFullInput) // ✅ snake_case schema
     .mutation(async ({ input }) => {
       const client = await pool.connect();
 
@@ -163,7 +235,7 @@ export const reassuranceContactProfilesRouter = t.router({
             id: contactId,
             number: input.number,
             label: input.label,
-            company_id: input.companyId,
+            company_id: input.companyId, // ✅ snake_case
           },
           client
         );
@@ -190,28 +262,34 @@ export const reassuranceContactProfilesRouter = t.router({
             {
               name: input.schedule.name,
               phone_number: input.number,
-              caller_name: input.schedule.callerName ?? null,
+              caller_name: input.schedule.caller_name ?? null,
 
-              emergency_contact_name: input.schedule.emergencyContactName,
+              emergency_contact_name: input.schedule.emergency_contact_name,
               emergency_contact_phone_number:
-                input.schedule.emergencyContactPhone,
+                input.schedule.emergency_contact_phone,
 
-              script_type: input.schedule.scriptType,
+              script_type: input.schedule.script_type,
               template: input.schedule.template ?? null,
-              script_content: input.schedule.scriptContent ?? null,
-              name_in_script: input.schedule.nameInScript,
+              script_content: input.schedule.script_content ?? null,
+              name_in_script: input.schedule.name_in_script,
 
               frequency: input.schedule.frequency,
-              frequency_days: input.schedule.frequencyDays ?? null,
-              frequency_time: input.schedule.frequencyTime,
-              selected_days: input.schedule.selectedDays ?? ['monday'],
+              frequency_days: input.schedule.frequency_days ?? null,
+              frequency_time: input.schedule.frequency_time,
 
-              calls_per_day: input.schedule.callsPerDay,
-              max_attempts: input.schedule.maxAttempts,
-              retry_interval: input.schedule.retryInterval,
+              // ✅ only use selected_days if weekly/biweekly, otherwise null
+              selected_days:
+                input.schedule.frequency === 'weekly' ||
+                input.schedule.frequency === 'biweekly'
+                  ? (input.schedule.selected_days ?? ['monday'])
+                  : null,
+
+              calls_per_day: input.schedule.calls_per_day,
+              max_attempts: input.schedule.max_attempts,
+              retry_interval: input.schedule.retry_interval,
 
               company_id: input.companyId,
-              number_id: input.schedule.numberId,
+              number_id: input.schedule.number_id,
             },
             client
           );
@@ -244,6 +322,7 @@ export const reassuranceContactProfilesRouter = t.router({
         client.release();
       }
     }),
+
   getAllByCompanyId: protectedProcedure
     .input(z.object({ companyId: z.string().uuid() }))
     .query(async ({ input }) => {

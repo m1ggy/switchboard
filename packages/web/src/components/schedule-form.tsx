@@ -12,7 +12,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
 import { scheduleSchema } from '@/lib/schemas';
 import { AlertCircle } from 'lucide-react';
 import type React from 'react';
@@ -312,64 +311,6 @@ export default function ScheduleForm({
             </Select>
           </div>
         </div>
-
-        {/* Template Select */}
-        {formData.script_type === 'template' && (
-          <div className="space-y-2 mt-4">
-            <Label>Template</Label>
-            <Select
-              value={formData.template}
-              onValueChange={(value: any) => {
-                setFormData((prev) => ({ ...prev, template: value }));
-                clearError('template');
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select template" />
-              </SelectTrigger>
-              <SelectContent>
-                {templates.map((tpl) => (
-                  <SelectItem key={tpl} value={tpl}>
-                    {tpl.charAt(0).toUpperCase() + tpl.slice(1)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {errors.template && (
-              <p className="text-sm text-destructive">{errors.template}</p>
-            )}
-          </div>
-        )}
-
-        {/* Custom Script Content */}
-        {formData.script_type === 'custom' && (
-          <div className="space-y-2 mt-4">
-            <Label>Script Content</Label>
-            <Textarea
-              placeholder="Enter the custom script..."
-              rows={4}
-              value={formData.script_content}
-              aria-invalid={!!errors.script_content}
-              className={
-                errors.script_content
-                  ? 'border-destructive focus-visible:ring-destructive'
-                  : ''
-              }
-              onChange={(e) => {
-                setFormData((prev) => ({
-                  ...prev,
-                  script_content: e.target.value,
-                }));
-                clearError('script_content');
-              }}
-            />
-            {errors.script_content && (
-              <p className="text-sm text-destructive">
-                {errors.script_content}
-              </p>
-            )}
-          </div>
-        )}
       </Card>
 
       {/* Frequency */}
