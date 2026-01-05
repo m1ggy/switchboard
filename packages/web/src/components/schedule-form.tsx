@@ -148,11 +148,11 @@ export default function ScheduleForm({
           : null;
 
     return {
+      contact_id: formData.contact_id,
       name: formData.name,
       caller_name: formData.caller_name || null,
 
       script_type: formData.script_type,
-      template: formData.script_type === 'template' ? formData.template : null,
       script_content:
         formData.script_type === 'custom' ? formData.script_content : null,
 
@@ -164,16 +164,16 @@ export default function ScheduleForm({
 
       selected_days: should_send_selected_days
         ? formData.selected_days.map((d) => d.toLowerCase())
-        : null,
+        : [],
 
       calls_per_day: formData.calls_per_day,
       max_attempts: formData.max_attempts,
       retry_interval: formData.retry_interval,
 
-      emergency_contact_name: formData.emergency_contact_name,
-      emergency_contact_phone: formData.emergency_contact_phone,
+      emergency_contact_name: formData.emergency_contact_name || null,
+      emergency_contact_phone: formData.emergency_contact_phone || null,
 
-      number_id: formData.number_id,
+      is_active: formData.is_active,
     };
   };
 
