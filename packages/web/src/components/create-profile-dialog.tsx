@@ -14,9 +14,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { Contact, Profile, Schedule } from '@/lib/schemas';
 import { AlertCircle, CheckCircle2, Circle } from 'lucide-react';
 import { useState } from 'react';
+
 import ContactForm from './contact-form';
 import ProfileForm from './profile-form';
 import ScheduleForm from './schedule-form';
+
+import { getQueryClient } from '@/App';
+import useMainStore from '@/lib/store';
+import { useTRPC } from '@/lib/trpc';
+import { useMutation, useQuery } from '@tanstack/react-query';
 
 interface CreateDialogProps {
   open: boolean;
@@ -43,6 +49,65 @@ export default function CreateDialog({
   const isAllComplete =
     isContactComplete && isProfileComplete && isScheduleComplete;
 
+  // ✅ TRPC + React Query pattern
+  const trpc = useTRPC();
+  const queryClient = getQueryClient();
+  const { activeCompany, activeNumber } = useMainStore();
+
+  const { refetch: refetchContacts } = useQuery(
+    trpc.contacts.getCompanyContacts.queryOptions({
+      companyId: activeCompany?.id as string,
+    })
+  );
+
+  const { refetch: refetchInboxes } = useQuery(
+    trpc.inboxes.getNumberInboxes.queryOptions({
+      numberId: activeNumber?.id as string,
+    })
+  );
+
+  /**
+   * ✅ createContactFull endpoint
+   */
+  const { mutateAsync: createContactFull, isPending: contactCreationLoading } =
+    useMutation(
+      trpc.reassuranceContactProfiles.createContactFull.mutationOptions({
+        onSuccess: async () => {
+          /**
+           * ✅ invalidate contacts list
+           */
+          await queryClient.invalidateQueries({
+            queryKey: trpc.contacts.getCompanyContacts.queryOptions({
+              companyId: activeCompany?.id as string,
+            }).queryKey,
+          });
+
+          /**
+           * ✅ invalidate new "profiles + schedules" list
+           * This is what your dashboard uses now
+           */
+          await queryClient.invalidateQueries({
+            queryKey:
+              trpc.reassuranceContactProfiles.getAllWithSchedulesByCompanyId.queryOptions(
+                {
+                  companyId: activeCompany?.id as string,
+                }
+              ).queryKey,
+          });
+
+          // optional refetches
+          await refetchContacts();
+          await refetchInboxes();
+
+          handleClose();
+          onSuccess();
+        },
+        onError: (err) => {
+          console.error('createContactFull error:', err);
+        },
+      })
+    );
+
   const handleContactSubmit = async (contactData: Contact) => {
     setSelectedContact(contactData);
     setActiveTab('profile');
@@ -59,16 +124,60 @@ export default function CreateDialog({
   };
 
   const handleFinalSubmit = async () => {
-    setIsSubmitting(true);
-    try {
-      console.log('[v0] Final submission:', {
-        contact: selectedContact,
-        profile: selectedProfile,
-        schedule: selectedSchedule,
-      });
+    if (!selectedContact || !selectedProfile || !selectedSchedule) return;
+    if (!activeCompany?.id) {
+      console.error('No active company selected');
+      return;
+    }
 
-      handleClose();
-      onSuccess();
+    setIsSubmitting(true);
+
+    try {
+      const payload = {
+        number: selectedContact.number,
+        label: selectedContact.label,
+        companyId: activeCompany.id,
+
+        profile: {
+          preferredName: selectedProfile.preferred_name ?? null,
+          timezone: selectedProfile.timezone ?? null,
+          locale: selectedProfile.locale ?? null,
+          medicalNotes: selectedProfile.medical_notes ?? null,
+          goals: selectedProfile.goals ?? null,
+          riskFlags: selectedProfile.risk_flags ?? null,
+        },
+
+        schedule: {
+          // ✅ required by backend
+          name: selectedSchedule.name,
+          frequency: selectedSchedule.frequency,
+          frequencyTime: selectedSchedule.frequency_time,
+          selectedDays: selectedSchedule.selected_days ?? ['monday'],
+
+          emergencyContactName: selectedSchedule.emergency_contact_name ?? '',
+          emergencyContactPhone: selectedSchedule.emergency_contact_phone ?? '',
+
+          scriptType: selectedSchedule.script_type,
+          nameInScript: selectedSchedule.name_in_script,
+
+          // ✅ optional fields
+          callerName: selectedSchedule.caller_name ?? null,
+          template: null,
+          frequencyDays: selectedSchedule.frequency_days ?? null,
+
+          // ✅ retry settings
+          callsPerDay: selectedSchedule.calls_per_day,
+          maxAttempts: selectedSchedule.max_attempts,
+          retryInterval: selectedSchedule.retry_interval,
+
+          // ✅ numberId required
+          numberId: activeNumber?.id as string,
+        },
+      };
+
+      console.log('[CreateDialog] Submitting payload:', payload);
+
+      await createContactFull(payload);
     } finally {
       setIsSubmitting(false);
     }
@@ -83,10 +192,9 @@ export default function CreateDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      {/* ✅ dialog must be constrained + clip overflow */}
+    // ✅ IMPORTANT: Don't call handleClose on every open change (this wipes state)
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="!w-[95vw] !max-w-[1400px] max-h-[90vh] overflow-y-auto flex flex-col">
-        {/* ✅ give inner padding but keep dialog clipping */}
         <div className="p-6 flex flex-col flex-1 overflow-hidden">
           <DialogHeader>
             <DialogTitle>Create New Profile</DialogTitle>
@@ -95,7 +203,6 @@ export default function CreateDialog({
             </DialogDescription>
           </DialogHeader>
 
-          {/* ✅ grid must allow children to shrink */}
           <div className="grid gap-8 grid-cols-1 md:grid-cols-[240px_1fr] flex-1 overflow-hidden mt-6 min-w-0">
             {/* Sidebar */}
             <div className="space-y-3">
@@ -155,14 +262,13 @@ export default function CreateDialog({
               </div>
             </div>
 
-            {/* ✅ Right side MUST not overflow and MUST scroll */}
+            {/* Right side */}
             <div className="min-w-0 overflow-hidden">
               <Tabs
                 value={activeTab}
                 onValueChange={setActiveTab}
                 className="w-full h-full flex flex-col min-w-0"
               >
-                {/* ✅ tabs should not push width */}
                 <TabsList className="grid w-full grid-cols-4">
                   <TabsTrigger value="contact">Contact</TabsTrigger>
                   <TabsTrigger value="profile" disabled={!selectedContact}>
@@ -176,7 +282,6 @@ export default function CreateDialog({
                   </TabsTrigger>
                 </TabsList>
 
-                {/* ✅ Content scrolls vertically inside the right panel */}
                 <div className="flex-1 overflow-y-auto min-w-0">
                   <TabsContent
                     value="contact"
@@ -346,12 +451,15 @@ export default function CreateDialog({
                       >
                         Back to Schedule
                       </Button>
+
                       <Button
                         onClick={handleFinalSubmit}
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || contactCreationLoading}
                         className="gap-2"
                       >
-                        {isSubmitting ? 'Creating...' : 'Create Profile'}
+                        {isSubmitting || contactCreationLoading
+                          ? 'Creating...'
+                          : 'Create Profile'}
                       </Button>
                     </div>
                   </TabsContent>
