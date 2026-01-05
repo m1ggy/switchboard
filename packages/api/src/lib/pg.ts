@@ -1,6 +1,6 @@
 import dotenv from 'dotenv';
 import path from 'path';
-import { Pool, QueryResult, QueryResultRow } from 'pg';
+import { Pool, QueryResultRow } from 'pg';
 
 dotenv.config();
 
@@ -10,7 +10,8 @@ if (process.env.NODE_ENV === 'development') {
     override: true,
   });
 }
-const client = new Pool({
+
+const pool = new Pool({
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT),
   user: process.env.DB_USER,
@@ -21,7 +22,7 @@ const client = new Pool({
   connectionTimeoutMillis: 5000,
 });
 
-client.on('error', (err) => {
+pool.on('error', (err) => {
   console.error('🔥 Unexpected error on idle PostgreSQL client', err);
 });
 
@@ -32,39 +33,34 @@ async function queryWithRetry<T extends QueryResultRow>(
   params?: unknown[],
   retries = 3,
   delay = 500
-): Promise<QueryResult<T>> {
+) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      if (attempt > 0) {
+      if (attempt > 0)
         console.warn(`🔁 Retrying query (attempt ${attempt}):`, text);
-      }
-
-      return await client.query<T>(text, params);
-    } catch (err: unknown) {
-      const error = err as NodeJS.ErrnoException;
-
+      return await pool.query<T>(text, params);
+    } catch (err: any) {
       if (
         attempt < retries &&
-        error &&
-        RETRYABLE_ERRORS.includes(error.code ?? error.name)
+        err &&
+        RETRYABLE_ERRORS.includes(err.code ?? err.name)
       ) {
-        await new Promise((resolve) => setTimeout(resolve, delay));
+        await new Promise((r) => setTimeout(r, delay));
         continue;
       }
 
-      console.error('❌ Query failed:', text, params, error);
-      throw error;
+      console.error('❌ Query failed:', text, params, err);
+      throw err;
     }
   }
 
   throw new Error('Query unexpectedly failed after retries');
 }
 
-const wrappedClient: Pool & {
-  query: <T extends QueryResultRow>(
-    text: string,
-    params?: unknown[]
-  ) => Promise<QueryResult<T>>;
-} = Object.assign({}, client, { query: queryWithRetry });
+/**
+ * ✅ Monkey patch pool.query
+ * keeps .connect(), .end(), etc.
+ */
+(pool as any).query = queryWithRetry;
 
-export default wrappedClient;
+export default pool;
