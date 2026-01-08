@@ -4,12 +4,26 @@ import crypto from 'crypto';
 import { z } from 'zod';
 import { protectedProcedure, t } from '../trpc';
 
+import { ReassuranceCallLogsRepository } from '@/db/reassurance_call_logs';
 import { ContactsRepository } from '@/db/repositories/contacts';
 import { ReassuranceCallJobsRepository } from '@/db/repositories/reassurance_calls_jobs';
 import { ReassuranceContactProfilesRepository } from '@/db/repositories/reassurance_contact_profiles';
 import { ReassuranceSchedulesRepository } from '@/db/repositories/reassurance_schedules';
 import { getNextRunAtForSchedule } from '@/lib/jobs/getNextRunAtForSchedule';
 import { ReassuranceCallSchedule } from '@/types/db';
+
+const getCallLogsInput = z.object({
+  contactId: z.string().uuid(),
+  limit: z.number().int().positive().max(200).optional().default(20),
+  includeTranscript: z.boolean().optional().default(false),
+  transcriptLimit: z
+    .number()
+    .int()
+    .positive()
+    .max(2000)
+    .optional()
+    .default(200),
+});
 
 // Minimal: you can expand these schemas later
 const jsonRecord = z.record(z.any());
@@ -334,5 +348,15 @@ export const reassuranceContactProfilesRouter = t.router({
       return await ReassuranceContactProfilesRepository.getAllWithSchedulesByCompanyId(
         input.companyId
       );
+    }),
+  getCallLogsByContactId: protectedProcedure
+    .input(getCallLogsInput)
+    .query(async ({ input }) => {
+      return await ReassuranceCallLogsRepository.listByContactId({
+        contactId: input.contactId,
+        limit: input.limit,
+        includeTranscript: input.includeTranscript,
+        transcriptLimit: input.transcriptLimit,
+      });
     }),
 });
