@@ -137,17 +137,15 @@ export default function CallLogsContent() {
     data: callLogs,
     isLoading,
     isError,
-  } = useQuery(
-    trpc.reassuranceContactProfiles.getCallLogsByContactId.queryOptions({
+  } = useQuery({
+    ...trpc.reassuranceContactProfiles.getCallLogsByContactId.queryOptions({
       contactId,
       limit: 50,
       includeTranscript: true, // ✅ fetch transcript items too
       transcriptLimit: 500,
     }),
-    {
-      enabled: !!contactId,
-    }
-  );
+    enabled: !!contactId,
+  });
 
   // Select first session on load
   useEffect(() => {
