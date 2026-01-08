@@ -269,9 +269,11 @@ export default function Dashboard({
                               )}
 
                               <Link
-                                to={`/dashboard/automated-calls/logs?schedule=${schedule.id}&name=${encodeURIComponent(
-                                  schedule.name
-                                )}`}
+                                to={`/dashboard/automated-calls/logs?contact=${contact.id}&name=${encodeURIComponent(
+                                  profile?.preferred_name ??
+                                    contact.label ??
+                                    'Call Logs'
+                                )}&schedule=${schedule.id}&scheduleName=${encodeURIComponent(schedule.name)}`}
                                 className="p-1 hover:bg-background rounded transition-colors"
                               >
                                 <Eye className="w-3 h-3" />
