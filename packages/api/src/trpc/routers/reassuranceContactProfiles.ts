@@ -422,13 +422,6 @@ export const reassuranceContactProfilesRouter = t.router({
           throw new Error('monthly frequency must use frequency_days = 30');
         }
       }
-
-      if (input.script_type === 'template') {
-        if (!input.template) {
-          throw new Error('template is required when script_type = template');
-        }
-      }
-
       if (input.script_type === 'custom') {
         if (!input.script_content || input.script_content.trim().length === 0) {
           throw new Error(
