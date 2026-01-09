@@ -12,12 +12,14 @@ import ScheduleForm from './schedule-form';
 
 import { useTRPC } from '@/lib/trpc';
 import { useMutation } from '@tanstack/react-query';
+import type { Contact } from 'api/types/db';
 
 interface EditScheduleDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   schedule: Schedule;
   onSuccess: () => void;
+  contact: Contact;
 }
 
 export default function EditScheduleDialog({
@@ -25,6 +27,7 @@ export default function EditScheduleDialog({
   onOpenChange,
   schedule,
   onSuccess,
+  contact,
 }: EditScheduleDialogProps) {
   const trpc = useTRPC();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -58,11 +61,10 @@ export default function EditScheduleDialog({
         </DialogHeader>
 
         <ScheduleForm
-          contactId={schedule.contact_id}
+          contactId={contact.id}
           initialData={schedule}
           onSubmit={handleSubmit}
           onCancel={() => onOpenChange(false)}
-          isSubmitting={isSubmitting} // ✅ optional if ScheduleForm supports it
         />
       </DialogContent>
     </Dialog>
