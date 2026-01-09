@@ -10,6 +10,9 @@ import type { Schedule } from '@/lib/schemas';
 import { useState } from 'react';
 import ScheduleForm from './schedule-form';
 
+import { useTRPC } from '@/lib/trpc';
+import { useMutation } from '@tanstack/react-query';
+
 interface EditScheduleDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -23,16 +26,25 @@ export default function EditScheduleDialog({
   schedule,
   onSuccess,
 }: EditScheduleDialogProps) {
+  const trpc = useTRPC();
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const updateScheduleMutation = useMutation(
+    trpc.reassuranceContactProfiles.update.mutationOptions()
+  );
 
   const handleSubmit = async (scheduleData: Schedule) => {
     setIsSubmitting(true);
     try {
-      console.log('[v0] Updating schedule:', scheduleData);
-      // TODO: Replace with actual API call
-      // const response = await updateSchedule(schedule.id, scheduleData)
+      await updateScheduleMutation.mutateAsync({
+        ...scheduleData,
+        id: schedule.id, // ✅ ensure we send the schedule id
+      });
+
       onSuccess();
       onOpenChange(false);
+    } catch (err) {
+      console.error('[EditScheduleDialog] update failed', err);
     } finally {
       setIsSubmitting(false);
     }
@@ -50,6 +62,7 @@ export default function EditScheduleDialog({
           initialData={schedule}
           onSubmit={handleSubmit}
           onCancel={() => onOpenChange(false)}
+          isSubmitting={isSubmitting} // ✅ optional if ScheduleForm supports it
         />
       </DialogContent>
     </Dialog>

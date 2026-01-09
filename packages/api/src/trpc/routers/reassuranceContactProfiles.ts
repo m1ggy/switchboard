@@ -25,6 +25,46 @@ const getCallLogsInput = z.object({
     .default(200),
 });
 
+const updateScheduleInput = z.object({
+  id: z.number().int(),
+
+  name: z.string().min(1),
+  caller_name: z.string().optional().nullable(),
+
+  script_type: z.enum(['template', 'custom']),
+  template: z.string().optional().nullable(),
+  script_content: z.string().optional().nullable(),
+  name_in_script: z.enum(['contact', 'caller']),
+
+  frequency: z.enum(['daily', 'weekly', 'biweekly', 'monthly', 'custom']),
+  frequency_days: z.number().int().positive().optional().nullable(),
+  frequency_time: z.string().min(1),
+
+  selected_days: z
+    .array(
+      z.enum([
+        'monday',
+        'tuesday',
+        'wednesday',
+        'thursday',
+        'friday',
+        'saturday',
+        'sunday',
+      ])
+    )
+    .optional()
+    .nullable(),
+
+  calls_per_day: z.number().int().positive(),
+  max_attempts: z.number().int().positive(),
+  retry_interval: z.number().int().positive(),
+
+  is_active: z.boolean().optional().nullable(),
+
+  emergency_contact_name: z.string().optional().nullable(),
+  emergency_contact_phone_number: z.string().optional().nullable(),
+});
+
 // Minimal: you can expand these schemas later
 const jsonRecord = z.record(z.any());
 
@@ -357,6 +397,71 @@ export const reassuranceContactProfilesRouter = t.router({
         limit: input.limit,
         includeTranscript: input.includeTranscript,
         transcriptLimit: input.transcriptLimit,
+      });
+    }),
+  update: protectedProcedure
+    .input(updateScheduleInput)
+    .mutation(async ({ input }) => {
+      // Minimal validation rules (same as createContactFull)
+      if (input.frequency === 'weekly' || input.frequency === 'biweekly') {
+        if (!input.selected_days || input.selected_days.length === 0) {
+          throw new Error(
+            'selected_days is required for weekly/biweekly frequency'
+          );
+        }
+      }
+
+      if (input.frequency === 'custom') {
+        if (!input.frequency_days || input.frequency_days <= 0) {
+          throw new Error('frequency_days is required for custom frequency');
+        }
+      }
+
+      if (input.frequency === 'monthly') {
+        if (input.frequency_days && input.frequency_days !== 30) {
+          throw new Error('monthly frequency must use frequency_days = 30');
+        }
+      }
+
+      if (input.script_type === 'template') {
+        if (!input.template) {
+          throw new Error('template is required when script_type = template');
+        }
+      }
+
+      if (input.script_type === 'custom') {
+        if (!input.script_content || input.script_content.trim().length === 0) {
+          throw new Error(
+            'script_content is required when script_type = custom'
+          );
+        }
+      }
+
+      return await ReassuranceSchedulesRepository.update({
+        id: input.id,
+        name: input.name,
+        caller_name: input.caller_name ?? null,
+
+        script_type: input.script_type,
+        template: input.template ?? null,
+        script_content: input.script_content ?? null,
+        name_in_script: input.name_in_script,
+
+        frequency: input.frequency,
+        frequency_days: input.frequency_days ?? null,
+        frequency_time: input.frequency_time,
+
+        selected_days: input.selected_days ?? null,
+
+        calls_per_day: input.calls_per_day,
+        max_attempts: input.max_attempts,
+        retry_interval: input.retry_interval,
+
+        is_active: input.is_active ?? true,
+
+        emergency_contact_name: input.emergency_contact_name ?? null,
+        emergency_contact_phone_number:
+          input.emergency_contact_phone_number ?? null,
       });
     }),
 });

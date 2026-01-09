@@ -10,6 +10,33 @@ export interface NumberRow {
   label: string | null;
 }
 
+type UpdateScheduleInput = {
+  id: number;
+
+  name: string;
+  caller_name?: string | null;
+
+  script_type: 'template' | 'custom';
+  template?: string | null;
+  script_content?: string | null;
+  name_in_script: 'contact' | 'caller';
+
+  frequency: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'custom';
+  frequency_days?: number | null;
+  frequency_time: string;
+
+  selected_days?: string[] | null;
+
+  calls_per_day: number;
+  max_attempts: number;
+  retry_interval: number;
+
+  is_active?: boolean | null;
+
+  emergency_contact_name?: string | null;
+  emergency_contact_phone_number?: string | null;
+};
+
 export type ScheduleCallLogRow = Call & {
   schedule: ReassuranceCallSchedule;
   number: NumberRow;
@@ -144,47 +171,69 @@ export const ReassuranceSchedulesRepository = {
    * Update schedule scoped to tenant
    */
   async update(
-    id: number,
-    companyId: string,
-    updates: Partial<ReassuranceCallSchedule>
-  ): Promise<ReassuranceCallSchedule | null> {
-    const fields: string[] = [];
-    const values: any[] = [];
-    let paramIndex = 1;
+    input: UpdateScheduleInput,
+    client?: PoolClient
+  ): Promise<ReassuranceCallSchedule> {
+    const db = client ?? pool;
 
-    for (const [key, value] of Object.entries(updates)) {
-      // Don't allow changing primary key, created_at, or company_id (tenant)
-      if (key === 'id' || key === 'created_at' || key === 'company_id')
-        continue;
-
-      fields.push(`${key} = $${paramIndex}`);
-      values.push(value);
-      paramIndex++;
-    }
-
-    if (fields.length === 0) {
-      throw new Error('No fields provided to update.');
-    }
-
-    // Add id and companyId as the last params
-    const idParamIndex = paramIndex;
-    const companyIdParamIndex = paramIndex + 1;
-
-    values.push(id); // $idParamIndex
-    values.push(companyId); // $companyIdParamIndex
-
-    const res = await pool.query<ReassuranceCallSchedule>(
+    const res = await db.query<ReassuranceCallSchedule>(
       `
       UPDATE reassurance_call_schedules
-      SET ${fields.join(', ')}
-      WHERE id = $${idParamIndex}
-        AND company_id = $${companyIdParamIndex}
+      SET
+        name = $2,
+        caller_name = $3,
+
+        script_type = $4,
+        template = $5,
+        script_content = $6,
+        name_in_script = $7,
+
+        frequency = $8,
+        frequency_days = $9,
+        frequency_time = $10,
+
+        selected_days = $11,
+
+        calls_per_day = $12,
+        max_attempts = $13,
+        retry_interval = $14,
+
+        is_active = $15,
+
+        emergency_contact_name = $16,
+        emergency_contact_phone_number = $17
+
+      WHERE id = $1
       RETURNING *
       `,
-      values
+      [
+        input.id,
+        input.name,
+        input.caller_name ?? null,
+
+        input.script_type,
+        input.template ?? null,
+        input.script_content ?? null,
+        input.name_in_script,
+
+        input.frequency,
+        input.frequency_days ?? null,
+        input.frequency_time,
+
+        input.selected_days ? JSON.stringify(input.selected_days) : null,
+
+        input.calls_per_day,
+        input.max_attempts,
+        input.retry_interval,
+
+        input.is_active ?? true,
+
+        input.emergency_contact_name ?? null,
+        input.emergency_contact_phone_number ?? null,
+      ]
     );
 
-    return res.rows[0] || null;
+    return res.rows[0];
   },
 
   /**
