@@ -1499,7 +1499,7 @@ async function routes(app: FastifyInstance) {
   app.post('/voice/test-stream', async (req, reply) => {
     const r = new twilio.twiml.VoiceResponse();
 
-    const wsUrl = `wss://api.calliya.com/twilio/voice/stream?test=1`;
+    const wsUrl = `wss://api.calliya.com/twilio/reassurance/stream?test=1`;
 
     r.say(
       'Starting media stream test now. Please say something after the beep.'
