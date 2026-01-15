@@ -21,7 +21,7 @@ import fastifyWebsocket from '@fastify/websocket';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import companiesRoutes from './http/routes/companies';
-import { twilioMediaStreamRoutes } from './http/routes/mediastreams';
+import { twilioReassuranceStreamRoutes } from './http/routes/streams';
 import { registerReassuranceCron } from './lib/jobs/reassurance';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -117,7 +117,7 @@ app.register(stripeRoutes, { prefix: '/stripe' });
 
 app.register(companiesRoutes, { prefix: '/companies' });
 
-app.register(twilioMediaStreamRoutes, { prefix: '/twilio' });
+app.register(twilioReassuranceStreamRoutes, { prefix: '/twilio' });
 
 registerReassuranceCron(app);
 
