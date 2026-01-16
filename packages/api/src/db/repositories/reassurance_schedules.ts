@@ -335,4 +335,25 @@ export const ReassuranceSchedulesRepository = {
 
     return res.rows;
   },
+  async findByContactId(
+    contactId: string,
+    companyId?: string
+  ): Promise<ReassuranceCallSchedule | null> {
+    const res = await pool.query<ReassuranceCallSchedule>(
+      `
+      SELECT s.*
+      FROM reassurance_call_schedules s
+      JOIN contacts c
+        ON c.company_id = s.company_id
+       AND c.number = s.phone_number
+      WHERE c.id = $1
+        ${companyId ? 'AND s.company_id = $2' : ''}
+      ORDER BY s.created_at DESC NULLS LAST, s.id DESC
+      LIMIT 1
+      `,
+      companyId ? [contactId, companyId] : [contactId]
+    );
+
+    return res.rows[0] || null;
+  },
 };

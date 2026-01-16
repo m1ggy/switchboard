@@ -1499,15 +1499,72 @@ async function routes(app: FastifyInstance) {
   app.post('/voice/test-stream', async (req, reply) => {
     const r = new twilio.twiml.VoiceResponse();
 
-    const wsUrl = `wss://api.calliya.com/twilio/reassurance/stream?test=1`;
+    // Accept from query or body (Fastify-style)
+    const q = (req.query ?? {}) as Record<string, any>;
+    const b = (req.body ?? {}) as Record<string, any>;
+
+    const scheduleIdInput = (q.scheduleId ?? b.scheduleId) as
+      | string
+      | number
+      | undefined;
+    const phoneNumber = (q.phoneNumber ?? b.phoneNumber) as string | undefined;
+    const companyId = (q.companyId ?? b.companyId) as string | undefined;
+
+    const jobId = (q.jobId ??
+      b.jobId ??
+      `test-${crypto.randomUUID()}`) as string;
+    const callId = (q.callId ?? b.callId ?? crypto.randomUUID()) as string;
+
+    // ---- Resolve scheduleId (and implicitly contactId) ----
+    let scheduleId: string | undefined;
+
+    if (scheduleIdInput != null && String(scheduleIdInput).trim() !== '') {
+      scheduleId = String(scheduleIdInput);
+    } else {
+      // Need to derive scheduleId via contact -> schedule
+      if (!phoneNumber || !companyId) {
+        return reply
+          .status(400)
+          .send(
+            'Missing scheduleId OR (phoneNumber + companyId) to resolve schedule.'
+          );
+      }
+
+      // 1) find/create contact (gives us contactId)
+      const contact = await ContactsRepository.findOrCreate({
+        number: phoneNumber,
+        companyId,
+        label: phoneNumber,
+      });
+
+      // 2) find schedule by contactId (new method)
+      const sched = await ReassuranceSchedulesRepository.findByContactId(
+        contact.id,
+        companyId
+      );
+
+      if (!sched) {
+        return reply
+          .status(404)
+          .send('No reassurance schedule found for this contact.');
+      }
+
+      scheduleId = String(sched.id);
+    }
+
+    // ---- Build WS URL with the SAME params the WS endpoint reads ----
+    const wsUrl = new URL('wss://api.calliya.com/twilio/reassurance/stream');
+    wsUrl.searchParams.set('test', '1');
+    wsUrl.searchParams.set('scheduleId', scheduleId);
+    wsUrl.searchParams.set('jobId', jobId);
+    wsUrl.searchParams.set('callId', callId);
 
     r.say(
       'Starting media stream test now. Please say something after the beep.'
     );
-    r.pause({ length: 20 }); // keep the call alive
 
-    // IMPORTANT: Connect Stream should be inside the call flow:
-    r.connect().stream({ url: wsUrl });
+    // IMPORTANT: Connect Stream must be inside the call flow
+    r.connect().stream({ url: wsUrl.toString() });
 
     // Keep alive long enough to talk
     r.pause({ length: 30 });
