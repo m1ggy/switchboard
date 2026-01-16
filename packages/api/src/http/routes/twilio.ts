@@ -1502,60 +1502,33 @@ async function routes(app: FastifyInstance) {
     async (request, reply) => {
       const r = new twiml.VoiceResponse();
 
-      const { To, From, CallerId, Direction, CallSid } = request.body as Record<
-        string,
-        string
-      >;
+      const { From, CallSid } = request.body as Record<string, string>;
 
-      const callerId = CallerId || From; // follow your /voice logic
-      const isInbound = Direction === 'inbound';
-
-      if (!To) {
-        r.say('Invalid destination number.');
+      if (!From) {
+        r.say('Missing caller number.');
         return reply.type('text/xml').status(200).send(r.toString());
       }
 
-      // ✅ Resolve tenant/company from the Twilio number being called (To)
-      const numberRecord = await NumbersRepository.findByNumber(To);
-      if (!numberRecord) {
-        r.say('We could not route your call at this time.');
-        return reply.type('text/xml').status(200).send(r.toString());
-      }
-
-      if (!callerId) {
-        r.say('Missing caller information.');
-        return reply.type('text/xml').status(200).send(r.toString());
-      }
-
-      // ✅ Resolve contactId from caller
-      const contact = await ContactsRepository.findOrCreate({
-        number: callerId,
-        companyId: numberRecord.company_id,
-        label: callerId,
-      });
-
-      // ✅ Find scheduleId using your new method (scoped to tenant)
-      const sched = await ReassuranceSchedulesRepository.findByContactId(
-        contact.id,
-        numberRecord.company_id
-      );
+      // ✅ scheduleId derived strictly from FROM number using DB join
+      const sched = await ReassuranceSchedulesRepository.findByFromNumber(From);
 
       if (!sched) {
-        r.say('No reassurance schedule found for this contact.');
+        r.say('No reassurance schedule found for this caller.');
         return reply.type('text/xml').status(200).send(r.toString());
       }
 
-      // ✅ Twilio SID is the best callId
-      const callId = CallSid || crypto.randomUUID();
-
-      // ✅ jobId is optional; allow override via query/body; otherwise generate
       const q = (request.query ?? {}) as Record<string, any>;
       const b = (request.body ?? {}) as Record<string, any>;
+
+      // ✅ correlate with Twilio call
+      const callId = (q.callId ??
+        b.callId ??
+        CallSid ??
+        crypto.randomUUID()) as string;
       const jobId = (q.jobId ??
         b.jobId ??
         `test-${crypto.randomUUID()}`) as string;
 
-      // ✅ Build WS URL with the same params your WS endpoint reads
       const wsUrl = new URL('wss://api.calliya.com/twilio/reassurance/stream');
       wsUrl.searchParams.set('test', '1');
       wsUrl.searchParams.set('scheduleId', String(sched.id));
@@ -1565,13 +1538,8 @@ async function routes(app: FastifyInstance) {
       r.say(
         'Starting media stream test now. Please say something after the beep.'
       );
-
-      // IMPORTANT: Connect Stream must be inside the call flow
       r.connect().stream({ url: wsUrl.toString() });
-
-      // Keep alive long enough to talk
       r.pause({ length: 30 });
-
       r.say('Test complete. Goodbye.');
       r.hangup();
 
