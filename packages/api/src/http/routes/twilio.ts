@@ -1496,151 +1496,88 @@ async function routes(app: FastifyInstance) {
     }
   );
 
-  app.post('/voice/test-stream', async (req, reply) => {
-    const r = new twilio.twiml.VoiceResponse();
+  app.post(
+    '/voice/test-stream',
+    { preHandler: verifyTwilioRequest },
+    async (request, reply) => {
+      const r = new twiml.VoiceResponse();
 
-    // Twilio sends application/x-www-form-urlencoded by default.
-    // Fastify typically parses it into req.body when the formbody plugin is enabled.
-    const b = (req.body ?? {}) as Record<string, any>;
-    const q = (req.query ?? {}) as Record<string, any>;
+      const { To, From, CallerId, Direction, CallSid } = request.body as Record<
+        string,
+        string
+      >;
 
-    // ---- Twilio SIDs / phone numbers ----
-    const callSid = (b.CallSid ?? q.CallSid) as string | undefined;
-    const accountSid = (b.AccountSid ?? q.AccountSid) as string | undefined;
+      const callerId = CallerId || From; // follow your /voice logic
+      const isInbound = Direction === 'inbound';
 
-    // Twilio numbers are usually E.164 format (+1..., +63..., etc.)
-    const to = (b.To ?? q.To) as string | undefined; // your Twilio number
-    const from = (b.From ?? q.From) as string | undefined; // caller/callee depending on flow
-
-    // Use CallSid as callId so your WS session can link back to the Twilio call
-    const callId = (q.callId ??
-      b.callId ??
-      callSid ??
-      crypto.randomUUID()) as string;
-
-    // jobId: if you pass one in Twilio <Parameter> or webhook querystring, use it.
-    // Otherwise generate a deterministic-ish test id.
-    const jobId = (q.jobId ??
-      b.jobId ??
-      `test-${crypto.randomUUID()}`) as string;
-
-    // scheduleId can be explicitly passed (useful for manual testing)
-    const scheduleIdInput = (q.scheduleId ?? b.scheduleId) as
-      | string
-      | number
-      | undefined;
-
-    // ---- Resolve scheduleId ----
-    let scheduleId: string | undefined;
-
-    if (scheduleIdInput != null && String(scheduleIdInput).trim() !== '') {
-      scheduleId = String(scheduleIdInput);
-    } else {
-      /**
-       * In real Twilio calls, the most reliable way to pick schedule is by
-       * the number being called (To). That number belongs to a specific tenant/company
-       * and typically to a schedule set.
-       *
-       * So: map (To -> companyId) then find an active schedule for that number.
-       */
-
-      if (!to) {
-        return reply
-          .status(400)
-          .send('Missing Twilio "To" number; cannot resolve schedule.');
+      if (!To) {
+        r.say('Invalid destination number.');
+        return reply.type('text/xml').status(200).send(r.toString());
       }
 
-      // ---- Option A (recommended): you have a numbers table / repo ----
-      // const numberRow = await NumbersRepository.findByNumber(to);
-      // if (!numberRow) return reply.status(404).send('No tenant number found for Twilio "To".');
-      // const companyId = numberRow.company_id;
-
-      // ---- Option B (fallback): companyId provided (query/body) ----
-      const companyId = (q.companyId ?? b.companyId) as string | undefined;
-      if (!companyId) {
-        // If you don’t have NumbersRepository yet, you MUST provide companyId somehow.
-        // AccountSid -> company mapping is another common approach.
-        return reply
-          .status(400)
-          .send(
-            'Missing companyId (or To->company mapping). Cannot resolve schedule for Twilio call.'
-          );
+      // ✅ Resolve tenant/company from the Twilio number being called (To)
+      const numberRecord = await NumbersRepository.findByNumber(To);
+      if (!numberRecord) {
+        r.say('We could not route your call at this time.');
+        return reply.type('text/xml').status(200).send(r.toString());
       }
 
-      /**
-       * Now we need scheduleId.
-       * Best is: find active schedule by phone_number (the schedule’s target contact number)
-       * BUT in your schema, schedules store the *contact's* phone_number.
-       *
-       * Twilio "To" is your Twilio number, not the contact.
-       * So the correct linkage depends on your call flow:
-       * - If Twilio is calling the *contact*, then "To" == schedule.phone_number ✅
-       * - If Twilio is calling your *Twilio number* (inbound), then "From" might be the contact ✅
-       *
-       * For reassurance outbound calls, typically Twilio dials the contact:
-       *   To = contact number, From = your Twilio number.
-       *
-       * So we’ll try To first, then From as fallback.
-       */
-      const candidateNumber = to ?? from;
-      if (!candidateNumber) {
-        return reply
-          .status(400)
-          .send('Missing Twilio To/From; cannot resolve schedule.');
+      if (!callerId) {
+        r.say('Missing caller information.');
+        return reply.type('text/xml').status(200).send(r.toString());
       }
 
-      // Find schedule by phone_number (you may need to add this helper if you don’t have it yet)
-      const sched =
-        (await ReassuranceSchedulesRepository.findActiveByPhoneNumber?.(
-          candidateNumber,
-          companyId
-        )) ??
-        (await ReassuranceSchedulesRepository.findByPhoneNumber?.(
-          candidateNumber,
-          companyId
-        ));
+      // ✅ Resolve contactId from caller
+      const contact = await ContactsRepository.findOrCreate({
+        number: callerId,
+        companyId: numberRecord.company_id,
+        label: callerId,
+      });
+
+      // ✅ Find scheduleId using your new method (scoped to tenant)
+      const sched = await ReassuranceSchedulesRepository.findByContactId(
+        contact.id,
+        numberRecord.company_id
+      );
 
       if (!sched) {
-        return reply
-          .status(404)
-          .send(`No reassurance schedule found for number ${candidateNumber}.`);
+        r.say('No reassurance schedule found for this contact.');
+        return reply.type('text/xml').status(200).send(r.toString());
       }
 
-      scheduleId = String(sched.id);
+      // ✅ Twilio SID is the best callId
+      const callId = CallSid || crypto.randomUUID();
 
-      // Optional: ensure contact exists (your WS route does findOrCreate anyway)
-      await ContactsRepository.findOrCreate({
-        number: sched.phone_number,
-        companyId,
-        label: sched.name || sched.phone_number,
-      });
+      // ✅ jobId is optional; allow override via query/body; otherwise generate
+      const q = (request.query ?? {}) as Record<string, any>;
+      const b = (request.body ?? {}) as Record<string, any>;
+      const jobId = (q.jobId ??
+        b.jobId ??
+        `test-${crypto.randomUUID()}`) as string;
+
+      // ✅ Build WS URL with the same params your WS endpoint reads
+      const wsUrl = new URL('wss://api.calliya.com/twilio/reassurance/stream');
+      wsUrl.searchParams.set('test', '1');
+      wsUrl.searchParams.set('scheduleId', String(sched.id));
+      wsUrl.searchParams.set('jobId', jobId);
+      wsUrl.searchParams.set('callId', callId);
+
+      r.say(
+        'Starting media stream test now. Please say something after the beep.'
+      );
+
+      // IMPORTANT: Connect Stream must be inside the call flow
+      r.connect().stream({ url: wsUrl.toString() });
+
+      // Keep alive long enough to talk
+      r.pause({ length: 30 });
+
+      r.say('Test complete. Goodbye.');
+      r.hangup();
+
+      return reply.type('text/xml').status(200).send(r.toString());
     }
-
-    // ---- Build WS URL with expected params ----
-    const wsUrl = new URL('wss://api.calliya.com/twilio/reassurance/stream');
-    wsUrl.searchParams.set('test', '1');
-    wsUrl.searchParams.set('scheduleId', scheduleId);
-    wsUrl.searchParams.set('jobId', jobId);
-    wsUrl.searchParams.set('callId', callId);
-
-    // Optional: useful for logging/debugging server-side (your WS currently ignores extras)
-    if (callSid) wsUrl.searchParams.set('twilioCallSid', callSid);
-    if (accountSid) wsUrl.searchParams.set('twilioAccountSid', accountSid);
-
-    r.say(
-      'Starting media stream test now. Please say something after the beep.'
-    );
-
-    // IMPORTANT: connect must be inside the call flow
-    r.connect().stream({ url: wsUrl.toString() });
-
-    r.pause({ length: 30 });
-
-    r.say('Test complete. Goodbye.');
-    r.hangup();
-
-    return reply.type('text/xml').status(200).send(r.toString());
-  });
+  );
 }
 
 export default routes;
