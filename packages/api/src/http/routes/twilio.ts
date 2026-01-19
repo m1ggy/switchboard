@@ -1522,10 +1522,7 @@ async function routes(app: FastifyInstance) {
       const b = (request.body ?? {}) as Record<string, any>;
 
       // ✅ correlate with Twilio call
-      const callId = (q.callId ??
-        b.callId ??
-        CallSid ??
-        crypto.randomUUID()) as string;
+      const callId = (q.callId ?? b.callId ?? crypto.randomUUID()) as string;
       const jobId = (q.jobId ?? b.jobId ?? `${crypto.randomUUID()}`) as string;
 
       const wsUrl = 'wss://api.calliya.com/twilio/reassurance/stream';
