@@ -66,7 +66,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       string | undefined
     >;
 
-    console.log(JSON.stringify(req.query, null, 2));
+    console.log('REASSURANCE REQUEST: ', JSON.stringify(req.query, null, 2));
 
     let streamSid: string | null = null;
     let callSid: string | null = null;
