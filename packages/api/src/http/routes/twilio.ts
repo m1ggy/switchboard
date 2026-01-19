@@ -1530,11 +1530,14 @@ async function routes(app: FastifyInstance) {
         b.jobId ??
         `test-${crypto.randomUUID()}`) as string;
 
-      const wsUrl = new URL('wss://api.calliya.com/twilio/reassurance/stream');
-      wsUrl.searchParams.set('test', '1');
-      wsUrl.searchParams.set('scheduleId', String(sched.id));
-      wsUrl.searchParams.set('jobId', jobId);
-      wsUrl.searchParams.set('callId', callId);
+      const wsUrl = 'wss://api.calliya.com/twilio/reassurance/stream';
+
+      const stream = r.connect().stream({ url: wsUrl });
+
+      stream.parameter({ name: 'test', value: '1' });
+      stream.parameter({ name: 'scheduleId', value: String(sched.id) });
+      stream.parameter({ name: 'jobId', value: jobId });
+      stream.parameter({ name: 'callId', value: callId });
 
       r.say(
         'Starting media stream test now. Please say something after the beep.'

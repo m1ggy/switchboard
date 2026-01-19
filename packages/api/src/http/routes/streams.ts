@@ -61,12 +61,10 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
   });
 
   app.get('/reassurance/stream', { websocket: true }, (socket, req) => {
-    const { scheduleId, jobId, callId } = req.query as Record<
+    let { scheduleId, jobId, callId } = req.query as Record<
       string,
       string | undefined
     >;
-
-    console.log('REASSURANCE REQUEST: ', JSON.stringify(req.query, null, 2));
 
     let streamSid: string | null = null;
     let callSid: string | null = null;
@@ -585,6 +583,32 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         case 'start': {
           streamSid = msg.start?.streamSid ?? null;
           callSid = msg.start?.callSid ?? null;
+
+          // ✅ Twilio-supported place for your params
+          const cp = (msg.start?.customParameters ?? {}) as Record<
+            string,
+            string
+          >;
+
+          // ✅ fallback to req.query only if needed
+          const q = (req.query ?? {}) as Record<string, any>;
+
+          scheduleId = cp.scheduleId ?? q.scheduleId ?? null;
+          jobId = cp.jobId ?? q.jobId ?? null;
+          callId = cp.callId ?? q.callId ?? callSid ?? null;
+
+          app.log.info(
+            {
+              scheduleId,
+              jobId,
+              callId,
+              callSid,
+              streamSid,
+              customParameters: cp,
+              query: q,
+            },
+            '[ReassuranceStream] start received / params resolved'
+          );
 
           deepgram.connect((text, info) => {
             if (!info.isFinal) return;
