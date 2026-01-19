@@ -1510,7 +1510,8 @@ async function routes(app: FastifyInstance) {
       }
 
       // ✅ scheduleId derived strictly from FROM number using DB join
-      const sched = await ReassuranceSchedulesRepository.findByFromNumber(From);
+      const sched =
+        await ReassuranceSchedulesRepository.findByFromNumber('+13094855324');
 
       if (!sched) {
         r.say('No reassurance schedule found for this caller.');
