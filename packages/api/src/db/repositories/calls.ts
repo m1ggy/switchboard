@@ -130,14 +130,14 @@ export const CallsRepository = {
 
     for (const [key, value] of Object.entries(updates)) {
       if (key === 'meta' && value && typeof value === 'object') {
-        // Merge the new meta JSON into the existing jsonb
-        // Existing keys stay unless overwritten; new keys are added
-        fields.push(`meta = COALESCE(meta, '{}') || $${paramIndex}`);
+        fields.push(
+          `meta = COALESCE(meta, '{}'::json) || $${paramIndex}::json`
+        );
+        values.push(JSON.stringify(value));
       } else {
         fields.push(`${key} = $${paramIndex}`);
+        values.push(value);
       }
-
-      values.push(value);
       paramIndex++;
     }
 
