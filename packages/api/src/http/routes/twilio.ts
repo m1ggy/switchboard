@@ -1540,9 +1540,7 @@ async function routes(app: FastifyInstance) {
         'Starting media stream test now. Please say something after the beep.'
       );
       r.connect().stream({ url: wsUrl.toString() });
-      r.pause({ length: 30 });
-      r.say('Test complete. Goodbye.');
-      r.hangup();
+      r.pause({ length: 5 });
 
       return reply.type('text/xml').status(200).send(r.toString());
     }
