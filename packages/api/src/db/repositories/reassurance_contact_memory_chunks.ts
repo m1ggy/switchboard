@@ -13,6 +13,9 @@ export interface ReassuranceContactMemoryChunkRow {
   importance: number;
   created_at: string;
 }
+function toPgVector(v: number[]) {
+  return `[${v.join(',')}]`;
+}
 
 export const ReassuranceContactMemoryChunksRepository = {
   async insert({
@@ -34,18 +37,18 @@ export const ReassuranceContactMemoryChunksRepository = {
   }): Promise<void> {
     await pool.query(
       `
-      INSERT INTO reassurance_contact_memory_chunks (
-        id, contact_id, session_id, source_type, chunk_text, embedding, importance
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7)
-      `,
+  INSERT INTO reassurance_contact_memory_chunks (
+    id, contact_id, session_id, source_type, chunk_text, embedding, importance
+  )
+  VALUES ($1,$2,$3,$4,$5,$6::vector,$7)
+  `,
       [
         id,
         contact_id,
         session_id ?? null,
         source_type,
         chunk_text,
-        embedding,
+        toPgVector(embedding), // ✅ string like "[...]"
         importance,
       ]
     );
