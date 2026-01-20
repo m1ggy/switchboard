@@ -64,25 +64,22 @@ export const ReassuranceContactMemoryChunksRepository = {
     queryEmbedding: number[];
     limit?: number;
     minImportance?: number;
-  }): Promise<
-    {
-      chunk_text: string;
-      source_type: SourceType;
-      session_id: string | null;
-      created_at: string;
-      importance: number;
-    }[]
-  > {
+  }) {
     const res = await pool.query(
       `
       SELECT chunk_text, source_type, session_id, created_at, importance
       FROM reassurance_contact_memory_chunks
       WHERE contact_id = $1
         AND importance >= $3
-      ORDER BY embedding <=> $2
+      ORDER BY embedding <=> $2::vector
       LIMIT $4
       `,
-      [contactId, queryEmbedding, minImportance, limit]
+      [
+        contactId,
+        toPgVector(queryEmbedding), // ✅ CRITICAL: do not pass number[]
+        minImportance,
+        limit,
+      ]
     );
 
     return res.rows;
