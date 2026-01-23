@@ -1270,53 +1270,70 @@ async function routes(app: FastifyInstance) {
     '/reassurance/call',
     { preHandler: verifyTwilioRequest },
     async (req, reply) => {
-      const { scheduleId } = req.query as { scheduleId?: string };
+      const { scheduleId, jobId } = req.query as {
+        scheduleId?: string;
+        jobId?: string;
+      };
+
+      const { CallSid, From, To } = req.body as Record<string, string>;
 
       const r = new twiml.VoiceResponse();
 
-      // if (!scheduleId) {
-      //   r.say('Sorry, this reassurance call could not be completed.');
-      //   r.hangup();
-      //   return reply.type('text/xml').status(200).send(r.toString());
-      // }
+      // If scheduleId missing, you can still stream, but logging will be hard
+      if (!scheduleId) {
+        r.say('Sorry, this reassurance call is missing schedule details.');
+        r.hangup();
+        return reply.type('text/xml').status(200).send(r.toString());
+      }
 
-      // const schedule = await ReassuranceSchedulesRepository.find(
-      //   Number(scheduleId)
-      // );
+      // 1) Load schedule so we can get company_id + number_id + contact label
+      const schedule = await ReassuranceSchedulesRepository.find(
+        Number(scheduleId)
+      );
+      if (!schedule) {
+        r.say('Sorry, we could not find your reassurance schedule.');
+        r.hangup();
+        return reply.type('text/xml').status(200).send(r.toString());
+      }
 
-      // if (!schedule) {
-      //   r.say('Sorry, this reassurance call could not be completed.');
-      //   r.hangup();
-      //   return reply.type('text/xml').status(200).send(r.toString());
-      // }
+      // 2) Resolve (or create) contact (callee)
+      const contactLabel =
+        schedule.name || schedule.phone_number || To || 'Unknown';
+      const contact = await ContactsRepository.findOrCreate({
+        number: schedule.phone_number, // or To (should match)
+        companyId: schedule.company_id,
+        label: contactLabel,
+      });
 
-      // // ---- script selection: custom -> template -> fallback ----
-      // const script = getScriptForSchedule(schedule);
+      // 3) Create call log (guard against duplicate webhook retries)
+      // Twilio can occasionally hit your TwiML url more than once.
+      let callRow = await CallsRepository.findBySID(CallSid);
+      if (!callRow) {
+        callRow = await CallsRepository.create({
+          id: crypto.randomUUID(),
+          number_id: schedule.number_id,
+          contact_id: contact.id,
+          initiated_at: new Date(),
+          duration: undefined,
+          meta: {
+            scheduleId: String(schedule.id),
+            jobId: jobId ?? null,
+            from: From,
+            to: To,
+            kind: 'reassurance_stream',
+          },
+          call_sid: CallSid,
+        });
+      }
 
-      // // 🔹 Gather a single digit after the script
-      // const gather = r.gather({
-      //   numDigits: 1,
-      //   timeout: 5,
-      //   action: `${SERVER_DOMAIN}/twilio/reassurance/response?scheduleId=${schedule.id}`,
-      //   method: 'POST',
-      //   actionOnEmptyResult: true,
-      // });
+      // 4) Stream (NO query strings). Pass params via <Parameter>.
+      const wsUrl = `${process.env.WSS_BASE_URL}/twilio/reassurance/stream`;
+      const stream = r.connect().stream({ url: wsUrl });
 
-      // // 1) Play the user (or template) script
-      // gather.say({ voice: 'Polly.Amy', language: 'en-US' }, script);
+      stream.parameter({ name: 'scheduleId', value: String(schedule.id) });
+      if (jobId) stream.parameter({ name: 'jobId', value: String(jobId) });
+      stream.parameter({ name: 'callId', value: String(callRow.id) });
 
-      // // 2) Ask for confirmation
-      // gather.say(
-      //   { voice: 'Polly.Amy', language: 'en-US' },
-      //   'If you understood this message, please press 1.'
-      // );
-
-      // // If no input or after Gather completes, Twilio continues here:
-      // r.say({ voice: 'Polly.Amy', language: 'en-US' }, 'Thank you. Goodbye.');
-      // r.hangup();
-
-      const wsUrl = `${process.env.WSS_BASE_URL}/twilio/voice/stream?scheduleId=${encodeURIComponent(String(scheduleId))}`;
-      r.connect().stream({ url: wsUrl });
       return reply.type('text/xml').status(200).send(r.toString());
     }
   );
