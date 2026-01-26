@@ -1327,7 +1327,7 @@ async function routes(app: FastifyInstance) {
       }
 
       // 4) Stream (NO query strings). Pass params via <Parameter>.
-      const wsUrl = `${process.env.WSS_BASE_URL}/twilio/reassurance/stream`;
+      const wsUrl = `wss://api.calliya.com/twilio/reassurance/stream`;
       const stream = r.connect().stream({ url: wsUrl });
 
       stream.parameter({ name: 'scheduleId', value: String(schedule.id) });
