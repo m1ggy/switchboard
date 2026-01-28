@@ -10,7 +10,8 @@ if (process.env.NODE_ENV === 'development') {
     override: true,
   });
 }
-const client = new Pool({
+
+const pool = new Pool({
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT),
   user: process.env.DB_USER,
@@ -21,11 +22,14 @@ const client = new Pool({
   connectionTimeoutMillis: 5000,
 });
 
-client.on('error', (err) => {
+pool.on('error', (err) => {
   console.error('🔥 Unexpected error on idle PostgreSQL client', err);
 });
 
 const RETRYABLE_ERRORS = ['ETIMEDOUT', 'ECONNRESET', 'EPIPE', 'ECONNREFUSED'];
+
+// ✅ IMPORTANT: save original query reference BEFORE patching
+const originalQuery = pool.query.bind(pool);
 
 async function queryWithRetry<T extends QueryResultRow>(
   text: string,
@@ -39,7 +43,8 @@ async function queryWithRetry<T extends QueryResultRow>(
         console.warn(`🔁 Retrying query (attempt ${attempt}):`, text);
       }
 
-      return await client.query<T>(text, params);
+      // ✅ call the original Pool.query, not the patched one
+      return await originalQuery(text, params as any);
     } catch (err: unknown) {
       const error = err as NodeJS.ErrnoException;
 
@@ -60,11 +65,7 @@ async function queryWithRetry<T extends QueryResultRow>(
   throw new Error('Query unexpectedly failed after retries');
 }
 
-const wrappedClient: Pool & {
-  query: <T extends QueryResultRow>(
-    text: string,
-    params?: unknown[]
-  ) => Promise<QueryResult<T>>;
-} = Object.assign({}, client, { query: queryWithRetry });
+// ✅ Patch Pool.query safely (no recursion)
+(pool as any).query = queryWithRetry;
 
-export default wrappedClient;
+export default pool;

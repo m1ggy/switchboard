@@ -54,9 +54,7 @@ function CreateContactDialog({ onCreated, onSuccess }: Props) {
    * ✅ createContactFull endpoint
    */
   const { mutateAsync: createContactFull, isPending: contactCreationLoading } =
-    useMutation(
-      trpc.reassuranceContactProfiles.createContactFull.mutationOptions()
-    );
+    useMutation(trpc.contacts.createContact.mutationOptions());
 
   const { refetch: refetchContacts } = useQuery(
     trpc.contacts.getCompanyContacts.queryOptions({
@@ -91,42 +89,6 @@ function CreateContactDialog({ onCreated, onSuccess }: Props) {
         label: data.label,
         number: data.number,
         companyId: activeCompany.id,
-
-        // ✅ profile created automatically
-        profile: {
-          preferredName: data.label,
-          timezone: 'UTC',
-          locale: 'en-US',
-          medicalNotes: '',
-          goals: '',
-          riskFlags: [],
-        },
-
-        // ✅ schedule auto-created with defaults
-        schedule: {
-          name: 'Check in',
-          callerName: null,
-
-          scriptType: 'template',
-          template: 'wellness',
-          scriptContent: null,
-          nameInScript: 'contact',
-
-          frequency: 'weekly',
-          frequencyDays: 7,
-          frequencyTime: '10:00',
-          selectedDays: ['monday', 'wednesday', 'friday'],
-
-          callsPerDay: 1,
-          maxAttempts: 3,
-          retryInterval: 15,
-
-          // You can replace this later with real form fields
-          emergencyContactName: 'Emergency Contact',
-          emergencyContactPhone: '+10000000000',
-
-          numberId: activeNumber.id,
-        },
       });
 
       /**

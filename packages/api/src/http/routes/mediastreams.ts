@@ -1,3 +1,7 @@
+import { ContactsRepository } from '@/db/repositories/contacts';
+import { NumbersRepository } from '@/db/repositories/numbers';
+import { ReassuranceContactProfilesRepository } from '@/db/repositories/reassurance_contact_profiles';
+import { TwilioClient } from '@/lib/twilio';
 import type { FastifyInstance } from 'fastify';
 import { OpenAIClient } from '../../lib/ai/openai_client';
 import {
@@ -7,12 +11,15 @@ import {
 } from '../../lib/ai/script_agent';
 import { DeepgramLiveTranscriber } from '../../lib/transcription/deepgram-live';
 import { FinalUtteranceBuffer } from '../../lib/transcription/final-utterance-buffer';
-
 import { ElevenLabsMulawTTS } from '../../lib/tts/elevenlabs';
-
 export async function twilioMediaStreamRoutes(app: FastifyInstance) {
   const openai = new OpenAIClient(process.env.OPENAI_API_KEY!);
   const scriptAgent = new ScriptGeneratorAgent(openai);
+  const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID as string;
+  const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN as string;
+
+  const twilioClient = new TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    .client;
 
   const elevenlabsTts = new ElevenLabsMulawTTS({
     apiKey: process.env.ELEVENLABS_API_KEY,
@@ -34,20 +41,14 @@ export async function twilioMediaStreamRoutes(app: FastifyInstance) {
       return;
     }
 
-    // Placeholder context (keep yours or replace with real one)
-    const context: CallContext = {
-      userProfile: {
-        id: 'unknown',
-        preferredName: 'John',
-        locale: 'en-US',
-        ageRange: 'adult',
-        relationshipToCaller: 'care agency',
-      },
-      riskLevel: 'low',
-    };
-
     let busyGenerating = false;
     let runningSummary = '';
+
+    // ✅ late-bound
+    let context: CallContext | null = null;
+
+    // ✅ Deepgram will be created after context is known
+    let deepgram: DeepgramLiveTranscriber | null = null;
 
     // ----- server -> Twilio helpers -----
     function sendAudioToTwilio(mulawBase64: string) {
@@ -67,27 +68,93 @@ export async function twilioMediaStreamRoutes(app: FastifyInstance) {
     }
 
     async function speakPayload(payload: ScriptPayload) {
-      // optional: stop any queued audio before speaking
       clearTwilioAudio();
-
       for (const seg of payload.segments) {
         const mulawB64 = await elevenlabsTts.ttsToMulawBase64(seg.text);
         sendAudioToTwilio(mulawB64);
       }
     }
 
-    // ----- Deepgram -----
-    const deepgram = new DeepgramLiveTranscriber({
-      apiKey: dgApiKey,
-      model: 'nova-3',
-      language: context.userProfile.locale ?? 'en-US',
-      encoding: 'mulaw',
-      sampleRate: 8000,
-      interimResults: true,
-      smartFormat: true,
-      punctuate: true,
-      endpointingMs: 50,
-    });
+    // ✅ helper that resolves call context from Twilio + DB
+    async function buildContextFromCall(callSid: string): Promise<CallContext> {
+      // Fetch call metadata from Twilio (From/To are what you need)
+      const call = await twilioClient.calls(callSid).fetch();
+      const from = (call.from || '').trim();
+      const to = (call.to || '').trim();
+
+      if (!to || !from) {
+        throw new Error(`Missing call metadata: from="${from}", to="${to}"`);
+      }
+
+      // 1) Find company via inbound number (To)
+      const numberEntry = await NumbersRepository.findByNumber(to);
+      if (!numberEntry) {
+        throw new Error(`No company number entry found for To="${to}"`);
+      }
+
+      // 2) Find/create contact in that company via From
+      const contact = await ContactsRepository.findOrCreate({
+        number: from,
+        companyId: numberEntry.company_id,
+        label: from,
+      });
+
+      // 3) Pull reassurance profile
+      const profile = await ReassuranceContactProfilesRepository.getByContactId(
+        contact.id
+      );
+
+      // 4) Map profile -> CallContext
+      const preferredName =
+        profile?.preferred_name?.trim() || contact.label?.trim() || 'there';
+
+      const locale = profile?.locale || 'en-US';
+
+      // You can decide how to infer riskLevel.
+      const riskFlags = profile?.risk_flags ?? null;
+      const riskLevel: CallContext['riskLevel'] =
+        riskFlags?.level === 'high'
+          ? 'high'
+          : riskFlags?.level === 'medium'
+            ? 'medium'
+            : 'low';
+
+      return {
+        userProfile: {
+          id: contact.id,
+          preferredName,
+          locale,
+          ageRange: profile?.demographics?.ageRange ?? 'adult',
+          relationshipToCaller: 'care agency',
+          // if you want, you can stash more info in your CallContext type
+          // e.g., timezone: profile?.timezone ?? null
+        },
+        riskLevel,
+        ...profile,
+      };
+    }
+
+    // ✅ (re)initialize deepgram once you know locale
+    function initDeepgram(locale: string) {
+      deepgram?.finish();
+
+      deepgram = new DeepgramLiveTranscriber({
+        apiKey: dgApiKey!,
+        model: 'nova-3',
+        language: locale ?? 'en-US',
+        encoding: 'mulaw',
+        sampleRate: 8000,
+        interimResults: true,
+        smartFormat: true,
+        punctuate: true,
+        endpointingMs: 300, // less aggressive than 50 for testing
+      });
+
+      deepgram.connect((text, info) => {
+        if (!info.isFinal) return;
+        utteranceBuffer.addFinal(text);
+      });
+    }
 
     const utteranceBuffer = new FinalUtteranceBuffer(
       700,
@@ -96,6 +163,14 @@ export async function twilioMediaStreamRoutes(app: FastifyInstance) {
           app.log.debug(
             { callSid, streamSid },
             '[ScriptGen] Busy; skipping utterance'
+          );
+          return;
+        }
+
+        if (!context) {
+          app.log.warn(
+            { callSid, streamSid },
+            '[ScriptGen] No context yet; skipping utterance'
           );
           return;
         }
@@ -119,7 +194,6 @@ export async function twilioMediaStreamRoutes(app: FastifyInstance) {
             { callSid, streamSid },
             '[ScriptGen] followup script generated'
           );
-
           await speakPayload(payload);
 
           runningSummary = (
@@ -138,7 +212,7 @@ export async function twilioMediaStreamRoutes(app: FastifyInstance) {
 
     app.log.info({ ip: req.ip, url: req.url }, '[MediaStream] WS connected');
 
-    socket.on('message', (raw) => {
+    socket.on('message', async (raw) => {
       let msg: any;
       try {
         msg = JSON.parse(raw.toString());
@@ -157,10 +231,55 @@ export async function twilioMediaStreamRoutes(app: FastifyInstance) {
           callSid = msg.start?.callSid ?? null;
           app.log.info({ streamSid, callSid }, '[MediaStream] start');
 
-          deepgram.connect((text, info) => {
-            if (!info.isFinal) return;
-            utteranceBuffer.addFinal(text);
-          });
+          // ✅ Build DB-backed context now that we have callSid
+          if (callSid) {
+            try {
+              context = await buildContextFromCall(callSid);
+              app.log.info(
+                {
+                  callSid,
+                  streamSid,
+                  contactId: context.userProfile.id,
+                  locale: context.userProfile.locale,
+                },
+                '[MediaStream] Context resolved'
+              );
+
+              initDeepgram(context.userProfile.locale ?? 'en-US');
+            } catch (err) {
+              app.log.error(
+                { err, callSid, streamSid },
+                '[MediaStream] Failed to resolve context'
+              );
+
+              // fallback so system still works
+              context = {
+                userProfile: {
+                  id: 'unknown',
+                  preferredName: 'there',
+                  locale: 'en-US',
+                  ageRange: 'adult',
+                  relationshipToCaller: 'care agency',
+                },
+                riskLevel: 'low',
+              };
+
+              initDeepgram('en-US');
+            }
+          } else {
+            // no callSid (rare) -> fallback
+            context = {
+              userProfile: {
+                id: 'unknown',
+                preferredName: 'there',
+                locale: 'en-US',
+                ageRange: 'adult',
+                relationshipToCaller: 'care agency',
+              },
+              riskLevel: 'low',
+            };
+            initDeepgram('en-US');
+          }
 
           break;
         }
@@ -178,14 +297,14 @@ export async function twilioMediaStreamRoutes(app: FastifyInstance) {
           if (!b64) return;
 
           const audio = Buffer.from(b64, 'base64');
-          deepgram.sendAudio(audio);
+          deepgram?.sendAudio(audio);
           break;
         }
 
         case 'stop':
           app.log.info({ streamSid: msg.streamSid }, '[MediaStream] stop');
           utteranceBuffer.flushNow();
-          deepgram.finish();
+          deepgram?.finish();
           socket.close();
           break;
 
@@ -200,13 +319,13 @@ export async function twilioMediaStreamRoutes(app: FastifyInstance) {
         '[MediaStream] WS closed'
       );
       utteranceBuffer.flushNow();
-      deepgram.finish();
+      deepgram?.finish();
     });
 
     socket.on('error', (err) => {
       app.log.error({ err, streamSid, callSid }, '[MediaStream] WS error');
       utteranceBuffer.flushNow();
-      deepgram.finish();
+      deepgram?.finish();
     });
   });
 }

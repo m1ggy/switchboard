@@ -14,9 +14,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { Contact, Profile, Schedule } from '@/lib/schemas';
 import { AlertCircle, CheckCircle2, Circle } from 'lucide-react';
 import { useState } from 'react';
+
 import ContactForm from './contact-form';
 import ProfileForm from './profile-form';
 import ScheduleForm from './schedule-form';
+
+import { getQueryClient } from '@/App';
+import useMainStore from '@/lib/store';
+import { useTRPC } from '@/lib/trpc';
+import { useMutation, useQuery } from '@tanstack/react-query';
 
 interface CreateDialogProps {
   open: boolean;
@@ -43,6 +49,65 @@ export default function CreateDialog({
   const isAllComplete =
     isContactComplete && isProfileComplete && isScheduleComplete;
 
+  // ✅ TRPC + React Query pattern
+  const trpc = useTRPC();
+  const queryClient = getQueryClient();
+  const { activeCompany, activeNumber } = useMainStore();
+
+  const { refetch: refetchContacts } = useQuery(
+    trpc.contacts.getCompanyContacts.queryOptions({
+      companyId: activeCompany?.id as string,
+    })
+  );
+
+  const { refetch: refetchInboxes } = useQuery(
+    trpc.inboxes.getNumberInboxes.queryOptions({
+      numberId: activeNumber?.id as string,
+    })
+  );
+
+  /**
+   * ✅ createContactFull endpoint
+   */
+  const { mutateAsync: createContactFull, isPending: contactCreationLoading } =
+    useMutation(
+      trpc.reassuranceContactProfiles.createContactFull.mutationOptions({
+        onSuccess: async () => {
+          /**
+           * ✅ invalidate contacts list
+           */
+          await queryClient.invalidateQueries({
+            queryKey: trpc.contacts.getCompanyContacts.queryOptions({
+              companyId: activeCompany?.id as string,
+            }).queryKey,
+          });
+
+          /**
+           * ✅ invalidate new "profiles + schedules" list
+           * This is what your dashboard uses now
+           */
+          await queryClient.invalidateQueries({
+            queryKey:
+              trpc.reassuranceContactProfiles.getAllWithSchedulesByCompanyId.queryOptions(
+                {
+                  companyId: activeCompany?.id as string,
+                }
+              ).queryKey,
+          });
+
+          // optional refetches
+          await refetchContacts();
+          await refetchInboxes();
+
+          handleClose();
+          onSuccess();
+        },
+        onError: (err) => {
+          console.error('createContactFull error:', err);
+        },
+      })
+    );
+
   const handleContactSubmit = async (contactData: Contact) => {
     setSelectedContact(contactData);
     setActiveTab('profile');
@@ -57,18 +122,92 @@ export default function CreateDialog({
     setSelectedSchedule(scheduleData);
     setActiveTab('summary');
   };
-
   const handleFinalSubmit = async () => {
-    setIsSubmitting(true);
-    try {
-      console.log('[v0] Final submission:', {
-        contact: selectedContact,
-        profile: selectedProfile,
-        schedule: selectedSchedule,
-      });
+    if (!selectedContact || !selectedProfile || !selectedSchedule) return;
 
-      handleClose();
-      onSuccess();
+    if (!activeCompany?.id) {
+      console.error('No active company selected');
+      return;
+    }
+
+    if (!activeNumber?.id) {
+      console.error('No active number selected');
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const should_send_selected_days = ['weekly', 'biweekly'].includes(
+        selectedSchedule.frequency
+      );
+
+      const computed_frequency_days =
+        selectedSchedule.frequency === 'custom'
+          ? (selectedSchedule.frequency_days ?? null)
+          : selectedSchedule.frequency === 'monthly'
+            ? 30
+            : null;
+
+      const payload = {
+        number: selectedContact.number,
+        label: selectedContact.label,
+        companyId: activeCompany.id,
+
+        profile: {
+          preferred_name: selectedProfile.preferred_name ?? null,
+          timezone: selectedProfile.timezone ?? null,
+          locale: selectedProfile.locale ?? null,
+          medical_notes: selectedProfile.medical_notes ?? null,
+          goals: selectedProfile.goals ?? null,
+          risk_flags: selectedProfile.risk_flags ?? null,
+        },
+
+        schedule: {
+          // ✅ required by backend
+          name: selectedSchedule.name,
+          frequency: selectedSchedule.frequency,
+          frequency_time: selectedSchedule.frequency_time,
+
+          selected_days: should_send_selected_days
+            ? (selectedSchedule.selected_days?.map((x) => x.toLowerCase()) ?? [
+                'monday',
+              ])
+            : null,
+
+          emergency_contact_name: selectedSchedule.emergency_contact_name ?? '',
+          emergency_contact_phone:
+            selectedSchedule.emergency_contact_phone ?? '',
+
+          script_type: selectedSchedule.script_type,
+          name_in_script: selectedSchedule.name_in_script,
+
+          // ✅ optional
+          caller_name: selectedSchedule.caller_name ?? null,
+          template:
+            selectedSchedule.script_type === 'template'
+              ? (selectedSchedule.template ?? 'wellness')
+              : null,
+          script_content:
+            selectedSchedule.script_type === 'custom'
+              ? (selectedSchedule.script_content ?? null)
+              : null,
+
+          frequency_days: computed_frequency_days,
+
+          // ✅ retry settings
+          calls_per_day: selectedSchedule.calls_per_day,
+          max_attempts: selectedSchedule.max_attempts,
+          retry_interval: selectedSchedule.retry_interval,
+
+          // ✅ required
+          number_id: activeNumber.id,
+        },
+      };
+
+      console.log('[CreateDialog] Submitting payload:', payload);
+
+      await createContactFull(payload);
     } finally {
       setIsSubmitting(false);
     }
@@ -83,10 +222,9 @@ export default function CreateDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      {/* ✅ dialog must be constrained + clip overflow */}
+    // ✅ IMPORTANT: Don't call handleClose on every open change (this wipes state)
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="!w-[95vw] !max-w-[1400px] max-h-[90vh] overflow-y-auto flex flex-col">
-        {/* ✅ give inner padding but keep dialog clipping */}
         <div className="p-6 flex flex-col flex-1 overflow-hidden">
           <DialogHeader>
             <DialogTitle>Create New Profile</DialogTitle>
@@ -95,7 +233,6 @@ export default function CreateDialog({
             </DialogDescription>
           </DialogHeader>
 
-          {/* ✅ grid must allow children to shrink */}
           <div className="grid gap-8 grid-cols-1 md:grid-cols-[240px_1fr] flex-1 overflow-hidden mt-6 min-w-0">
             {/* Sidebar */}
             <div className="space-y-3">
@@ -155,14 +292,13 @@ export default function CreateDialog({
               </div>
             </div>
 
-            {/* ✅ Right side MUST not overflow and MUST scroll */}
+            {/* Right side */}
             <div className="min-w-0 overflow-hidden">
               <Tabs
                 value={activeTab}
                 onValueChange={setActiveTab}
                 className="w-full h-full flex flex-col min-w-0"
               >
-                {/* ✅ tabs should not push width */}
                 <TabsList className="grid w-full grid-cols-4">
                   <TabsTrigger value="contact">Contact</TabsTrigger>
                   <TabsTrigger value="profile" disabled={!selectedContact}>
@@ -176,7 +312,6 @@ export default function CreateDialog({
                   </TabsTrigger>
                 </TabsList>
 
-                {/* ✅ Content scrolls vertically inside the right panel */}
                 <div className="flex-1 overflow-y-auto min-w-0">
                   <TabsContent
                     value="contact"
@@ -346,12 +481,15 @@ export default function CreateDialog({
                       >
                         Back to Schedule
                       </Button>
+
                       <Button
                         onClick={handleFinalSubmit}
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || contactCreationLoading}
                         className="gap-2"
                       >
-                        {isSubmitting ? 'Creating...' : 'Create Profile'}
+                        {isSubmitting || contactCreationLoading
+                          ? 'Creating...'
+                          : 'Create Profile'}
                       </Button>
                     </div>
                   </TabsContent>

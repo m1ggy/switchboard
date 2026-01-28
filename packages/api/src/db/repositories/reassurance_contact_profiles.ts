@@ -171,14 +171,15 @@ export const ReassuranceContactProfilesRepository = {
   ) {
     const res = await db.query(
       `
-      SELECT
-        p.*,
-        row_to_json(c) AS contact
-      FROM reassurance_contact_profiles p
-      JOIN contacts c ON c.id = p.contact_id
-      WHERE c.company_id = $1
-      ORDER BY c.created_at DESC
-      `,
+    SELECT
+      p.*,
+      row_to_json(c) AS contact
+    FROM contacts c
+    INNER JOIN reassurance_contact_profiles p
+      ON p.contact_id = c.id
+    WHERE c.company_id = $1
+    ORDER BY c.created_at DESC
+    `,
       [companyId]
     );
 
@@ -190,24 +191,24 @@ export const ReassuranceContactProfilesRepository = {
   ) {
     const res = await db.query(
       `
-      SELECT
-        row_to_json(c) AS contact,
-        row_to_json(p) AS profile,
-        COALESCE(
-          json_agg(s ORDER BY s.created_at DESC)
-            FILTER (WHERE s.id IS NOT NULL),
-          '[]'
-        ) AS schedules
-      FROM contacts c
-      LEFT JOIN reassurance_contact_profiles p
-        ON p.contact_id = c.id
-      LEFT JOIN reassurance_call_schedules s
-        ON s.phone_number = c.number
-       AND s.company_id = c.company_id
-      WHERE c.company_id = $1
-      GROUP BY c.id, p.contact_id
-      ORDER BY c.created_at DESC
-      `,
+    SELECT
+      row_to_json(c) AS contact,
+      row_to_json(p) AS profile,
+      COALESCE(
+        json_agg(s ORDER BY s.created_at DESC)
+          FILTER (WHERE s.id IS NOT NULL),
+        '[]'
+      ) AS schedules
+    FROM contacts c
+    INNER JOIN reassurance_contact_profiles p
+      ON p.contact_id = c.id
+    LEFT JOIN reassurance_call_schedules s
+      ON s.phone_number = c.number
+     AND s.company_id = c.company_id
+    WHERE c.company_id = $1
+    GROUP BY c.id, p.contact_id
+    ORDER BY c.created_at DESC
+    `,
       [companyId]
     );
 

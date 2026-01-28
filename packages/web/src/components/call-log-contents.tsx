@@ -13,209 +13,163 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ArrowLeft, Clock, Download, Play, User } from 'lucide-react';
 
+import { useTRPC } from '@/lib/trpc';
+import { useQuery } from '@tanstack/react-query';
+
+// ---------------- Types ----------------
+
 interface CallSession {
   id: string;
   started_at: string;
-  ended_at?: string;
+  ended_at?: string | null;
   status: string;
-  risk_level?: string;
-  ai_summary?: string;
-  notes_for_human?: string;
+  risk_level?: string | null;
+  ai_summary?: string | null;
+  notes_for_human?: string | null;
 }
 
 interface Recording {
   id: string;
-  session_id: string;
-  combined_url?: string;
-  inbound_url?: string;
-  outbound_url?: string;
-  duration_ms?: number;
+  inbound_url?: string | null;
+  outbound_url?: string | null;
+  combined_url?: string | null;
+  duration_ms?: number | null;
 }
 
 interface Transcript {
   id: string;
   session_id: string;
-  speaker: string;
-  channel: string;
+  speaker: 'user' | 'assistant' | 'system';
+  channel: 'inbound' | 'outbound' | 'mixed';
   transcript: string;
   start_ms: number;
   end_ms: number;
-  confidence?: number;
+  confidence?: number | null;
 }
 
-// ---------- Mock Data ----------
-const mockCallSessions = (scheduleId: string): CallSession[] => [
-  {
-    id: `session_${scheduleId}_1`,
-    started_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-    ended_at: new Date(
-      Date.now() - 2 * 24 * 60 * 60 * 1000 + 15 * 60 * 1000
-    ).toISOString(),
-    status: 'completed',
-    risk_level: 'low',
-    ai_summary:
-      'Positive conversation. Caller reported good health and mood. Discussed upcoming family visit.',
-    notes_for_human: 'Patient seemed cheerful today. No concerns noted.',
-  },
-  {
-    id: `session_${scheduleId}_2`,
-    started_at: new Date(Date.now() - 9 * 24 * 60 * 60 * 1000).toISOString(),
-    ended_at: new Date(
-      Date.now() - 9 * 24 * 60 * 60 * 1000 + 18 * 60 * 1000
-    ).toISOString(),
-    status: 'completed',
-    risk_level: 'low',
-    ai_summary:
-      'Regular check-in. Caller discussed new hobbies and social activities.',
-    notes_for_human: 'Engaged and positive. Continue weekly schedule.',
-  },
-  {
-    id: `session_${scheduleId}_3`,
-    started_at: new Date(Date.now() - 16 * 24 * 60 * 60 * 1000).toISOString(),
-    ended_at: new Date(
-      Date.now() - 16 * 24 * 60 * 60 * 1000 + 22 * 60 * 1000
-    ).toISOString(),
-    status: 'completed',
-    risk_level: 'medium',
-    ai_summary:
-      'Caller mentioned feeling slightly isolated this week. Discussed plans to join community center activities.',
-    notes_for_human:
-      'Minor mood dip. Recommended social engagement. Follow up next week.',
-  },
-];
-
-const mockRecordings = (sessionId: string): Recording => ({
-  id: `recording_${sessionId}`,
-  session_id: sessionId,
-  combined_url:
-    '/placeholder.mp3?height=50&width=300&query=call+recording+audio',
-  duration_ms: 15 * 60 * 1000,
-});
-
-const mockTranscripts = (sessionId: string): Transcript[] => [
-  {
-    id: `trans_${sessionId}_1`,
-    session_id: sessionId,
-    speaker: 'bot',
-    channel: 'outbound',
-    transcript:
-      'Hello, this is your weekly reassurance call. How are you doing today?',
-    start_ms: 0,
-    end_ms: 3500,
-    confidence: 0.98,
-  },
-  {
-    id: `trans_${sessionId}_2`,
-    session_id: sessionId,
-    speaker: 'user',
-    channel: 'inbound',
-    transcript:
-      "Hi! I'm doing quite well, thanks for calling. Just finished having lunch with a friend.",
-    start_ms: 3500,
-    end_ms: 9000,
-    confidence: 0.95,
-  },
-  {
-    id: `trans_${sessionId}_3`,
-    session_id: sessionId,
-    speaker: 'bot',
-    channel: 'outbound',
-    transcript:
-      "That's wonderful! Tell me more about your friend. How long have you known them?",
-    start_ms: 9000,
-    end_ms: 12500,
-    confidence: 0.97,
-  },
-];
+interface CallLog {
+  session: CallSession;
+  schedule: {
+    id: number;
+    name: string;
+    frequency: string;
+    frequency_time: string;
+    caller_name?: string | null;
+  };
+  recording: Recording | null;
+  transcript: {
+    count: number;
+    first_ms: number | null;
+    last_ms: number | null;
+    duration_ms: number | null;
+    items?: Transcript[];
+  };
+}
 
 // ---------- Helpers ----------
-const useQuery = () => {
+const useQueryParams = () => {
   const { search } = useLocation();
   return useMemo(() => new URLSearchParams(search), [search]);
 };
 
+const formatDate = (dateString: string) => {
+  const date = new Date(dateString);
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const formatDurationMs = (ms?: number | null) => {
+  if (!ms || ms <= 0) return 'N/A';
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+};
+
+const getRiskLevelColor = (level?: string | null) => {
+  switch (level) {
+    case 'low':
+      return 'bg-green-500/10 text-green-700';
+    case 'medium':
+      return 'bg-yellow-500/10 text-yellow-700';
+    case 'high':
+      return 'bg-red-500/10 text-red-700';
+    default:
+      return 'bg-gray-500/10 text-gray-700';
+  }
+};
+
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'completed':
+      return 'bg-green-500/10 text-green-700';
+    case 'in_progress':
+      return 'bg-blue-500/10 text-blue-700';
+    case 'user_hung_up':
+      return 'bg-yellow-500/10 text-yellow-700';
+    case 'failed':
+      return 'bg-red-500/10 text-red-700';
+    default:
+      return 'bg-gray-500/10 text-gray-700';
+  }
+};
+
 export default function CallLogsContent() {
   const navigate = useNavigate();
-  const query = useQuery();
+  const query = useQueryParams();
+  const trpc = useTRPC();
 
-  const scheduleId = query.get('schedule') || 'default';
-  const scheduleName = query.get('name') || 'Call Logs';
+  // ✅ UPDATED: expect `contact` instead of `schedule`
+  const contactId = query.get('contact') || '';
+  const displayName = query.get('name') || 'Call Logs';
 
-  const [callSessions, setCallSessions] = useState<CallSession[]>([]);
-  const [selectedSession, setSelectedSession] = useState<CallSession | null>(
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null
   );
-  const [recordings, setRecordings] = useState<Map<string, Recording>>(
-    new Map()
-  );
-  const [transcripts, setTranscripts] = useState<Map<string, Transcript[]>>(
-    new Map()
-  );
-  const [isLoading, setIsLoading] = useState(true);
 
+  // ✅ Fetch call logs for this contact
+  const {
+    data: callLogs,
+    isLoading,
+    isError,
+  } = useQuery({
+    ...trpc.reassuranceContactProfiles.getCallLogsByContactId.queryOptions({
+      contactId,
+      limit: 50,
+      includeTranscript: true, // ✅ fetch transcript items too
+      transcriptLimit: 500,
+    }),
+    enabled: !!contactId,
+  });
+
+  // Select first session on load
   useEffect(() => {
-    const sessions = mockCallSessions(scheduleId);
-    setCallSessions(sessions);
-
-    const recordingsMap = new Map<string, Recording>();
-    const transcriptsMap = new Map<string, Transcript[]>();
-
-    sessions.forEach((session) => {
-      recordingsMap.set(session.id, mockRecordings(session.id));
-      transcriptsMap.set(session.id, mockTranscripts(session.id));
-    });
-
-    setRecordings(recordingsMap);
-    setTranscripts(transcriptsMap);
-    setSelectedSession(sessions[0]);
-
-    setIsLoading(false);
-  }, [scheduleId]);
-
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  const formatDuration = (ms?: number) => {
-    if (!ms) return 'N/A';
-    const totalSeconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return `${minutes}m ${seconds}s`;
-  };
-
-  const getRiskLevelColor = (level?: string) => {
-    switch (level) {
-      case 'low':
-        return 'bg-green-500/10 text-green-700';
-      case 'medium':
-        return 'bg-yellow-500/10 text-yellow-700';
-      case 'high':
-        return 'bg-red-500/10 text-red-700';
-      default:
-        return 'bg-gray-500/10 text-gray-700';
+    if (callLogs?.length && !selectedSessionId) {
+      setSelectedSessionId(callLogs[0].session.id);
     }
-  };
+  }, [callLogs, selectedSessionId]);
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'completed':
-        return 'bg-green-500/10 text-green-700';
-      case 'in_progress':
-        return 'bg-blue-500/10 text-blue-700';
-      case 'failed':
-        return 'bg-red-500/10 text-red-700';
-      default:
-        return 'bg-gray-500/10 text-gray-700';
-    }
-  };
+  const selectedLog: CallLog | null = useMemo(() => {
+    if (!callLogs || !selectedSessionId) return null;
+    return (callLogs as any[]).find(
+      (l) => l.session.id === selectedSessionId
+    ) as CallLog | null;
+  }, [callLogs, selectedSessionId]);
+
+  if (!contactId) {
+    return (
+      <div className="container py-8 mx-auto">
+        <p className="text-muted-foreground">
+          Missing contact id. Please open this page from a contact profile.
+        </p>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
@@ -225,13 +179,36 @@ export default function CallLogsContent() {
     );
   }
 
-  const selectedRecording = selectedSession
-    ? recordings.get(selectedSession.id)
-    : null;
+  if (isError || !callLogs) {
+    return (
+      <div className="container py-8 mx-auto">
+        <p className="text-muted-foreground">
+          Unable to load call logs. Please try again later.
+        </p>
+      </div>
+    );
+  }
 
-  const selectedTranscripts = selectedSession
-    ? transcripts.get(selectedSession.id) || []
-    : [];
+  const sessions = callLogs as CallLog[];
+
+  const selectedRecording = selectedLog?.recording ?? null;
+  const selectedTranscripts = selectedLog?.transcript?.items ?? [];
+
+  // Choose recording URL priority: combined > inbound > outbound
+  const recordingUrl =
+    selectedRecording?.combined_url ??
+    selectedRecording?.inbound_url ??
+    selectedRecording?.outbound_url ??
+    null;
+
+  // duration: prefer recording duration_ms, otherwise transcript duration
+  const durationMs =
+    selectedRecording?.duration_ms ??
+    selectedLog?.transcript?.duration_ms ??
+    (selectedLog?.session?.ended_at
+      ? new Date(selectedLog.session.ended_at).getTime() -
+        new Date(selectedLog.session.started_at).getTime()
+      : null);
 
   return (
     <div className="container py-8 mx-auto">
@@ -240,9 +217,9 @@ export default function CallLogsContent() {
           <ArrowLeft className="w-4 h-4" />
         </Button>
         <div>
-          <h1 className="text-3xl font-bold text-balance">{scheduleName}</h1>
+          <h1 className="text-3xl font-bold text-balance">{displayName}</h1>
           <p className="text-muted-foreground mt-2">
-            Call history and recordings
+            Call history, recordings, and transcripts
           </p>
         </div>
       </div>
@@ -252,75 +229,100 @@ export default function CallLogsContent() {
         <Card className="lg:col-span-1">
           <CardHeader>
             <CardTitle className="text-lg">
-              Sessions ({callSessions.length})
+              Sessions ({sessions.length})
             </CardTitle>
             <CardDescription>Click to view details</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {callSessions.map((session) => (
-                <button
-                  key={session.id}
-                  onClick={() => setSelectedSession(session)}
-                  className={`w-full p-3 rounded-lg border text-left transition-colors ${
-                    selectedSession?.id === session.id
-                      ? 'bg-primary/10 border-primary'
-                      : 'hover:bg-muted border-transparent'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">
-                        {formatDate(session.started_at)}
-                      </p>
-                      <div className="flex gap-1 flex-wrap mt-1">
-                        <Badge variant="secondary" className="text-xs">
-                          {formatDuration(
-                            recordings.get(session.id)?.duration_ms ||
-                              (session.ended_at
-                                ? new Date(session.ended_at).getTime() -
-                                  new Date(session.started_at).getTime()
-                                : 0)
-                          )}
-                        </Badge>
+              {sessions.map((log) => {
+                const session = log.session;
+
+                // duration (prefer recording duration)
+                const rowDuration =
+                  log.recording?.duration_ms ??
+                  log.transcript?.duration_ms ??
+                  (session.ended_at
+                    ? new Date(session.ended_at).getTime() -
+                      new Date(session.started_at).getTime()
+                    : null);
+
+                return (
+                  <button
+                    key={session.id}
+                    onClick={() => setSelectedSessionId(session.id)}
+                    className={`w-full p-3 rounded-lg border text-left transition-colors ${
+                      selectedSessionId === session.id
+                        ? 'bg-primary/10 border-primary'
+                        : 'hover:bg-muted border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">
+                          {formatDate(session.started_at)}
+                        </p>
+
+                        <div className="flex gap-1 flex-wrap mt-1">
+                          <Badge variant="secondary" className="text-xs">
+                            {formatDurationMs(rowDuration)}
+                          </Badge>
+
+                          {log.transcript?.count ? (
+                            <Badge variant="secondary" className="text-xs">
+                              {log.transcript.count} transcript
+                            </Badge>
+                          ) : null}
+                        </div>
                       </div>
+
+                      <Badge
+                        className={`text-xs whitespace-nowrap ${getStatusColor(
+                          session.status
+                        )}`}
+                      >
+                        {session.status === 'completed' ? '✓' : '●'}
+                      </Badge>
                     </div>
-                    <Badge
-                      className={`text-xs whitespace-nowrap ${getStatusColor(session.status)}`}
-                    >
-                      {session.status === 'completed' ? '✓' : '●'}
-                    </Badge>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </div>
           </CardContent>
         </Card>
 
         {/* Call Details */}
         <Card className="lg:col-span-2">
-          {selectedSession ? (
+          {selectedLog ? (
             <>
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <div>
                     <CardTitle>Call Details</CardTitle>
                     <CardDescription>
-                      {formatDate(selectedSession.started_at)}
+                      {formatDate(selectedLog.session.started_at)}
                     </CardDescription>
                   </div>
                   <div className="flex gap-2">
-                    {selectedSession.risk_level && (
+                    {selectedLog.session.risk_level && (
                       <Badge
-                        className={`${getRiskLevelColor(selectedSession.risk_level)}`}
+                        className={getRiskLevelColor(
+                          selectedLog.session.risk_level
+                        )}
                       >
-                        {selectedSession.risk_level.charAt(0).toUpperCase() +
-                          selectedSession.risk_level.slice(1)}{' '}
+                        {selectedLog.session.risk_level
+                          .charAt(0)
+                          .toUpperCase() +
+                          selectedLog.session.risk_level.slice(1)}{' '}
                         Risk
                       </Badge>
                     )}
-                    <Badge className={getStatusColor(selectedSession.status)}>
-                      {selectedSession.status.replace(/_/g, ' ').toUpperCase()}
+                    <Badge
+                      className={getStatusColor(selectedLog.session.status)}
+                    >
+                      {selectedLog.session.status
+                        .replace(/_/g, ' ')
+                        .toUpperCase()}
                     </Badge>
                   </div>
                 </div>
@@ -336,7 +338,7 @@ export default function CallLogsContent() {
 
                   {/* Recording Tab */}
                   <TabsContent value="recording" className="space-y-4">
-                    {selectedRecording ? (
+                    {recordingUrl ? (
                       <div className="space-y-4">
                         <div className="bg-muted p-4 rounded-lg">
                           <p className="text-sm font-semibold mb-3">
@@ -345,29 +347,26 @@ export default function CallLogsContent() {
                           <audio
                             controls
                             className="w-full"
-                            src={selectedRecording.combined_url}
+                            src={recordingUrl}
                             crossOrigin="anonymous"
                           />
                         </div>
 
-                        {selectedRecording.combined_url && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            asChild
-                            className="gap-2 bg-transparent"
-                          >
-                            <a href={selectedRecording.combined_url} download>
-                              <Download className="w-4 h-4" />
-                              Download Recording
-                            </a>
-                          </Button>
-                        )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          asChild
+                          className="gap-2 bg-transparent"
+                        >
+                          <a href={recordingUrl} download>
+                            <Download className="w-4 h-4" />
+                            Download Recording
+                          </a>
+                        </Button>
 
                         <div className="pt-2 border-t">
                           <p className="text-sm text-muted-foreground">
-                            Duration:{' '}
-                            {formatDuration(selectedRecording.duration_ms)}
+                            Duration: {formatDurationMs(durationMs)}
                           </p>
                         </div>
                       </div>
@@ -400,10 +399,12 @@ export default function CallLogsContent() {
                               <span className="font-semibold text-sm">
                                 {trans.speaker === 'user'
                                   ? 'Caller'
-                                  : 'Assistant'}
+                                  : trans.speaker === 'assistant'
+                                    ? 'Assistant'
+                                    : 'System'}
                               </span>
                             </div>
-                            {trans.confidence && (
+                            {trans.confidence != null && (
                               <span className="text-xs text-muted-foreground">
                                 Confidence:{' '}
                                 {(trans.confidence * 100).toFixed(0)}%
@@ -417,8 +418,8 @@ export default function CallLogsContent() {
 
                           <p className="text-xs text-muted-foreground mt-2">
                             <Clock className="w-3 h-3 inline mr-1" />
-                            {formatDuration(trans.start_ms)} -{' '}
-                            {formatDuration(trans.end_ms)}
+                            {formatDurationMs(trans.start_ms)} -{' '}
+                            {formatDurationMs(trans.end_ms)}
                           </p>
                         </div>
                       ))
@@ -431,21 +432,21 @@ export default function CallLogsContent() {
 
                   {/* Notes Tab */}
                   <TabsContent value="notes" className="space-y-4">
-                    {selectedSession.ai_summary && (
+                    {selectedLog.session.ai_summary && (
                       <div>
                         <p className="text-sm font-semibold mb-2">AI Summary</p>
                         <p className="text-sm leading-relaxed bg-muted p-3 rounded-lg">
-                          {selectedSession.ai_summary}
+                          {selectedLog.session.ai_summary}
                         </p>
                       </div>
                     )}
-                    {selectedSession.notes_for_human && (
+                    {selectedLog.session.notes_for_human && (
                       <div>
                         <p className="text-sm font-semibold mb-2">
                           Human Notes
                         </p>
                         <p className="text-sm leading-relaxed bg-yellow-500/10 border border-yellow-200 p-3 rounded-lg">
-                          {selectedSession.notes_for_human}
+                          {selectedLog.session.notes_for_human}
                         </p>
                       </div>
                     )}

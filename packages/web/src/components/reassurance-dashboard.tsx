@@ -67,6 +67,7 @@ export default function Dashboard({
   const [searchQuery, setSearchQuery] = useState('');
   const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
   const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
+  const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [showEditSchedule, setShowEditSchedule] = useState(false);
 
@@ -269,9 +270,11 @@ export default function Dashboard({
                               )}
 
                               <Link
-                                to={`/logs?schedule=${schedule.id}&name=${encodeURIComponent(
-                                  schedule.name
-                                )}`}
+                                to={`/dashboard/automated-calls/logs?contact=${contact.id}&name=${encodeURIComponent(
+                                  profile?.preferred_name ??
+                                    contact.label ??
+                                    'Call Logs'
+                                )}&schedule=${schedule.id}&scheduleName=${encodeURIComponent(schedule.name)}`}
                                 className="p-1 hover:bg-background rounded transition-colors"
                               >
                                 <Eye className="w-3 h-3" />
@@ -280,6 +283,7 @@ export default function Dashboard({
                               <button
                                 onClick={() => {
                                   setEditingSchedule(schedule);
+                                  setEditingContact(contact);
                                   setShowEditSchedule(true);
                                 }}
                                 className="p-1 hover:bg-background rounded transition-colors"
@@ -322,7 +326,7 @@ export default function Dashboard({
       )}
 
       {/* Edit Schedule */}
-      {editingSchedule && (
+      {editingSchedule && editingContact && (
         <EditScheduleDialog
           open={showEditSchedule}
           onOpenChange={setShowEditSchedule}
@@ -331,6 +335,7 @@ export default function Dashboard({
             setShowEditSchedule(false);
             await refetch();
           }}
+          contact={editingContact}
         />
       )}
     </div>

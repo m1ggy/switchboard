@@ -5,6 +5,7 @@ import type { AppRouter } from 'api/trpc';
 import { useState } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router';
 import AppRoot from './AppRoot';
+import CallLogsContent from './components/call-log-contents';
 import InstallPromptDialog from './components/install-app-dialog';
 import Layout from './components/main-layout';
 import { ThemeProvider } from './components/theme-provider';
@@ -100,6 +101,10 @@ function App() {
                   <Route path="add-contact" element={<AddContact />} />
                   <Route path="all-contacts" element={<AllContacts />} />
                   <Route path="automated-calls" element={<AutomatedCalls />} />
+                  <Route
+                    path="automated-calls/logs"
+                    element={<CallLogsContent />}
+                  />
                   <Route path="settings" element={<Settings />} />
                   <Route path="*" element={<NotFound />} />
                 </Route>

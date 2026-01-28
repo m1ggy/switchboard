@@ -1,9 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-// src/routes/twilio/reassurance_stream.ts
-import crypto from 'crypto';
-import type { FastifyInstance } from 'fastify';
+import twilio from 'twilio';
 
 import { OpenAIClient } from '@/lib/ai/openai_client';
 import {
@@ -71,8 +69,17 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
     similarityBoost: 0.8,
   });
 
+  // ---- Twilio REST (to end calls) ----
+  const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
+  const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
+
+  const twilioClient =
+    twilioAccountSid && twilioAuthToken
+      ? twilio(twilioAccountSid, twilioAuthToken)
+      : null;
+
   app.get('/reassurance/stream', { websocket: true }, (socket, req) => {
-    const { scheduleId, jobId, callId } = req.query as Record<
+    let { scheduleId, jobId, callId } = req.query as Record<
       string,
       string | undefined
     >;
@@ -156,6 +163,93 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       }
     }
 
+    // ---- End-of-conversation detection + hangup ----
+    function shouldEndConversation(text: string) {
+      const t = (text || '').trim().toLowerCase();
+
+      // avoid obvious false positives like "don't hang up"
+      const negation = /\b(don't|do not|not|never)\b/.test(t);
+      if (negation && /\b(hang up|end the call|goodbye|bye)\b/.test(t)) {
+        return false;
+      }
+
+      // strong end-intent phrases
+      const strong =
+        /\b(hang up|end (the )?call|disconnect|terminate|stop calling|goodbye|bye\b|bye bye|talk to you later|that's all|no(,)? (thank you|thanks)|i'?m done|we'?re done|you can go now|see you|see ya)\b/.test(
+          t
+        );
+
+      // “I have to go” / “need to go” style
+      const haveToGo =
+        /\b(i (have|got) to go|i need to go|i should go|i must go|gotta go)\b/.test(
+          t
+        );
+
+      // “that’s it” alone can be ambiguous; require a short utterance
+      const thatsIt =
+        /\b(that'?s it|that is it|all good|all set)\b/.test(t) &&
+        t.length <= 40;
+
+      return strong || haveToGo || thatsIt;
+    }
+
+    async function endTwilioCall(reason: string) {
+      if (!twilioClient) {
+        app.log.warn(
+          { reason, callSid, streamSid },
+          '[ReassuranceStream] TWILIO_* env missing; cannot end call via REST'
+        );
+        return;
+      }
+      if (!callSid) {
+        app.log.warn(
+          { reason, callSid, streamSid },
+          '[ReassuranceStream] No callSid; cannot end call'
+        );
+        return;
+      }
+
+      try {
+        // Ends the live PSTN call
+        await twilioClient.calls(callSid).update({ status: 'completed' });
+        app.log.info(
+          { reason, callSid, streamSid },
+          '[ReassuranceStream] Twilio call ended'
+        );
+      } catch (err) {
+        app.log.error(
+          { err, reason, callSid, streamSid },
+          '[ReassuranceStream] Failed to end Twilio call'
+        );
+      }
+    }
+
+    async function gracefulHangupAfterGoodbye(opts?: { goodbyeText?: string }) {
+      const goodbye =
+        opts?.goodbyeText ??
+        "Okay — thanks for chatting. I'll let you go now. Goodbye.";
+
+      try {
+        await speakText(goodbye);
+      } catch (err) {
+        app.log.warn(
+          { err, callSid, streamSid },
+          '[ReassuranceStream] Failed to speak goodbye; continuing hangup'
+        );
+      }
+
+      // Mark session complete + upload audio (guarded by finalized flag)
+      await finalizeAndUpload('completed');
+
+      // End PSTN call via Twilio REST
+      await endTwilioCall('user_end_intent');
+
+      // Close the websocket stream
+      try {
+        socket.close();
+      } catch {}
+    }
+
     // ---- Deepgram ----
     const deepgram = new DeepgramLiveTranscriber({
       apiKey: dgApiKey,
@@ -228,6 +322,23 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         if (!sessionId || !contactId) return;
         if (busyGenerating) return;
         if (finalUtterance.trim().length < 2) return;
+
+        // ✅ detect end intent and gracefully hang up via Twilio
+        if (shouldEndConversation(finalUtterance)) {
+          // store the final user turn (best effort)
+          try {
+            await ReassuranceCallTurnsRepository.createTurn({
+              id: crypto.randomUUID(),
+              session_id: sessionId,
+              role: 'user',
+              content: finalUtterance,
+              meta: { callSid, streamSid, end_intent: true },
+            } as any);
+          } catch {}
+
+          await gracefulHangupAfterGoodbye();
+          return;
+        }
 
         busyGenerating = true;
 
@@ -647,7 +758,32 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           streamSid = msg.start?.streamSid ?? null;
           callSid = msg.start?.callSid ?? null;
 
-          // ✅ Deepgram connect callback now writes transcripts with timing
+          // ✅ Twilio-supported place for your params
+          const cp = (msg.start?.customParameters ?? {}) as Record<
+            string,
+            string
+          >;
+
+          // ✅ fallback to req.query only if needed
+          const q = (req.query ?? {}) as Record<string, any>;
+
+          scheduleId = cp.scheduleId ?? q.scheduleId ?? null;
+          jobId = cp.jobId ?? q.jobId ?? null;
+          callId = cp.callId ?? q.callId ?? callSid ?? null;
+
+          app.log.info(
+            {
+              scheduleId,
+              jobId,
+              callId,
+              callSid,
+              streamSid,
+              customParameters: cp,
+              query: q,
+            },
+            '[ReassuranceStream] start received / params resolved'
+          );
+
           deepgram.connect(async (text, info) => {
             if (!info.isFinal) return;
             if (!sessionId || !contactId) return;
@@ -715,7 +851,11 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             await bootstrapSessionAndOpening();
           } catch (err) {
             app.log.error(
-              { err, scheduleId, jobId, callId, callSid },
+              JSON.stringify(
+                { err, scheduleId, jobId, callId, callSid },
+                null,
+                2
+              ),
               '[ReassuranceStream] bootstrap failed'
             );
             socket.close();
