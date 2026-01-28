@@ -1,6 +1,9 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+// src/routes/twilio/reassurance_stream.ts
+import crypto from 'crypto';
+import type { FastifyInstance } from 'fastify';
 import twilio from 'twilio';
 
 import { OpenAIClient } from '@/lib/ai/openai_client';
@@ -22,9 +25,9 @@ import { ReassuranceContactMemorySummaryRepository } from '@/db/repositories/rea
 import { ReassuranceContactProfilesRepository } from '@/db/repositories/reassurance_contact_profiles';
 import { ReassuranceSchedulesRepository } from '@/db/repositories/reassurance_schedules';
 
-// ✅ NEW REPOS
 import { ReassuranceCallRecordingsRepository } from '@/db/repositories/reassurance_call_recordings';
 import { ReassuranceCallTranscriptsRepository } from '@/db/repositories/reassurance_call_transcripts';
+import pool from '@/lib/pg';
 
 // ---- tiny helpers ----
 function tmpFile(name: string) {
@@ -50,11 +53,28 @@ function safeJson(obj: any) {
   }
 }
 
-// ✅ helper for safe ms conversion
-function toMs(val: any): number | null {
-  if (val === null || val === undefined) return null;
-  if (typeof val === 'number' && !isNaN(val)) return Math.round(val * 1000);
-  return null;
+function wordTimesToMs(
+  words?: any[] | null
+): { start_ms: number; end_ms: number } | null {
+  if (!Array.isArray(words) || words.length === 0) return null;
+
+  // Deepgram word objects typically: { word, start, end, confidence, punctuated_word, speaker? }
+  const starts = words
+    .map((w) => (typeof w?.start === 'number' ? w.start : null))
+    .filter((v): v is number => typeof v === 'number');
+  const ends = words
+    .map((w) => (typeof w?.end === 'number' ? w.end : null))
+    .filter((v): v is number => typeof v === 'number');
+
+  if (!starts.length || !ends.length) return null;
+
+  const startS = Math.min(...starts);
+  const endS = Math.max(...ends);
+
+  const start_ms = Math.max(0, Math.round(startS * 1000));
+  const end_ms = Math.max(start_ms + 1, Math.round(endS * 1000));
+
+  return { start_ms, end_ms };
 }
 
 export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
@@ -89,24 +109,20 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
     let sessionId: string | null = null;
     let contactId: string | null = null;
-
-    // ✅ NEW: store companyId for recording insert
     let companyId: string | null = null;
-
-    // ✅ NEW: recording row id
-    let recordingId: string | null = null;
-
-    // ✅ transcript seq counter (DB ordering)
-    let transcriptSeq = 0;
-
-    // ✅ approximate session start used for fallback timing
-    const callStartAtMs = Date.now();
 
     // contact profile cached for this socket lifetime
     let contactProfile: any | null = null;
 
     let runningSummary = '';
     let busyGenerating = false;
+
+    // transcript state
+    let transcriptSeq = 0;
+    let recordingId: string | null = null;
+
+    // if Deepgram finals arrive before session is ready, queue them
+    const pendingFinals: Array<{ text: string; info: any }> = [];
 
     // audio sinks (raw mulaw frames)
     const inboundPath = tmpFile(`reassurance-in-${crypto.randomUUID()}.mulaw`);
@@ -116,7 +132,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
     const inboundStream = fs.createWriteStream(inboundPath);
     const outboundStream = fs.createWriteStream(outboundPath);
 
-    // prevent double-finalize (close + stop + error can all happen)
     let finalized = false;
 
     const dgApiKey = process.env.DEEPGRAM_API_KEY;
@@ -138,7 +153,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         })
       );
 
-      // record outbound mulaw
       outboundStream.write(Buffer.from(mulawBase64, 'base64'));
     }
 
@@ -163,29 +177,24 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       }
     }
 
-    // ---- End-of-conversation detection + hangup ----
     function shouldEndConversation(text: string) {
       const t = (text || '').trim().toLowerCase();
 
-      // avoid obvious false positives like "don't hang up"
       const negation = /\b(don't|do not|not|never)\b/.test(t);
       if (negation && /\b(hang up|end the call|goodbye|bye)\b/.test(t)) {
         return false;
       }
 
-      // strong end-intent phrases
       const strong =
         /\b(hang up|end (the )?call|disconnect|terminate|stop calling|goodbye|bye\b|bye bye|talk to you later|that's all|no(,)? (thank you|thanks)|i'?m done|we'?re done|you can go now|see you|see ya)\b/.test(
           t
         );
 
-      // “I have to go” / “need to go” style
       const haveToGo =
         /\b(i (have|got) to go|i need to go|i should go|i must go|gotta go)\b/.test(
           t
         );
 
-      // “that’s it” alone can be ambiguous; require a short utterance
       const thatsIt =
         /\b(that'?s it|that is it|all good|all set)\b/.test(t) &&
         t.length <= 40;
@@ -210,7 +219,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       }
 
       try {
-        // Ends the live PSTN call
         await twilioClient.calls(callSid).update({ status: 'completed' });
         app.log.info(
           { reason, callSid, streamSid },
@@ -238,13 +246,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         );
       }
 
-      // Mark session complete + upload audio (guarded by finalized flag)
       await finalizeAndUpload('completed');
-
-      // End PSTN call via Twilio REST
       await endTwilioCall('user_end_intent');
 
-      // Close the websocket stream
       try {
         socket.close();
       } catch {}
@@ -315,7 +319,48 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         .join('\n\n');
     }
 
-    // ✅ unchanged buffer for AI followup generation
+    async function saveInboundTranscript(text: string, info: any) {
+      if (!sessionId || !contactId) return;
+
+      transcriptSeq += 1;
+
+      const timing = wordTimesToMs(info?.words) ?? { start_ms: 0, end_ms: 1 };
+
+      await ReassuranceCallTranscriptsRepository.create({
+        session_id: sessionId,
+        recording_id: recordingId, // may be null until finalize; we backfill later
+        contact_id: contactId,
+        seq: transcriptSeq,
+        speaker: 'user',
+        channel: 'inbound',
+        transcript: text,
+        start_ms: timing.start_ms,
+        end_ms: timing.end_ms,
+        confidence: info?.confidence ?? null,
+        language: 'en-US',
+        words: info?.words ?? null,
+        raw: info?.raw ?? info ?? null,
+      });
+    }
+
+    async function drainPendingFinals() {
+      if (!sessionId || !contactId) return;
+      if (!pendingFinals.length) return;
+
+      const items = pendingFinals.splice(0, pendingFinals.length);
+      for (const item of items) {
+        try {
+          await saveInboundTranscript(item.text, item.info);
+          utteranceBuffer.addFinal(item.text);
+        } catch (err) {
+          app.log.error(
+            { err, sessionId, contactId },
+            '[ReassuranceStream] failed draining pending transcript'
+          );
+        }
+      }
+    }
+
     const utteranceBuffer = new FinalUtteranceBuffer(
       700,
       async (finalUtterance) => {
@@ -323,9 +368,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         if (busyGenerating) return;
         if (finalUtterance.trim().length < 2) return;
 
-        // ✅ detect end intent and gracefully hang up via Twilio
         if (shouldEndConversation(finalUtterance)) {
-          // store the final user turn (best effort)
           try {
             await ReassuranceCallTurnsRepository.createTurn({
               id: crypto.randomUUID(),
@@ -343,7 +386,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         busyGenerating = true;
 
         try {
-          // 1) Save user turn
           await ReassuranceCallTurnsRepository.createTurn({
             id: crypto.randomUUID(),
             session_id: sessionId,
@@ -352,7 +394,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             meta: { callSid, streamSid },
           } as any);
 
-          // 2) Embed + store as memory chunk
           const userEmb = await embedText(openai, finalUtterance);
           await ReassuranceContactMemoryChunksRepository.insert({
             id: crypto.randomUUID(),
@@ -364,13 +405,11 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             importance: 1,
           });
 
-          // 3) Load rolling summary
           const memSummary =
             await ReassuranceContactMemorySummaryRepository.getByContactId(
               contactId
             );
 
-          // 4) Vector recall
           const similar =
             await ReassuranceContactMemoryChunksRepository.searchSimilar({
               contactId,
@@ -379,7 +418,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               minImportance: 1,
             });
 
-          // 5) Short-term history (this session)
           const recentTurnsRaw =
             await ReassuranceCallTurnsRepository.listBySessionIdWithLimit(
               sessionId,
@@ -391,7 +429,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             content: t.content,
           }));
 
-          // 6) Rich context block -> use as lastCheckInSummary for the agent
           const contextBlock = buildContextBlock({
             profile: contactProfile,
             memSummaryText: memSummary?.summary_text ?? null,
@@ -425,7 +462,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             lastCheckInSummary: contextBlock,
           };
 
-          // 7) Generate reply
           const payload = await scriptAgent.generateFollowupScript({
             context,
             lastUserUtterance: finalUtterance,
@@ -439,7 +475,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             .join(' ')
             .trim();
 
-          // 8) Save assistant turn
           await ReassuranceCallTurnsRepository.createTurn({
             id: crypto.randomUUID(),
             session_id: sessionId,
@@ -453,7 +488,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             },
           } as any);
 
-          // 9) Save assistant as memory chunk too
           const assistantEmb = await embedText(openai, assistantText);
           await ReassuranceContactMemoryChunksRepository.insert({
             id: crypto.randomUUID(),
@@ -465,7 +499,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             importance: 1,
           });
 
-          // update last_state
           try {
             await ReassuranceContactProfilesRepository.mergeLastState(
               contactId,
@@ -499,7 +532,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       );
       if (!schedule) throw new Error('Schedule not found');
 
-      // ✅ store companyId for recordings
       companyId = schedule.company_id;
 
       const contactLabel = schedule.name || schedule.phone_number || 'Unknown';
@@ -511,7 +543,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
       contactId = contact.id;
 
-      // load or initialize profile
       contactProfile =
         await ReassuranceContactProfilesRepository.getByContactId(contact.id);
 
@@ -527,7 +558,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         });
       }
 
-      // rolling summary for opening context
       const memSummary =
         await ReassuranceContactMemorySummaryRepository.getByContactId(
           contact.id
@@ -561,7 +591,15 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         ai_model: 'reassurance-stream-v1',
       });
 
-      // ✅ opening generated via ScriptGeneratorAgent.generateOpeningScript
+      // ✅ ensure seq is correct if reconnects happen
+      transcriptSeq =
+        await ReassuranceCallTranscriptsRepository.getLastSeqForSession(
+          sessionId
+        );
+
+      // ✅ now that sessionId/contactId exist, drain any Deepgram finals that arrived early
+      await drainPendingFinals();
+
       let openingPayload: ScriptPayload;
       const openingContext: CallContext = {
         userProfile: {
@@ -590,9 +628,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           segments: [
             {
               id: crypto.randomUUID(),
-              text: `Hi ${
-                preferredName || 'there'
-              }. This is your reassurance call. How are you feeling today?`,
+              text: `Hi ${preferredName || 'there'}. This is your reassurance call. How are you feeling today?`,
               tone: 'reassuring',
               maxDurationSeconds: 10,
             },
@@ -601,7 +637,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         };
       }
 
-      // Save opening turns (one per segment)
       for (const seg of openingPayload.segments) {
         await ReassuranceCallTurnsRepository.createTurn({
           id: crypto.randomUUID(),
@@ -619,6 +654,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       }
 
       await speakScriptPayload(openingPayload);
+
       runningSummary = `Opening delivered.`;
     }
 
@@ -639,19 +675,12 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           outboundStream.end(() => resolve())
         );
 
-        // upload audio
         let inboundUrl: string | null = null;
         let outboundUrl: string | null = null;
-
-        let inboundBytes: number | null = null;
-        let outboundBytes: number | null = null;
 
         try {
           const inBuf = fs.readFileSync(inboundPath);
           const outBuf = fs.readFileSync(outboundPath);
-
-          inboundBytes = inBuf.length;
-          outboundBytes = outBuf.length;
 
           if (sessionId) {
             inboundUrl = await uploadAttachmentBuffer(
@@ -670,42 +699,57 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           );
         }
 
+        // ✅ create recording + backfill transcript recording_id
+        if (sessionId && contactId && companyId) {
+          try {
+            const inBytes = fs.existsSync(inboundPath)
+              ? fs.statSync(inboundPath).size
+              : null;
+            const outBytes = fs.existsSync(outboundPath)
+              ? fs.statSync(outboundPath).size
+              : null;
+
+            const rec = await ReassuranceCallRecordingsRepository.create({
+              session_id: sessionId,
+              company_id: companyId,
+              contact_id: contactId,
+              call_sid: callSid,
+              stream_sid: streamSid,
+              inbound_url: inboundUrl,
+              outbound_url: outboundUrl,
+              codec: 'mulaw',
+              sample_rate: 8000,
+              channels: 1,
+              inbound_bytes: inBytes,
+              outbound_bytes: outBytes,
+              meta: { source: 'twilio_media_stream' },
+            });
+
+            recordingId = rec.id;
+
+            await pool.query(
+              `
+              UPDATE reassurance_call_transcripts
+              SET recording_id = $2
+              WHERE session_id = $1
+                AND recording_id IS NULL
+              `,
+              [sessionId, recordingId]
+            );
+          } catch (err) {
+            app.log.error(
+              { err, sessionId, contactId },
+              '[ReassuranceStream] failed to create recording / backfill transcript recording_id'
+            );
+          }
+        }
+
         if (sessionId) {
           await ReassuranceCallSessionsRepository.finalizeSession(sessionId, {
             status,
             ended_at: new Date(),
           });
 
-          // ✅ INSERT into reassurance_call_recordings
-          if (companyId && contactId && (inboundUrl || outboundUrl)) {
-            try {
-              const rec = await ReassuranceCallRecordingsRepository.create({
-                session_id: sessionId,
-                company_id: companyId,
-                contact_id: contactId,
-                call_sid: callSid,
-                stream_sid: streamSid,
-                inbound_url: inboundUrl,
-                outbound_url: outboundUrl,
-                codec: 'mulaw',
-                sample_rate: 8000,
-                channels: 1,
-                inbound_bytes: inboundBytes,
-                outbound_bytes: outboundBytes,
-                duration_ms: Math.max(0, Date.now() - callStartAtMs),
-                meta: { status },
-              });
-
-              recordingId = rec.id;
-            } catch (e) {
-              app.log.error(
-                { e, sessionId },
-                '[ReassuranceStream] recording insert failed'
-              );
-            }
-          }
-
-          // (Optional) keep this until you update UI/data model
           if (contactId && (inboundUrl || outboundUrl)) {
             try {
               await ReassuranceContactProfilesRepository.mergeLastState(
@@ -722,7 +766,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           }
 
           app.log.info(
-            { sessionId, inboundUrl, outboundUrl, recordingId, status },
+            { sessionId, inboundUrl, outboundUrl, status, recordingId },
             '[ReassuranceStream] finalized'
           );
         }
@@ -758,13 +802,10 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           streamSid = msg.start?.streamSid ?? null;
           callSid = msg.start?.callSid ?? null;
 
-          // ✅ Twilio-supported place for your params
           const cp = (msg.start?.customParameters ?? {}) as Record<
             string,
             string
           >;
-
-          // ✅ fallback to req.query only if needed
           const q = (req.query ?? {}) as Record<string, any>;
 
           scheduleId = cp.scheduleId ?? q.scheduleId ?? null;
@@ -784,66 +825,25 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             '[ReassuranceStream] start received / params resolved'
           );
 
+          // ✅ Connect Deepgram first; queue finals if session not ready yet
           deepgram.connect(async (text, info) => {
-            if (!info.isFinal) return;
-            if (!sessionId || !contactId) return;
+            if (!info?.isFinal) return;
 
-            // best-effort timing extraction (Deepgram payload varies by wrapper)
-            // If your deepgram-live wrapper passes word-level timings, store them.
-            const words =
-              info?.words ||
-              info?.alternatives?.[0]?.words ||
-              info?.raw?.channel?.alternatives?.[0]?.words ||
-              null;
-
-            // utterance start/end (seconds -> ms)
-            // NOTE: if your wrapper provides start/end already in ms, update this accordingly.
-            const startMs: number | null =
-              toMs(info?.start) ??
-              toMs(info?.raw?.start) ??
-              Date.now() - callStartAtMs;
-
-            const endMs: number | null =
-              toMs(info?.end) ??
-              toMs(info?.raw?.end) ??
-              startMs + Math.max(250, Math.round(text.length * 40));
-
-            // normalize word timings if present
-            const normalizedWords = Array.isArray(words)
-              ? words.map((w: any) => ({
-                  word: w.word ?? w.punctuated_word ?? w.text ?? '',
-                  start_ms: toMs(w.start) ?? null,
-                  end_ms: toMs(w.end) ?? null,
-                  confidence: w.confidence ?? null,
-                }))
-              : null;
+            // if session not ready yet, store and process later
+            if (!sessionId || !contactId) {
+              pendingFinals.push({ text, info });
+              return;
+            }
 
             try {
-              transcriptSeq += 1;
-
-              await ReassuranceCallTranscriptsRepository.create({
-                session_id: sessionId,
-                recording_id: recordingId ?? null, // might still be null until finalize
-                contact_id: contactId,
-                seq: transcriptSeq,
-                speaker: 'user',
-                channel: 'inbound',
-                transcript: text,
-                start_ms: startMs ?? 0,
-                end_ms: endMs ?? (startMs ?? 0) + 500,
-                confidence: info?.confidence ?? null,
-                language: info?.language ?? null,
-                words: normalizedWords,
-                raw: info ?? null,
-              });
-            } catch (e) {
+              await saveInboundTranscript(text, info);
+            } catch (err) {
               app.log.error(
-                { e, sessionId },
+                { err, sessionId, contactId },
                 '[ReassuranceStream] transcript insert failed'
               );
             }
 
-            // ✅ still push to buffer so AI behaves as before
             utteranceBuffer.addFinal(text);
           });
 
