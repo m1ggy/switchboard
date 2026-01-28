@@ -27,7 +27,49 @@ import { ReassuranceSchedulesRepository } from '@/db/repositories/reassurance_sc
 
 import { ReassuranceCallRecordingsRepository } from '@/db/repositories/reassurance_call_recordings';
 import { ReassuranceCallTranscriptsRepository } from '@/db/repositories/reassurance_call_transcripts';
-import pool from '@/lib/pg';
+import { spawn } from 'child_process';
+
+function runFfmpeg(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const p = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    let stderr = '';
+    p.stderr.on('data', (d) => (stderr += d.toString()));
+
+    p.on('error', reject);
+    p.on('close', (code) => {
+      if (code === 0) return resolve();
+      reject(new Error(`ffmpeg exited ${code}: ${stderr}`));
+    });
+  });
+}
+
+/**
+ * Convert Twilio Media Stream μ-law raw file -> mp3
+ * Twilio μ-law: 8000 Hz, mono
+ */
+async function mulawToMp3(inputMulawPath: string, outputMp3Path: string) {
+  await runFfmpeg([
+    '-y',
+    '-f',
+    'mulaw',
+    '-ar',
+    '8000',
+    '-ac',
+    '1',
+    '-i',
+    inputMulawPath,
+    '-codec:a',
+    'libmp3lame',
+    '-b:a',
+    '64k',
+    '-ar',
+    '44100',
+    '-ac',
+    '1',
+    outputMp3Path,
+  ]);
+}
 
 // ---- tiny helpers ----
 function tmpFile(name: string) {
@@ -665,9 +707,15 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       finalized = true;
 
       try {
-        utteranceBuffer.flushNow();
-        deepgram.finish();
+        // Flush any buffered utterances and end Deepgram
+        try {
+          utteranceBuffer.flushNow();
+        } catch {}
+        try {
+          deepgram.finish();
+        } catch {}
 
+        // Close file streams
         await new Promise<void>((resolve) =>
           inboundStream.end(() => resolve())
         );
@@ -675,107 +723,204 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           outboundStream.end(() => resolve())
         );
 
-        let inboundUrl: string | null = null;
-        let outboundUrl: string | null = null;
+        if (!sessionId || !contactId) {
+          app.log.warn(
+            { sessionId, contactId },
+            '[ReassuranceStream] finalize: missing sessionId/contactId'
+          );
+          return;
+        }
 
+        // You likely have companyId on schedule; we can derive it quickly
+        // If you already have companyId cached in closure, use that instead.
+        const schedule = scheduleId
+          ? await ReassuranceSchedulesRepository.find(Number(scheduleId))
+          : null;
+
+        const companyId = schedule?.company_id;
+        if (!companyId) {
+          app.log.warn(
+            { scheduleId, sessionId },
+            '[ReassuranceStream] finalize: missing companyId (schedule not found?)'
+          );
+        }
+
+        // Paths for converted MP3
+        const inboundMp3Path = tmpFile(`reassurance-in-${sessionId}.mp3`);
+        const outboundMp3Path = tmpFile(`reassurance-out-${sessionId}.mp3`);
+
+        // URLs
+        let inboundMulawUrl: string | null = null;
+        let outboundMulawUrl: string | null = null;
+        let inboundMp3Url: string | null = null;
+        let outboundMp3Url: string | null = null;
+
+        // Convert to MP3 (if ffmpeg exists)
         try {
-          const inBuf = fs.readFileSync(inboundPath);
-          const outBuf = fs.readFileSync(outboundPath);
+          await mulawToMp3(inboundPath, inboundMp3Path);
+          await mulawToMp3(outboundPath, outboundMp3Path);
+        } catch (e) {
+          app.log.error(
+            { e, sessionId },
+            '[ReassuranceStream] ffmpeg convert failed (mp3 will be missing)'
+          );
+        }
 
-          if (sessionId) {
-            inboundUrl = await uploadAttachmentBuffer(
-              inBuf,
-              `reassurance/audio/inbound-${sessionId}.mulaw`
+        // Upload MP3 (playable)
+        try {
+          const inMp3Buf = fs.existsSync(inboundMp3Path)
+            ? fs.readFileSync(inboundMp3Path)
+            : null;
+          const outMp3Buf = fs.existsSync(outboundMp3Path)
+            ? fs.readFileSync(outboundMp3Path)
+            : null;
+
+          if (inMp3Buf) {
+            inboundMp3Url = await uploadAttachmentBuffer(
+              inMp3Buf,
+              `reassurance/audio/inbound-${sessionId}.mp3`
             );
-            outboundUrl = await uploadAttachmentBuffer(
-              outBuf,
-              `reassurance/audio/outbound-${sessionId}.mulaw`
+          }
+          if (outMp3Buf) {
+            outboundMp3Url = await uploadAttachmentBuffer(
+              outMp3Buf,
+              `reassurance/audio/outbound-${sessionId}.mp3`
             );
           }
         } catch (e) {
           app.log.error(
             { e, sessionId },
-            '[ReassuranceStream] audio upload failed'
+            '[ReassuranceStream] mp3 upload failed'
           );
         }
 
-        // ✅ create recording + backfill transcript recording_id
-        if (sessionId && contactId && companyId) {
-          try {
-            const inBytes = fs.existsSync(inboundPath)
-              ? fs.statSync(inboundPath).size
-              : null;
-            const outBytes = fs.existsSync(outboundPath)
-              ? fs.statSync(outboundPath).size
-              : null;
+        // Optional: upload raw mulaw too (debug / fallback)
+        try {
+          const inBuf = fs.readFileSync(inboundPath);
+          const outBuf = fs.readFileSync(outboundPath);
 
-            const rec = await ReassuranceCallRecordingsRepository.create({
+          inboundMulawUrl = await uploadAttachmentBuffer(
+            inBuf,
+            `reassurance/audio/inbound-${sessionId}.mulaw`
+          );
+          outboundMulawUrl = await uploadAttachmentBuffer(
+            outBuf,
+            `reassurance/audio/outbound-${sessionId}.mulaw`
+          );
+        } catch (e) {
+          app.log.error(
+            { e, sessionId },
+            '[ReassuranceStream] mulaw upload failed'
+          );
+        }
+
+        // Prefer MP3 for playback, fallback to mulaw
+        const primaryInboundUrl = inboundMp3Url ?? inboundMulawUrl;
+        const primaryOutboundUrl = outboundMp3Url ?? outboundMulawUrl;
+
+        // Duration estimate (rough): mulaw bytes == samples (1 byte/sample at 8kHz)
+        // duration_ms ≈ bytes / 8000 * 1000
+        const inBytesMulaw = safeStatBytes(inboundPath);
+        const durationMs =
+          typeof inBytesMulaw === 'number'
+            ? Math.round((inBytesMulaw / 8000) * 1000)
+            : null;
+
+        // Create recording row (or update if you already made one earlier)
+        if (companyId) {
+          try {
+            await ReassuranceCallRecordingsRepository.create({
               session_id: sessionId,
               company_id: companyId,
               contact_id: contactId,
+
               call_sid: callSid,
               stream_sid: streamSid,
-              inbound_url: inboundUrl,
-              outbound_url: outboundUrl,
-              codec: 'mulaw',
-              sample_rate: 8000,
+
+              inbound_url: primaryInboundUrl,
+              outbound_url: primaryOutboundUrl,
+
+              codec: inboundMp3Url || outboundMp3Url ? 'mp3' : 'mulaw',
+              sample_rate: inboundMp3Url || outboundMp3Url ? 44100 : 8000,
               channels: 1,
-              inbound_bytes: inBytes,
-              outbound_bytes: outBytes,
-              meta: { source: 'twilio_media_stream' },
+
+              inbound_bytes: inboundMp3Url
+                ? safeStatBytes(inboundMp3Path)
+                : inBytesMulaw,
+              outbound_bytes: outboundMp3Url
+                ? safeStatBytes(outboundMp3Path)
+                : safeStatBytes(outboundPath),
+
+              duration_ms: durationMs,
+
+              meta: {
+                status,
+                raw_mulaw: {
+                  inbound_url: inboundMulawUrl,
+                  outbound_url: outboundMulawUrl,
+                },
+                mp3: {
+                  inbound_url: inboundMp3Url,
+                  outbound_url: outboundMp3Url,
+                },
+              },
             });
-
-            recordingId = rec.id;
-
-            await pool.query(
-              `
-              UPDATE reassurance_call_transcripts
-              SET recording_id = $2
-              WHERE session_id = $1
-                AND recording_id IS NULL
-              `,
-              [sessionId, recordingId]
-            );
-          } catch (err) {
+          } catch (e) {
             app.log.error(
-              { err, sessionId, contactId },
-              '[ReassuranceStream] failed to create recording / backfill transcript recording_id'
+              { e, sessionId, companyId, contactId },
+              '[ReassuranceStream] failed to create recording row'
             );
           }
         }
 
-        if (sessionId) {
+        // finalize session status
+        try {
           await ReassuranceCallSessionsRepository.finalizeSession(sessionId, {
             status,
             ended_at: new Date(),
           });
-
-          if (contactId && (inboundUrl || outboundUrl)) {
-            try {
-              await ReassuranceContactProfilesRepository.mergeLastState(
-                contactId,
-                {
-                  last_session_id: sessionId,
-                  last_audio: {
-                    inbound_url: inboundUrl,
-                    outbound_url: outboundUrl,
-                  },
-                }
-              );
-            } catch {}
-          }
-
-          app.log.info(
-            { sessionId, inboundUrl, outboundUrl, status, recordingId },
-            '[ReassuranceStream] finalized'
+        } catch (e) {
+          app.log.error(
+            { e, sessionId },
+            '[ReassuranceStream] finalizeSession failed'
           );
         }
+
+        // stash urls into profile last_state (optional)
+        try {
+          await ReassuranceContactProfilesRepository.mergeLastState(contactId, {
+            last_session_id: sessionId,
+            last_audio: {
+              inbound_url: primaryInboundUrl,
+              outbound_url: primaryOutboundUrl,
+            },
+          });
+        } catch {}
+
+        app.log.info(
+          {
+            sessionId,
+            status,
+            inboundUrl: primaryInboundUrl,
+            outboundUrl: primaryOutboundUrl,
+          },
+          '[ReassuranceStream] finalized + uploaded'
+        );
+
+        // cleanup temp mp3s
+        try {
+          fs.unlinkSync(inboundMp3Path);
+        } catch {}
+        try {
+          fs.unlinkSync(outboundMp3Path);
+        } catch {}
       } catch (err) {
         app.log.error(
           { err, sessionId },
           '[ReassuranceStream] finalize failed'
         );
       } finally {
+        // Always cleanup raw temp mulaw
         try {
           fs.unlinkSync(inboundPath);
         } catch {}
