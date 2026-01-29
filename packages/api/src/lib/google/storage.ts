@@ -47,7 +47,8 @@ export function getPublicUrl(fileName: string): string {
 
 export async function uploadAttachmentBuffer(
   buffer: Buffer,
-  originalName: string
+  originalName: string,
+  opts?: { contentType?: string }
 ): Promise<string> {
   const bucket = getBucket();
   const ext = path.extname(originalName);
@@ -56,8 +57,8 @@ export async function uploadAttachmentBuffer(
 
   await file.save(buffer, {
     resumable: false,
-    contentType: getMimeType(originalName),
-    predefinedAcl: 'publicRead', // Makes it publicly accessible
+    contentType: opts?.contentType ?? getMimeType(originalName),
+    predefinedAcl: 'publicRead',
   });
 
   return `https://storage.googleapis.com/${BUCKET_NAME}/${uniqueName}`;
