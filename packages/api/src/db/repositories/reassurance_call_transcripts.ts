@@ -1,4 +1,3 @@
-// src/db/repositories/reassurance_call_transcripts.ts
 import pool from '@/lib/pg';
 import { ReassuranceCallTranscript } from '@/types/db';
 
@@ -7,16 +6,22 @@ type CreateTranscriptInput = {
   session_id: string;
   recording_id?: string | null;
   contact_id: string;
+
   seq: number;
+
   speaker: 'user' | 'assistant' | 'system';
   channel: 'inbound' | 'outbound' | 'mixed';
+
   transcript: string;
+
   start_ms: number;
   end_ms: number;
+
   confidence?: number | null;
   language?: string | null;
-  words?: any | null;
-  raw?: any | null;
+
+  words?: any | null; // jsonb
+  raw?: any | null; // jsonb
 };
 
 export const ReassuranceCallTranscriptsRepository = {
@@ -48,8 +53,7 @@ export const ReassuranceCallTranscriptsRepository = {
         $8,
         $9, $10,
         $11, $12,
-        $13::jsonb,
-        $14::jsonb
+        $13, $14
       )
       RETURNING *
       `,
@@ -66,13 +70,70 @@ export const ReassuranceCallTranscriptsRepository = {
         input.end_ms,
         input.confidence ?? null,
         input.language ?? null,
-        input.words != null ? JSON.stringify(input.words) : null,
-        input.raw != null ? JSON.stringify(input.raw) : null,
+        input.words ?? null,
+        input.raw ?? null,
       ]
     );
 
     return res.rows[0];
   },
 
-  // ...rest unchanged
+  async listBySessionId(
+    sessionId: string
+  ): Promise<ReassuranceCallTranscript[]> {
+    const res = await pool.query<ReassuranceCallTranscript>(
+      `
+      SELECT *
+      FROM reassurance_call_transcripts
+      WHERE session_id = $1
+      ORDER BY start_ms ASC, seq ASC
+      `,
+      [sessionId]
+    );
+    return res.rows;
+  },
+
+  async listByRecordingId(
+    recordingId: string
+  ): Promise<ReassuranceCallTranscript[]> {
+    const res = await pool.query<ReassuranceCallTranscript>(
+      `
+      SELECT *
+      FROM reassurance_call_transcripts
+      WHERE recording_id = $1
+      ORDER BY start_ms ASC, seq ASC
+      `,
+      [recordingId]
+    );
+    return res.rows;
+  },
+
+  async getLastSeqForSession(sessionId: string): Promise<number> {
+    const res = await pool.query<{ max_seq: number | null }>(
+      `
+      SELECT MAX(seq) AS max_seq
+      FROM reassurance_call_transcripts
+      WHERE session_id = $1
+      `,
+      [sessionId]
+    );
+
+    return res.rows[0]?.max_seq ?? 0;
+  },
+
+  async deleteBySessionId(sessionId: string): Promise<number> {
+    const res = await pool.query<{ count: number }>(
+      `
+      WITH deleted AS (
+        DELETE FROM reassurance_call_transcripts
+        WHERE session_id = $1
+        RETURNING 1
+      )
+      SELECT COUNT(*)::int AS count FROM deleted
+      `,
+      [sessionId]
+    );
+
+    return res.rows[0]?.count ?? 0;
+  },
 };
