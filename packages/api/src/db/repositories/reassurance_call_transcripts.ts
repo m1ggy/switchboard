@@ -24,6 +24,12 @@ type CreateTranscriptInput = {
   raw?: any | null; // jsonb
 };
 
+// Ensures pg doesn't serialize JS arrays as Postgres arrays (which breaks jsonb)
+function toJsonbParam(value: any) {
+  if (value === undefined || value === null) return null;
+  return JSON.stringify(value);
+}
+
 export const ReassuranceCallTranscriptsRepository = {
   async create(
     input: CreateTranscriptInput
@@ -53,7 +59,7 @@ export const ReassuranceCallTranscriptsRepository = {
         $8,
         $9, $10,
         $11, $12,
-        $13, $14
+        $13::jsonb, $14::jsonb
       )
       RETURNING *
       `,
@@ -70,8 +76,8 @@ export const ReassuranceCallTranscriptsRepository = {
         input.end_ms,
         input.confidence ?? null,
         input.language ?? null,
-        input.words ?? null,
-        input.raw ?? null,
+        toJsonbParam(input.words),
+        toJsonbParam(input.raw),
       ]
     );
 
