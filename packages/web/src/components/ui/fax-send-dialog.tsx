@@ -34,6 +34,7 @@ import {
 import { PhoneInput } from '@/components/ui/phone-input';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { useMobileVh } from '@/hooks/use-is-mobile-unit';
+import { toast } from 'sonner';
 
 type FaxDialogProps = {
   open: boolean;
@@ -207,8 +208,11 @@ export default function FaxSendDialog({
           }).queryKey,
         });
       }
-
+      toast.success('Fax queued');
       onOpenChange(false);
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to send fax');
     } finally {
       setIsSending(false);
     }
