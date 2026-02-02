@@ -83,12 +83,25 @@ const formatDate = (dateString: string) => {
   });
 };
 
+// For durations (e.g. 125000ms => "2m 5s")
 const formatDurationMs = (ms?: number | null) => {
   if (!ms || ms <= 0) return 'N/A';
   const totalSeconds = Math.floor(ms / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}m ${seconds}s`;
+};
+
+// For timestamps (offsets) (e.g. 65432ms => "01:05")
+const formatTimestampMs = (ms?: number | null) => {
+  if (ms == null || ms < 0) return '—';
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(
+    2,
+    '0'
+  )}`;
 };
 
 const getRiskLevelColor = (level?: string | null) => {
@@ -119,18 +132,32 @@ const getStatusColor = (status: string) => {
   }
 };
 
+function buildRecordingCandidates(rec: Recording | null): string[] {
+  if (!rec) return [];
+  // FE preference: combined > inbound > outbound
+  const urls = [rec.combined_url, rec.inbound_url, rec.outbound_url].filter(
+    Boolean
+  ) as string[];
+
+  // Deduplicate while preserving order
+  return Array.from(new Set(urls));
+}
+
 export default function CallLogsContent() {
   const navigate = useNavigate();
   const query = useQueryParams();
   const trpc = useTRPC();
 
-  // ✅ UPDATED: expect `contact` instead of `schedule`
+  // ✅ expect `contact` instead of `schedule`
   const contactId = query.get('contact') || '';
   const displayName = query.get('name') || 'Call Logs';
 
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null
   );
+
+  // audio src fallback
+  const [audioIndex, setAudioIndex] = useState(0);
 
   // ✅ Fetch call logs for this contact
   const {
@@ -141,7 +168,7 @@ export default function CallLogsContent() {
     ...trpc.reassuranceContactProfiles.getCallLogsByContactId.queryOptions({
       contactId,
       limit: 50,
-      includeTranscript: true, // ✅ fetch transcript items too
+      includeTranscript: true,
       transcriptLimit: 500,
     }),
     enabled: !!contactId,
@@ -150,9 +177,14 @@ export default function CallLogsContent() {
   // Select first session on load
   useEffect(() => {
     if (callLogs?.length && !selectedSessionId) {
-      setSelectedSessionId(callLogs[0].session.id);
+      setSelectedSessionId((callLogs as any[])[0].session.id);
     }
   }, [callLogs, selectedSessionId]);
+
+  // Reset audio fallback index when switching sessions
+  useEffect(() => {
+    setAudioIndex(0);
+  }, [selectedSessionId]);
 
   const selectedLog: CallLog | null = useMemo(() => {
     if (!callLogs || !selectedSessionId) return null;
@@ -194,14 +226,11 @@ export default function CallLogsContent() {
   const selectedRecording = selectedLog?.recording ?? null;
   const selectedTranscripts = selectedLog?.transcript?.items ?? [];
 
-  // Choose recording URL priority: combined > inbound > outbound
-  const recordingUrl =
-    selectedRecording?.combined_url ??
-    selectedRecording?.inbound_url ??
-    selectedRecording?.outbound_url ??
-    null;
+  const recordingCandidates = buildRecordingCandidates(selectedRecording);
+  const activeRecordingUrl =
+    recordingCandidates[audioIndex] ?? recordingCandidates[0] ?? null;
 
-  // duration: prefer recording duration_ms, otherwise transcript duration
+  // duration: prefer recording duration_ms, otherwise transcript duration, otherwise session diff
   const durationMs =
     selectedRecording?.duration_ms ??
     selectedLog?.transcript?.duration_ms ??
@@ -238,7 +267,6 @@ export default function CallLogsContent() {
               {sessions.map((log) => {
                 const session = log.session;
 
-                // duration (prefer recording duration)
                 const rowDuration =
                   log.recording?.duration_ms ??
                   log.transcript?.duration_ms ??
@@ -338,31 +366,68 @@ export default function CallLogsContent() {
 
                   {/* Recording Tab */}
                   <TabsContent value="recording" className="space-y-4">
-                    {recordingUrl ? (
+                    {activeRecordingUrl ? (
                       <div className="space-y-4">
                         <div className="bg-muted p-4 rounded-lg">
                           <p className="text-sm font-semibold mb-3">
                             Call Recording
                           </p>
+
                           <audio
+                            key={activeRecordingUrl} // forces reload when we swap to a fallback URL
                             controls
                             className="w-full"
-                            src={recordingUrl}
+                            src={activeRecordingUrl}
                             crossOrigin="anonymous"
+                            onError={() => {
+                              // Auto-fallback to next candidate if current fails
+                              if (audioIndex < recordingCandidates.length - 1) {
+                                setAudioIndex((i) => i + 1);
+                              }
+                            }}
                           />
+
+                          {recordingCandidates.length > 1 && (
+                            <p className="text-xs text-muted-foreground mt-2">
+                              Source{' '}
+                              {Math.min(
+                                audioIndex + 1,
+                                recordingCandidates.length
+                              )}{' '}
+                              of {recordingCandidates.length}
+                            </p>
+                          )}
                         </div>
 
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          asChild
-                          className="gap-2 bg-transparent"
-                        >
-                          <a href={recordingUrl} download>
-                            <Download className="w-4 h-4" />
-                            Download Recording
-                          </a>
-                        </Button>
+                        <div className="flex gap-2 flex-wrap">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            asChild
+                            className="gap-2 bg-transparent"
+                          >
+                            <a href={activeRecordingUrl} download>
+                              <Download className="w-4 h-4" />
+                              Download Recording
+                            </a>
+                          </Button>
+
+                          {/* Optional: allow user to manually switch sources */}
+                          {recordingCandidates.length > 1 && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="bg-transparent"
+                              onClick={() =>
+                                setAudioIndex((i) =>
+                                  i < recordingCandidates.length - 1 ? i + 1 : 0
+                                )
+                              }
+                            >
+                              Try other source
+                            </Button>
+                          )}
+                        </div>
 
                         <div className="pt-2 border-t">
                           <p className="text-sm text-muted-foreground">
@@ -418,8 +483,8 @@ export default function CallLogsContent() {
 
                           <p className="text-xs text-muted-foreground mt-2">
                             <Clock className="w-3 h-3 inline mr-1" />
-                            {formatDurationMs(trans.start_ms)} -{' '}
-                            {formatDurationMs(trans.end_ms)}
+                            {formatTimestampMs(trans.start_ms)} -{' '}
+                            {formatTimestampMs(trans.end_ms)}
                           </p>
                         </div>
                       ))

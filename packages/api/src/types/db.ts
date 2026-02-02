@@ -313,3 +313,55 @@ export type ReassuranceContactMemorySummary = {
   summary_text: string;
   last_updated_at: Date;
 };
+
+export type ReassuranceCallRecording = {
+  id: string;
+  session_id: string;
+  company_id: string;
+  contact_id: string;
+
+  call_sid: string | null;
+  stream_sid: string | null;
+
+  inbound_url: string | null;
+  outbound_url: string | null;
+  combined_url: string | null;
+
+  codec: string;
+  sample_rate: number;
+  channels: number;
+
+  inbound_bytes: number | null;
+  outbound_bytes: number | null;
+  combined_bytes: number | null;
+  duration_ms: number | null;
+
+  meta: any | null;
+
+  created_at: string;
+};
+
+export type ReassuranceCallTranscript = {
+  id: string;
+  session_id: string;
+  recording_id: string | null;
+  contact_id: string;
+
+  seq: number;
+
+  speaker: 'user' | 'assistant' | 'system';
+  channel: 'inbound' | 'outbound' | 'mixed';
+
+  transcript: string;
+
+  start_ms: number;
+  end_ms: number;
+
+  confidence: number | null;
+  language: string | null;
+
+  words: any | null;
+  raw: any | null;
+
+  created_at: string;
+};
