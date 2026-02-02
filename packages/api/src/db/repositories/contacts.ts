@@ -115,4 +115,53 @@ export const ContactsRepository = {
     );
     return res.rows;
   },
+  async update(
+    id: string,
+    updates: {
+      number?: string;
+      company_id?: string;
+      label?: string;
+    },
+    db: PoolClient | typeof pool = pool
+  ): Promise<Contact> {
+    // Ensure the contact exists
+    const existing = await this.findById(id, db);
+    if (!existing) {
+      throw new Error('Contact not found.');
+    }
+
+    // Compute the final values (so we can validate and update safely)
+    const nextCompanyId = updates.company_id ?? existing.company_id;
+    const nextNumber = updates.number ?? existing.number;
+    const nextLabel = updates.label ?? existing.label;
+
+    // Enforce uniqueness within the company (excluding this record)
+    const dup = await db.query<Contact>(
+      `SELECT 1
+       FROM contacts
+       WHERE company_id = $1
+         AND id <> $2
+         AND (number = $3 OR label = $4)
+       LIMIT 1`,
+      [nextCompanyId, id, nextNumber, nextLabel]
+    );
+
+    if (dup.rows.length > 0) {
+      throw new Error(
+        'A contact with the same number or label already exists.'
+      );
+    }
+
+    const res = await db.query<Contact>(
+      `UPDATE contacts
+       SET company_id = $1,
+           number = $2,
+           label = $3
+       WHERE id = $4
+       RETURNING *`,
+      [nextCompanyId, nextNumber, nextLabel, id]
+    );
+
+    return res.rows[0];
+  },
 };
