@@ -153,6 +153,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       string | undefined
     >;
 
+    let assistantReplyCount = 0;
+    const MAX_ASSISTANT_REPLIES = 3;
+
     let streamSid: string | null = null;
     let callSid: string | null = null;
 
@@ -539,6 +542,48 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           // 6) speak reply (TTS segments concurrently)
           await speakScriptPayload(payload);
 
+          assistantReplyCount += 1;
+
+          if (assistantReplyCount >= MAX_ASSISTANT_REPLIES) {
+            // Generate a closing script and hang up gracefully.
+            try {
+              const closing = await scriptAgent.generateClosingScript({
+                context,
+                runningSummary,
+              });
+
+              const closingText = closing.segments
+                .map((s) => s.text)
+                .join(' ')
+                .trim();
+
+              // Save closing as assistant turn (optional but recommended)
+              await ReassuranceCallTurnsRepository.createTurn({
+                id: crypto.randomUUID(),
+                session_id: sessionId,
+                role: 'assistant',
+                content: closingText,
+                meta: {
+                  callSid,
+                  streamSid,
+                  intent: closing.intent,
+                  notesForHumanSupervisor: closing.notesForHumanSupervisor,
+                  phase: 'closing',
+                },
+              } as any);
+
+              await gracefulHangupAfterGoodbye({ goodbyeText: closingText });
+              return;
+            } catch (e) {
+              // Fallback if closing generation fails
+              await gracefulHangupAfterGoodbye({
+                goodbyeText:
+                  'Thanks for talking with me today. If you need support, please reach out to someone you trust. Goodbye.',
+              });
+              return;
+            }
+          }
+
           const assistantText = payload.segments
             .map((s) => s.text)
             .join(' ')
@@ -708,6 +753,13 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             },
           ],
           notesForHumanSupervisor: null,
+          handoffSignal: {
+            level: 'none',
+            detected: false,
+            reasons: [],
+            userQuotedTriggers: [],
+            recommendedNextStep: 'continue_script',
+          },
         };
       }
 

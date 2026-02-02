@@ -9,20 +9,13 @@ export interface ScriptSegment {
   maxDurationSeconds: number;
 }
 
-/**
- * ✅ NEW: Safety / escalation signal for your app to act on.
- * - "none"     = normal conversation
- * - "monitor"  = mild concern; keep an eye on it
- * - "handoff"  = strong distress; recommend human supervisor involvement
- * - "emergency"= imminent danger; encourage contacting local emergency services / trusted person
- */
 export type HandoffLevel = 'none' | 'monitor' | 'handoff' | 'emergency';
 
 export interface HandoffSignal {
   level: HandoffLevel;
-  detected: boolean; // convenience boolean (true if level != 'none')
-  reasons: string[]; // short bullet-ish reasons, no sensitive speculation
-  userQuotedTriggers: string[]; // brief excerpts from user utterance that triggered the flag
+  detected: boolean;
+  reasons: string[];
+  userQuotedTriggers: string[];
   recommendedNextStep:
     | 'continue_script'
     | 'offer_trusted_contact'
@@ -34,8 +27,6 @@ export interface ScriptPayload {
   intent: ScriptIntent;
   segments: ScriptSegment[];
   notesForHumanSupervisor: string | null;
-
-  // ✅ NEW: machine-readable signal
   handoffSignal: HandoffSignal;
 }
 
@@ -56,6 +47,7 @@ export interface CallContext {
 
 /**
  * ✅ Updated Strict JSON Schema for Structured Outputs
+ * - HARD CAP: max 3 segments per response
  */
 const scriptPayloadSchema = {
   name: 'ScriptPayload',
@@ -67,6 +59,7 @@ const scriptPayloadSchema = {
       segments: {
         type: 'array',
         minItems: 1,
+        maxItems: 3, // ✅ enforce 1–3 segments only
         items: {
           type: 'object',
           additionalProperties: false,
@@ -80,8 +73,6 @@ const scriptPayloadSchema = {
         },
       },
       notesForHumanSupervisor: { type: ['string', 'null'] },
-
-      // ✅ NEW
       handoffSignal: {
         type: 'object',
         additionalProperties: false,
@@ -91,14 +82,8 @@ const scriptPayloadSchema = {
             enum: ['none', 'monitor', 'handoff', 'emergency'],
           },
           detected: { type: 'boolean' },
-          reasons: {
-            type: 'array',
-            items: { type: 'string' },
-          },
-          userQuotedTriggers: {
-            type: 'array',
-            items: { type: 'string' },
-          },
+          reasons: { type: 'array', items: { type: 'string' } },
+          userQuotedTriggers: { type: 'array', items: { type: 'string' } },
           recommendedNextStep: {
             type: 'string',
             enum: [
@@ -155,7 +140,7 @@ export class ScriptGeneratorAgent {
           `Estimated current risk level: ${riskLevel}`,
           ``,
           `Task:`,
-          `1) Greet the person warmly.`,
+          `1) Greet the person warmly with a little variety (no clichés).`,
           `2) Remind them who is calling and why.`,
           `3) Briefly acknowledge any relevant past info (if provided).`,
           `4) Ask one gentle, open-ended question about how they are doing today.`,
@@ -164,8 +149,12 @@ export class ScriptGeneratorAgent {
           `- Always populate handoffSignal.`,
           `- In opening scripts, set handoffSignal.level="none" unless the provided context strongly implies imminent danger.`,
           ``,
-          `Constraints:`,
+          `Response length rules (CRITICAL):`,
+          `- Return ONLY 1–2 segments whenever possible.`,
+          `- NEVER return more than 3 segments.`,
           `- Each segment must be 1–2 sentences.`,
+          ``,
+          `Voice constraints:`,
           `- Simple language suitable for voice.`,
           `- No markup, no emojis.`,
           `- notesForHumanSupervisor can be null.`,
@@ -176,8 +165,8 @@ export class ScriptGeneratorAgent {
     return this.openai.generateJson<ScriptPayload>({
       input,
       schema: scriptPayloadSchema,
-      temperature: 0.6,
-      maxOutputTokens: 400,
+      temperature: 0.7,
+      maxOutputTokens: 380,
     });
   }
 
@@ -211,7 +200,7 @@ export class ScriptGeneratorAgent {
           `Estimated risk level for this user: ${riskLevel}`,
           ``,
           `Task:`,
-          `1) Acknowledge what the user just said.`,
+          `1) Acknowledge what the user just said (use varied phrasing; do not repeat the same opener every time).`,
           `2) Respond empathically and validate feelings.`,
           `3) Ask one appropriate follow-up question (open-ended if possible).`,
           `4) If user sounds distressed or mentions safety issues, encourage reaching out to emergency services or a trusted contact (do NOT invent phone numbers).`,
@@ -220,21 +209,25 @@ export class ScriptGeneratorAgent {
           `- Always populate handoffSignal.`,
           `- Set handoffSignal.level based on the user's utterance and summary:`,
           `  - "none": normal, no notable distress.`,
-          `  - "monitor": mild distress (e.g., very anxious, crying, overwhelmed) but no safety threat.`,
-          `  - "handoff": strong distress or credible safety concern (e.g., self-harm thoughts without immediate plan, domestic violence hints, confusion/disorientation in a risky way).`,
-          `  - "emergency": imminent danger (e.g., intent/plan for self-harm, threats of violence, active overdose, immediate medical emergency, someone in progress harming them).`,
+          `  - "monitor": mild distress but no safety threat.`,
+          `  - "handoff": strong distress or credible safety concern.`,
+          `  - "emergency": imminent danger.`,
           `- detected must be true if level != "none".`,
           `- reasons: 1–4 short phrases, factual and conservative.`,
           `- userQuotedTriggers: 0–3 short direct excerpts from lastUserUtterance.`,
-          `- recommendedNextStep:`,
+          `- recommendedNextStep mapping:`,
           `  - none -> "continue_script"`,
           `  - monitor -> "offer_trusted_contact"`,
           `  - handoff -> "handoff_to_human"`,
           `  - emergency -> "suggest_emergency_services"`,
           `- If level is "handoff" or "emergency", also include a clear note in notesForHumanSupervisor.`,
           ``,
-          `Constraints:`,
+          `Response length rules (CRITICAL):`,
+          `- Return ONLY 1–2 segments whenever possible.`,
+          `- NEVER return more than 3 segments.`,
           `- Each segment must be 1–2 sentences.`,
+          ``,
+          `Voice constraints:`,
           `- Simple language suitable for voice.`,
           `- No markup, no emojis.`,
         ].join('\n'),
@@ -244,8 +237,64 @@ export class ScriptGeneratorAgent {
     return this.openai.generateJson<ScriptPayload>({
       input,
       schema: scriptPayloadSchema,
+      temperature: 0.8, // a bit more variety
+      maxOutputTokens: 420,
+    });
+  }
+
+  async generateClosingScript(params: {
+    context: CallContext;
+    runningSummary?: string;
+  }): Promise<ScriptPayload> {
+    const { context, runningSummary } = params;
+    const { userProfile, riskLevel = 'low' } = context;
+
+    const input: SimpleMessage[] = [
+      { role: 'system', content: this.systemInstructions },
+      {
+        role: 'user',
+        content: [
+          `You are generating the CLOSING of a reassurance/wellbeing call.`,
+          ``,
+          `User profile:`,
+          `- Name (if given): ${userProfile.preferredName ?? userProfile.name ?? 'Unknown'}`,
+          `- Age range: ${userProfile.ageRange ?? 'Unknown'}`,
+          `- Relationship to caller: ${userProfile.relationshipToCaller ?? 'Unknown'}`,
+          `- Locale: ${userProfile.locale ?? 'Unknown'}`,
+          ``,
+          `Call summary so far:`,
+          `${runningSummary ?? 'No summary.'}`,
+          ``,
+          `Estimated risk level: ${riskLevel}`,
+          ``,
+          `Task:`,
+          `1) Close warmly and respectfully.`,
+          `2) Offer one small supportive line (brief).`,
+          `3) Invite them to reach out to a trusted person if they need support.`,
+          `4) End with a clear goodbye.`,
+          ``,
+          `Emergency/Distress detection:`,
+          `- Always populate handoffSignal.`,
+          `- If the summary implies imminent danger, set level accordingly; otherwise "none".`,
+          ``,
+          `Response length rules (CRITICAL):`,
+          `- Return 1 segment (preferred) or at most 2 segments.`,
+          `- NEVER more than 3 segments.`,
+          `- Each segment 1–2 sentences.`,
+          ``,
+          `Voice constraints:`,
+          `- Simple language, natural voice.`,
+          `- No markup, no emojis.`,
+          `- notesForHumanSupervisor can be null unless handoff/emergency.`,
+        ].join('\n'),
+      },
+    ];
+
+    return this.openai.generateJson<ScriptPayload>({
+      input,
+      schema: scriptPayloadSchema,
       temperature: 0.7,
-      maxOutputTokens: 450,
+      maxOutputTokens: 260,
     });
   }
 }
@@ -256,9 +305,12 @@ for voice-based reassurance / wellbeing phone calls.
 
 General style:
 - Warm, calm, reassuring.
-- No slang, no sarcasm, no dark humor.
 - Simple, clear language for all ages, including older adults.
 - Keep sentences short so they are easy to understand over the phone.
+- Add gentle variety in wording so the call does not sound repetitive.
+  Examples: vary acknowledgements ("I hear you", "That sounds heavy", "Thanks for telling me"),
+  vary greetings, and avoid using the same phrase every turn.
+- No slang, no sarcasm, no dark humor, no cheesy clichés.
 
 Important safety constraints:
 - Do NOT claim to be a doctor, therapist, or emergency service.
