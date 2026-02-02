@@ -126,6 +126,17 @@ function wordTimesToMs(
   return { start_ms, end_ms };
 }
 
+function clamp(s: string | null | undefined, maxLen: number) {
+  const t = (s ?? '').toString();
+  if (t.length <= maxLen) return t;
+  return t.slice(0, maxLen) + '…';
+}
+
+function nowMs() {
+  const [s, ns] = process.hrtime();
+  return s * 1000 + ns / 1e6;
+}
+
 // -------------------- routes --------------------
 export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
   const openai = new OpenAIClient(process.env.OPENAI_API_KEY!);
@@ -134,7 +145,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
   const elevenlabsTts = new ElevenLabsMulawTTS({
     apiKey: process.env.ELEVENLABS_API_KEY,
     voiceId: process.env.ELEVENLABS_VOICE_ID!,
-    modelId: process.env.ELEVENLABS_MODEL_ID ?? 'eleven_multilingual_v2',
+    modelId: process.env.ELEVENLABS_MODEL_ID ?? 'eleven_turbo_v2_5', // ✅ faster default
     stability: 0.4,
     similarityBoost: 0.8,
   });
@@ -153,9 +164,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       string | undefined
     >;
 
-    let assistantReplyCount = 0;
-    const MAX_ASSISTANT_REPLIES = 3;
-
     let streamSid: string | null = null;
     let callSid: string | null = null;
 
@@ -167,6 +175,10 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
     let runningSummary = '';
     let busyGenerating = false;
+
+    // ✅ cap responses per call
+    let assistantReplyCount = 0;
+    const MAX_ASSISTANT_REPLIES = 3; // set to 2 or 3
 
     // transcript state
     let transcriptSeq = 0;
@@ -210,23 +222,26 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       socket.send(JSON.stringify({ event: 'clear', streamSid }));
     }
 
-    async function speakText(text: string) {
+    // ✅ STREAMING: push ulaw chunks to Twilio as ElevenLabs yields them
+    async function speakTextStreaming(text: string) {
       clearTwilioAudio();
-      const mulawB64 = await elevenlabsTts.ttsToMulawBase64(text);
-      sendAudioToTwilio(mulawB64);
+      const chunks = await (elevenlabsTts as any).ttsToMulawChunks(text);
+
+      for await (const chunk of chunks as any) {
+        if (!chunk) continue;
+        const b64 = Buffer.from(chunk).toString('base64');
+        sendAudioToTwilio(b64);
+      }
     }
 
-    // ✅ UPDATED: generate TTS for all segments concurrently, then send in order
+    // ✅ speak all segments in order, streaming each segment
     async function speakScriptPayload(
       payload: Pick<ScriptPayload, 'segments'>
     ) {
       clearTwilioAudio();
-
-      const b64s = await Promise.all(
-        payload.segments.map((seg) => elevenlabsTts.ttsToMulawBase64(seg.text))
-      );
-
-      for (const b64 of b64s) sendAudioToTwilio(b64);
+      for (const seg of payload.segments) {
+        await speakTextStreaming(seg.text);
+      }
     }
 
     // ---- End-of-conversation detection + hangup ----
@@ -290,7 +305,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         "Okay — thanks for chatting. I'll let you go now. Goodbye.";
 
       try {
-        await speakText(goodbye);
+        await speakTextStreaming(goodbye);
       } catch (err) {
         app.log.warn(
           { err, callSid, streamSid },
@@ -316,57 +331,46 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       interimResults: true,
       smartFormat: true,
       punctuate: true,
-      endpointingMs: 30, // ✅ smaller endpointing can reduce "final" latency
+      endpointingMs: 30,
     });
 
     function buildContextBlock(args: {
       profile: any | null;
       memSummaryText: string | null;
-      similar: any[];
       recentTurns: { role: string; content: string }[];
     }) {
-      const { profile, memSummaryText, similar, recentTurns } = args;
+      const { profile, memSummaryText, recentTurns } = args;
 
-      const profileBlock = profile
-        ? `CONTACT PROFILE:\n${safeJson({
+      // ✅ Keep this compact; big prompt = slow model response
+      const profileLite = profile
+        ? {
             preferred_name: profile.preferred_name,
             locale: profile.locale,
             timezone: profile.timezone,
             goals: profile.goals,
-            medical_notes: profile.medical_notes,
             preferences: profile.preferences,
             risk_flags: profile.risk_flags,
             last_state: profile.last_state,
-            updated_at: profile.updated_at,
-          })}`
+          }
+        : null;
+
+      const profileBlock = profileLite
+        ? `CONTACT PROFILE (compact):\n${safeJson(profileLite)}`
         : `CONTACT PROFILE:\n(none)`;
 
       const summaryBlock = memSummaryText
-        ? `ROLLING MEMORY SUMMARY:\n${memSummaryText}`
+        ? `ROLLING MEMORY SUMMARY (trimmed):\n${clamp(memSummaryText, 1000)}`
         : `ROLLING MEMORY SUMMARY:\n(none)`;
-
-      const similarBlock =
-        similar?.length > 0
-          ? `RELEVANT MEMORIES (vector recall):\n${similar
-              .slice(0, 6) // ✅ fewer items = a little faster
-              .map(
-                (m) =>
-                  `- [${m.source_type ?? 'memory'}|imp=${m.importance ?? 1}] ${
-                    m.chunk_text
-                  }`
-              )
-              .join('\n')}`
-          : `RELEVANT MEMORIES (vector recall):\n(none)`;
 
       const recentTurnsBlock =
         recentTurns?.length > 0
-          ? `RECENT TURNS (this call):\n${recentTurns
+          ? `RECENT TURNS (this call, last ${recentTurns.length}):\n${recentTurns
               .slice(-10)
-              .map((t) => `${t.role}: ${t.content}`)
+              .map((t) => `${t.role}: ${clamp(t.content, 280)}`)
               .join('\n')}`
           : `RECENT TURNS (this call):\n(none)`;
 
-      return [profileBlock, summaryBlock, similarBlock, recentTurnsBlock]
+      return [profileBlock, summaryBlock, recentTurnsBlock]
         .filter(Boolean)
         .join('\n\n');
     }
@@ -413,7 +417,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       }
     }
 
-    // ✅ UPDATED: reduce debounce from 700ms -> 300ms (big latency win)
+    // ✅ keep fast debounce
     const utteranceBuffer = new FinalUtteranceBuffer(
       300,
       async (finalUtterance) => {
@@ -438,9 +442,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
         busyGenerating = true;
 
-        try {
-          // ✅ UPDATED: parallelize DB work to reduce response time
+        const tAll = nowMs();
 
+        try {
           // 1) write user turn immediately
           const userTurnPromise = ReassuranceCallTurnsRepository.createTurn({
             id: crypto.randomUUID(),
@@ -450,48 +454,21 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             meta: { callSid, streamSid },
           } as any);
 
-          // 2) embed in parallel with saving turn
-          const userEmbPromise = embedText(openai, finalUtterance);
-
-          const userEmb = await userEmbPromise;
-
-          // 3) insert memory chunk (depends on embedding)
-          const memoryInsertPromise =
-            ReassuranceContactMemoryChunksRepository.insert({
-              id: crypto.randomUUID(),
-              contact_id: contactId,
-              session_id: sessionId,
-              source_type: 'user_utterance',
-              chunk_text: finalUtterance,
-              embedding: userEmb,
-              importance: 1,
-            });
-
-          // 4) fetch summary + recent turns + vector recall concurrently
+          // 2) fetch summary + recent turns (NO embedding/vector recall on hot path)
           const memSummaryPromise =
             ReassuranceContactMemorySummaryRepository.getByContactId(contactId);
 
           const recentTurnsPromise =
             ReassuranceCallTurnsRepository.listBySessionIdWithLimit(
               sessionId,
-              40
+              15 // ✅ smaller
             );
 
-          const similarPromise =
-            ReassuranceContactMemoryChunksRepository.searchSimilar({
-              contactId,
-              queryEmbedding: userEmb,
-              limit: 6,
-              minImportance: 1,
-            });
-
           await userTurnPromise;
-          await memoryInsertPromise;
 
-          const [memSummary, recentTurnsRaw, similar] = await Promise.all([
+          const [memSummary, recentTurnsRaw] = await Promise.all([
             memSummaryPromise,
             recentTurnsPromise,
-            similarPromise,
           ]);
 
           const recentTurns = recentTurnsRaw.map((t) => ({
@@ -502,7 +479,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           const contextBlock = buildContextBlock({
             profile: contactProfile,
             memSummaryText: memSummary?.summary_text ?? null,
-            similar,
             recentTurns,
           });
 
@@ -532,20 +508,59 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             lastCheckInSummary: contextBlock,
           };
 
-          // 5) generate reply
+          // 3) generate reply (keep it short in your agent: 1 segment usually)
+          const tAi = nowMs();
           const payload = await scriptAgent.generateFollowupScript({
             context,
             lastUserUtterance: finalUtterance,
             runningSummary,
           });
+          app.log.info(
+            { ms: Math.round(nowMs() - tAi) },
+            '[ReassuranceStream] AI followup generated'
+          );
 
-          // 6) speak reply (TTS segments concurrently)
+          // 4) speak reply (STREAMING)
+          const tSpeak = nowMs();
           await speakScriptPayload(payload);
+          app.log.info(
+            { ms: Math.round(nowMs() - tSpeak) },
+            '[ReassuranceStream] TTS spoken'
+          );
 
+          const assistantText = payload.segments
+            .map((s) => s.text)
+            .join(' ')
+            .trim();
+
+          // 5) save assistant turn (don’t block speech)
+          await ReassuranceCallTurnsRepository.createTurn({
+            id: crypto.randomUUID(),
+            session_id: sessionId,
+            role: 'assistant',
+            content: assistantText,
+            meta: {
+              callSid,
+              streamSid,
+              intent: payload.intent,
+              notesForHumanSupervisor: payload.notesForHumanSupervisor,
+            },
+          } as any);
+
+          // 6) update last_state (best effort)
+          ReassuranceContactProfilesRepository.mergeLastState(contactId, {
+            last_checkin_at: new Date().toISOString(),
+            last_user_utterance: finalUtterance.slice(0, 500),
+          }).catch(() => {});
+
+          runningSummary = (
+            runningSummary +
+            `\nUser: ${finalUtterance}\nAssistant: ${assistantText}`
+          ).trim();
+
+          // ✅ cap total followups per call, then close politely
           assistantReplyCount += 1;
-
           if (assistantReplyCount >= MAX_ASSISTANT_REPLIES) {
-            // Generate a closing script and hang up gracefully.
             try {
               const closing = await scriptAgent.generateClosingScript({
                 context,
@@ -557,7 +572,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
                 .join(' ')
                 .trim();
 
-              // Save closing as assistant turn (optional but recommended)
               await ReassuranceCallTurnsRepository.createTurn({
                 id: crypto.randomUUID(),
                 session_id: sessionId,
@@ -575,7 +589,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               await gracefulHangupAfterGoodbye({ goodbyeText: closingText });
               return;
             } catch (e) {
-              // Fallback if closing generation fails
               await gracefulHangupAfterGoodbye({
                 goodbyeText:
                   'Thanks for talking with me today. If you need support, please reach out to someone you trust. Goodbye.',
@@ -584,54 +597,51 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             }
           }
 
-          const assistantText = payload.segments
-            .map((s) => s.text)
-            .join(' ')
-            .trim();
-
-          // 7) save assistant turn
-          const assistantTurnPromise =
-            ReassuranceCallTurnsRepository.createTurn({
-              id: crypto.randomUUID(),
-              session_id: sessionId,
-              role: 'assistant',
-              content: assistantText,
-              meta: {
-                callSid,
-                streamSid,
-                intent: payload.intent,
-                notesForHumanSupervisor: payload.notesForHumanSupervisor,
-              },
-            } as any);
-
-          // 8) embed + store assistant memory in background (don’t block reply timing)
-          // NOTE: still awaited before leaving handler so errors get logged, but runs parallel with turn insert.
-          const assistantEmbPromise = embedText(openai, assistantText).then(
-            (assistantEmb) =>
+          // 7) embeddings + memory insert AFTER speaking (best-effort, do not block turn latency)
+          // user embed + insert
+          embedText(openai, finalUtterance)
+            .then((userEmb) =>
               ReassuranceContactMemoryChunksRepository.insert({
                 id: crypto.randomUUID(),
-                contact_id: contactId,
-                session_id: sessionId,
+                contact_id: contactId!,
+                session_id: sessionId!,
+                source_type: 'user_utterance',
+                chunk_text: finalUtterance,
+                embedding: userEmb,
+                importance: 1,
+              })
+            )
+            .catch((err) =>
+              app.log.warn(
+                { err, sessionId, contactId },
+                '[ReassuranceStream] user embedding/memory insert failed'
+              )
+            );
+
+          // assistant embed + insert
+          embedText(openai, assistantText)
+            .then((assistantEmb) =>
+              ReassuranceContactMemoryChunksRepository.insert({
+                id: crypto.randomUUID(),
+                contact_id: contactId!,
+                session_id: sessionId!,
                 source_type: 'other',
                 chunk_text: assistantText,
                 embedding: assistantEmb,
                 importance: 1,
               })
+            )
+            .catch((err) =>
+              app.log.warn(
+                { err, sessionId, contactId },
+                '[ReassuranceStream] assistant embedding/memory insert failed'
+              )
+            );
+
+          app.log.info(
+            { ms: Math.round(nowMs() - tAll) },
+            '[ReassuranceStream] turn total'
           );
-
-          await assistantTurnPromise;
-          await assistantEmbPromise;
-
-          // update last_state (best effort, do not block)
-          ReassuranceContactProfilesRepository.mergeLastState(contactId, {
-            last_checkin_at: new Date().toISOString(),
-            last_user_utterance: finalUtterance.slice(0, 500),
-          }).catch(() => {});
-
-          runningSummary = (
-            runningSummary +
-            `\nUser: ${finalUtterance}\nAssistant: ${assistantText}`
-          ).trim();
         } catch (err) {
           app.log.error(
             { err, sessionId, contactId },

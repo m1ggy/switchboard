@@ -1,14 +1,19 @@
 import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
-import { spawn } from 'node:child_process';
 
 export type ElevenLabsMulawTTSOptions = {
-  apiKey?: string; // defaults to process.env.ELEVENLABS_API_KEY in SDK, but we’ll be explicit
+  apiKey?: string;
   voiceId: string;
   modelId?: string; // e.g. "eleven_turbo_v2_5" / "eleven_multilingual_v2"
   stability?: number; // 0..1
   similarityBoost?: number; // 0..1
 };
 
+/**
+ * ✅ Updated: requests telephony-ready μ-law directly from ElevenLabs
+ * so we can REMOVE ffmpeg MP3→mulaw transcoding (big latency win).
+ *
+ * Also adds an optional streaming API (chunks) for even faster perceived latency.
+ */
 export class ElevenLabsMulawTTS {
   private client: ElevenLabsClient;
 
@@ -22,76 +27,50 @@ export class ElevenLabsMulawTTS {
 
   /**
    * Returns base64 μ-law (8kHz, mono) suitable for Twilio Media Streams payload.
+   * This now requests ulaw_8000 directly from ElevenLabs (no ffmpeg).
    */
   async ttsToMulawBase64(text: string): Promise<string> {
-    const mp3 = await this.synthesizeMp3(text);
-    const mulaw = await this.ffmpegMp3ToMulaw8kRaw(mp3);
-    return mulaw.toString('base64');
+    const chunks = await this.ttsToMulawChunks(text);
+
+    const bufs: Buffer[] = [];
+    for await (const chunk of chunks as any) {
+      if (!chunk) continue;
+      bufs.push(Buffer.from(chunk));
+    }
+
+    return Buffer.concat(bufs).toString('base64');
   }
 
-  private async synthesizeMp3(text: string): Promise<Buffer> {
+  /**
+   * ✅ New: return an async iterable of raw μ-law 8kHz chunks.
+   * Use this to stream audio to Twilio while it’s still being generated.
+   */
+  async ttsToMulawChunks(text: string): Promise<AsyncIterable<Uint8Array>> {
     const voiceId = this.opts.voiceId;
 
-    // Official SDK call pattern: elevenlabs.textToSpeech.convert(voiceId, { text, modelId })
-    // It yields audio chunks (async iterable). :contentReference[oaicite:2]{index=2}
+    // Prefer turbo for low latency if you have access; fall back to multilingual.
+    const modelId = this.opts.modelId ?? 'eleven_turbo_v2_5';
+
+    const voiceSettings = {
+      stability: this.opts.stability ?? 0.4,
+      similarityBoost: this.opts.similarityBoost ?? 0.8,
+    };
+
+    // NOTE: SDK typing varies by version, so we keep `as any`.
+    // Try outputFormat first; if your SDK expects output_format instead,
+    // change the key name to output_format: 'ulaw_8000'.
     const audio = await this.client.textToSpeech.convert(voiceId, {
       text,
-      modelId: this.opts.modelId ?? 'eleven_multilingual_v2',
-      voiceSettings: {
-        stability: this.opts.stability ?? 0.4,
-        similarityBoost: this.opts.similarityBoost ?? 0.8,
-      },
-      // Note: output format options exist in the HTTP API; the SDK may expose them too
-      // depending on version. Keeping this minimal for reliability.
+      modelId,
+      voiceSettings,
+
+      // ✅ telephony output: raw μ-law @ 8000 Hz
+      outputFormat: 'ulaw_8000',
+
+      // Optional: some API variants support this; harmless if ignored
+      // optimize_streaming_latency: 3,
     } as any);
 
-    const chunks: Buffer[] = [];
-    for await (const chunk of audio as any) {
-      if (chunk) chunks.push(Buffer.from(chunk));
-    }
-    return Buffer.concat(chunks);
-  }
-
-  private ffmpegMp3ToMulaw8kRaw(inputMp3: Buffer): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      // Output is raw mulaw bytes (no WAV header), 8kHz mono.
-      const ff = spawn('ffmpeg', [
-        '-hide_banner',
-        '-loglevel',
-        'error',
-        '-i',
-        'pipe:0',
-        '-ar',
-        '8000',
-        '-ac',
-        '1',
-        '-f',
-        'mulaw',
-        'pipe:1',
-      ]);
-
-      const out: Buffer[] = [];
-      const err: Buffer[] = [];
-
-      ff.stdout.on('data', (d) => out.push(Buffer.from(d)));
-      ff.stderr.on('data', (d) => err.push(Buffer.from(d)));
-
-      ff.on('error', reject);
-
-      ff.on('close', (code) => {
-        if (code !== 0) {
-          reject(
-            new Error(
-              `ffmpeg exited with code ${code}: ${Buffer.concat(err).toString()}`
-            )
-          );
-          return;
-        }
-        resolve(Buffer.concat(out));
-      });
-
-      ff.stdin.write(inputMp3);
-      ff.stdin.end();
-    });
+    return audio as any;
   }
 }

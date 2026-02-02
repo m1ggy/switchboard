@@ -9,11 +9,15 @@ export interface GenerateTextOptions {
   input: string | SimpleMessage[];
   instructions?: string;
 
-  // IMPORTANT: some models reject temperature if present; only send when supported
   temperature?: number;
-
   maxOutputTokens?: number;
   model?: string;
+
+  // ✅ NEW: reduce "thinking" latency when supported
+  reasoningEffort?: 'low' | 'medium' | 'high';
+
+  // ✅ NEW: fail fast instead of hanging
+  timeoutMs?: number;
 }
 
 type JsonSchemaDef = {
@@ -54,25 +58,29 @@ export class OpenAIClient {
     return true;
   }
 
-  /**
-   * Extract concatenated output_text from the response.output array
-   * (not just response.output_text convenience field). :contentReference[oaicite:2]{index=2}
-   */
+  // ✅ Some models accept reasoning.effort; safe-gate it to avoid API errors
+  private supportsReasoningEffort(model: string): boolean {
+    // Conservative: only enable for o*-style reasoning models and future gpt-5 families if needed.
+    // For gpt-4o-mini this is typically ignored/unsupported, so keep false.
+    if (model.startsWith('o1')) return true;
+    if (model.startsWith('o3')) return true;
+    if (model.startsWith('o4')) return true;
+    if (model.startsWith('gpt-5')) return true;
+    return false;
+  }
+
   private extractOutputTextFromItems(response: any): string {
     const out: string[] = [];
     for (const item of response?.output ?? []) {
       for (const c of item?.content ?? []) {
-        if (c?.type === 'output_text' && typeof c.text === 'string')
+        if (c?.type === 'output_text' && typeof c.text === 'string') {
           out.push(c.text);
+        }
       }
     }
     return out.join('').trim();
   }
 
-  /**
-   * Extract structured JSON from the response.output array if present.
-   * Some responses may have output_json (already parsed) instead of output_text.
-   */
   private extractOutputJsonFromItems(response: any): unknown | undefined {
     for (const item of response?.output ?? []) {
       for (const c of item?.content ?? []) {
@@ -82,14 +90,33 @@ export class OpenAIClient {
     return undefined;
   }
 
+  private async createWithTimeout<T>(
+    fn: (signal?: AbortSignal) => Promise<T>,
+    timeoutMs?: number
+  ): Promise<T> {
+    if (!timeoutMs || timeoutMs <= 0) return fn(undefined);
+
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), timeoutMs);
+
+    try {
+      return await fn(ac.signal);
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
   async generateText(options: GenerateTextOptions): Promise<string> {
     const {
       input,
       instructions,
       temperature,
-      maxOutputTokens = 512,
+      maxOutputTokens = 256, // ✅ lower default
       model,
+      reasoningEffort,
+      timeoutMs,
     } = options;
+
     const chosenModel = model ?? this.defaultModel;
 
     const req: OpenAI.Responses.ResponseCreateParamsNonStreaming = {
@@ -103,13 +130,20 @@ export class OpenAIClient {
       (req as any).temperature = temperature;
     }
 
-    const response = await this.client.responses.create(req);
+    if (reasoningEffort && this.supportsReasoningEffort(chosenModel)) {
+      (req as any).reasoning = { effort: reasoningEffort };
+    }
 
-    // Prefer SDK convenience if present, but fall back to walking response.output :contentReference[oaicite:3]{index=3}
+    const response = await this.createWithTimeout(
+      (signal) => this.client.responses.create({ ...req, signal } as any),
+      timeoutMs
+    );
+
     const t0 =
       typeof (response as any).output_text === 'string'
         ? (response as any).output_text
         : '';
+
     return t0?.trim?.() || this.extractOutputTextFromItems(response);
   }
 
@@ -118,10 +152,13 @@ export class OpenAIClient {
       input,
       instructions,
       temperature,
-      maxOutputTokens = 512,
+      maxOutputTokens = 280, // ✅ lower default for voice JSON
       model,
       schema,
+      reasoningEffort,
+      timeoutMs,
     } = options;
+
     const chosenModel = model ?? this.defaultModel;
 
     const req: OpenAI.Responses.ResponseCreateParamsNonStreaming = {
@@ -130,7 +167,6 @@ export class OpenAIClient {
       instructions,
       max_output_tokens: maxOutputTokens,
       text: {
-        // Structured Outputs via Responses API uses text.format :contentReference[oaicite:4]{index=4}
         format: {
           type: 'json_schema',
           strict: true,
@@ -144,13 +180,18 @@ export class OpenAIClient {
       (req as any).temperature = temperature;
     }
 
-    const response = await this.client.responses.create(req);
+    if (reasoningEffort && this.supportsReasoningEffort(chosenModel)) {
+      (req as any).reasoning = { effort: reasoningEffort };
+    }
 
-    // 1) Best case: output_json exists (already parsed)
+    const response = await this.createWithTimeout(
+      (signal) => this.client.responses.create({ ...req, signal } as any),
+      timeoutMs
+    );
+
     const j = this.extractOutputJsonFromItems(response);
     if (j !== undefined) return j as T;
 
-    // 2) Next: output_text exists somewhere in output items (may be empty in response.output_text)
     const raw =
       (typeof (response as any).output_text === 'string'
         ? (response as any).output_text
@@ -158,7 +199,6 @@ export class OpenAIClient {
       ).trim() || this.extractOutputTextFromItems(response);
 
     if (!raw) {
-      // Don’t lie: genuinely nothing usable came back
       throw new Error(
         `OpenAI response contained no output_text or output_json items. response_id=${(response as any).id ?? 'unknown'}`
       );
