@@ -43,6 +43,61 @@ function runFfmpeg(args: string[]): Promise<void> {
   });
 }
 
+async function generateRollingMemorySummary(args: {
+  openai: OpenAIClient;
+  priorSummary: string | null;
+  callTranscriptSummary: string;
+  callMode: 'reassurance' | 'medication_reminder';
+}): Promise<string> {
+  const { openai, priorSummary, callTranscriptSummary, callMode } = args;
+
+  // Keep it minimal: for medication reminders we don’t want long memory.
+  const styleHint =
+    callMode === 'medication_reminder'
+      ? `This was a quick medication reminder call. Keep the summary extremely short.`
+      : `This was a reassurance call. Keep the summary short and practical.`;
+
+  const input = [
+    {
+      role: 'system',
+      content:
+        'You write a concise rolling memory summary about a person for future phone calls. ' +
+        'Output plain text only. No bullet points. No headings.',
+    },
+    {
+      role: 'user',
+      content: [
+        styleHint,
+        '',
+        `Prior rolling summary (may be empty):`,
+        priorSummary ?? '(none)',
+        '',
+        `New call notes:`,
+        callTranscriptSummary || '(none)',
+        '',
+        `Write an updated rolling summary (2–5 sentences max).`,
+      ].join('\n'),
+    },
+  ];
+
+  const resp = await (openai as any).client.responses.create({
+    model: 'gpt-4.1-mini',
+    input,
+    temperature: 0.3,
+    max_output_tokens: 220,
+  });
+
+  // Adjust if your OpenAIClient wraps differently. This is the typical responses API shape.
+  const text =
+    resp.output_text ??
+    resp.output
+      ?.map((o: any) => o?.content?.map((c: any) => c?.text).join(''))
+      .join('') ??
+    '';
+
+  return (text || '').trim().slice(0, 2000);
+}
+
 /**
  * Convert Twilio Media Stream μ-law raw file -> mp3
  * Twilio μ-law: 8000 Hz, mono
@@ -488,12 +543,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         if (busyGenerating) return;
         if (finalUtterance.trim().length < 2) return;
 
-        if (callMode === 'medication_reminder' && assistantReplyCount >= 1) {
-          await gracefulHangupAfterGoodbye({
-            goodbyeText: 'Okay, thank you. Take care. Goodbye.',
-          });
-          return;
-        }
         if (!openingDelivered) {
           return;
         }
@@ -613,6 +662,13 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               notesForHumanSupervisor: payload.notesForHumanSupervisor,
             },
           } as any);
+
+          if (callMode === 'medication_reminder') {
+            await gracefulHangupAfterGoodbye({
+              goodbyeText: 'Okay, thank you. Take care. Goodbye.',
+            });
+            return;
+          }
 
           ReassuranceContactProfilesRepository.mergeLastState(contactId, {
             last_checkin_at: new Date().toISOString(),
@@ -860,10 +916,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           },
         } as any);
       }
-      openingDelivered = true;
       // ✅ Speak + insert assistant transcript rows (new behavior)
       await speakScriptPayload(openingPayload);
-
+      openingDelivered = true;
       runningSummary = `Opening delivered.`;
     }
 
@@ -1032,6 +1087,41 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             },
           });
         } catch {}
+
+        // ---- rolling memory summary upsert ----
+        try {
+          // Get prior summary
+          const prior =
+            await ReassuranceContactMemorySummaryRepository.getByContactId(
+              contactId
+            );
+
+          // Keep the "call notes" compact. runningSummary is fine as a starter.
+          // You can also pull recent turns if you want, but you asked to keep it simple.
+          const callNotes = clamp(runningSummary || '', 2500);
+
+          // If there was basically no conversation, don’t overwrite the summary.
+          if (callNotes.trim().length >= 10) {
+            const updatedSummary = await generateRollingMemorySummary({
+              openai,
+              priorSummary: prior?.summary_text ?? null,
+              callTranscriptSummary: callNotes,
+              callMode,
+            });
+
+            if (updatedSummary.trim().length) {
+              await ReassuranceContactMemorySummaryRepository.upsertSummary({
+                contact_id: contactId,
+                summary_text: updatedSummary,
+              });
+            }
+          }
+        } catch (e) {
+          app.log.warn(
+            { e, sessionId, contactId },
+            '[ReassuranceStream] rolling summary upsert failed'
+          );
+        }
 
         app.log.info(
           {
