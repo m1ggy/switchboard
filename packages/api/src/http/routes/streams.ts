@@ -1,11 +1,11 @@
-// src/routes/twilio/reassurance_stream.ts
-import { spawn } from 'child_process';
 import crypto from 'crypto';
-import type { FastifyInstance } from 'fastify';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import twilio from 'twilio';
+// src/routes/twilio/reassurance_stream.ts
+import { spawn } from 'child_process';
+import type { FastifyInstance } from 'fastify';
 
 import { OpenAIClient } from '@/lib/ai/openai_client';
 import {
@@ -102,6 +102,10 @@ function safeJson(obj: any) {
   }
 }
 
+function hasMedicationReminderGoal(goals: unknown): boolean {
+  return (goals ?? '').toString().toLowerCase().includes('medication reminder');
+}
+
 function wordTimesToMs(
   words?: any[] | null
 ): { start_ms: number; end_ms: number } | null {
@@ -175,10 +179,11 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
     let runningSummary = '';
     let busyGenerating = false;
+    let callMode: 'reassurance' | 'medication_reminder' = 'reassurance';
 
     // ✅ cap responses per call
     let assistantReplyCount = 0;
-    const MAX_ASSISTANT_REPLIES = 3;
+    let MAX_ASSISTANT_REPLIES = 3;
 
     // transcript state
     let transcriptSeq = 0;
@@ -727,6 +732,13 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
       contactProfile =
         await ReassuranceContactProfilesRepository.getByContactId(contact.id);
+
+      callMode = hasMedicationReminderGoal(contactProfile?.goals)
+        ? 'medication_reminder'
+        : 'reassurance';
+
+      // medication reminder calls are one-turn
+      MAX_ASSISTANT_REPLIES = callMode === 'medication_reminder' ? 1 : 3;
 
       if (!contactProfile) {
         contactProfile = await ReassuranceContactProfilesRepository.upsert({

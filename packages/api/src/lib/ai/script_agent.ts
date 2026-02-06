@@ -1,6 +1,12 @@
 import { OpenAIClient, SimpleMessage } from './openai_client';
 
-export type ScriptIntent = 'opening' | 'followup' | 'closing';
+export type ScriptIntent =
+  | 'opening'
+  | 'followup'
+  | 'closing'
+  | 'medication_reminder';
+
+export type CallMode = 'reassurance' | 'medication_reminder';
 
 export interface ScriptSegment {
   id: string;
@@ -43,11 +49,13 @@ export interface CallContext {
   userProfile: UserProfile;
   lastCheckInSummary?: string;
   riskLevel?: 'low' | 'medium' | 'high';
+
+  // ✅ single switch
+  callMode: CallMode;
 }
 
 /**
- * ✅ Updated Strict JSON Schema for Structured Outputs
- * - HARD CAP: max 3 segments per response
+ * Strict JSON schema (unchanged except intent enum)
  */
 const scriptPayloadSchema = {
   name: 'ScriptPayload',
@@ -55,11 +63,14 @@ const scriptPayloadSchema = {
     type: 'object',
     additionalProperties: false,
     properties: {
-      intent: { type: 'string', enum: ['opening', 'followup', 'closing'] },
+      intent: {
+        type: 'string',
+        enum: ['opening', 'followup', 'closing', 'medication_reminder'],
+      },
       segments: {
         type: 'array',
         minItems: 1,
-        maxItems: 3, // ✅ enforce 1–3 segments only
+        maxItems: 3,
         items: {
           type: 'object',
           additionalProperties: false,
@@ -118,46 +129,39 @@ export class ScriptGeneratorAgent {
     private systemInstructions: string = defaultSystemInstructions
   ) {}
 
+  // ---------------- OPENING ----------------
   async generateOpeningScript(context: CallContext): Promise<ScriptPayload> {
-    const { userProfile, lastCheckInSummary, riskLevel = 'low' } = context;
+    const { userProfile, riskLevel = 'low', callMode } = context;
 
     const input: SimpleMessage[] = [
       { role: 'system', content: this.systemInstructions },
       {
         role: 'user',
         content: [
-          `You are generating the OPENING of a reassurance/wellbeing call.`,
+          `You are generating the OPENING of a voice call.`,
           ``,
-          `User profile:`,
-          `- Name (if given): ${userProfile.preferredName ?? userProfile.name ?? 'Unknown'}`,
-          `- Age range: ${userProfile.ageRange ?? 'Unknown'}`,
-          `- Relationship to caller: ${userProfile.relationshipToCaller ?? 'Unknown'}`,
-          `- Locale: ${userProfile.locale ?? 'Unknown'}`,
+          `Call mode: ${callMode}`,
           ``,
-          `Last check-in summary (can be empty):`,
-          `${lastCheckInSummary ?? 'No previous history available.'}`,
+          `Rules:`,
+          `- If callMode="medication_reminder":`,
+          `  - intent MUST be "medication_reminder".`,
+          `  - Greet briefly.`,
+          `  - Remind the person to take their medication.`,
+          `  - Ask if they have taken it or will take it now.`,
+          `  - Do NOT give dosing instructions.`,
           ``,
-          `Estimated current risk level: ${riskLevel}`,
+          `User name: ${userProfile.preferredName ?? userProfile.name ?? 'there'}`,
+          `Locale: ${userProfile.locale ?? 'Unknown'}`,
+          `Risk level: ${riskLevel}`,
           ``,
-          `Task:`,
-          `1) Greet the person warmly with a little variety (no clichés).`,
-          `2) Remind them who is calling and why.`,
-          `3) Briefly acknowledge any relevant past info (if provided).`,
-          `4) Ask one gentle, open-ended question about how they are doing today.`,
-          ``,
-          `Emergency/Distress detection:`,
+          `Emergency rules:`,
           `- Always populate handoffSignal.`,
-          `- In opening scripts, set handoffSignal.level="none" unless the provided context strongly implies imminent danger.`,
+          `- Default to level="none" unless there is imminent danger.`,
           ``,
-          `Response length rules (CRITICAL):`,
-          `- Return ONLY 1–2 segments whenever possible.`,
-          `- NEVER return more than 3 segments.`,
-          `- Each segment must be 1–2 sentences.`,
-          ``,
-          `Voice constraints:`,
-          `- Simple language suitable for voice.`,
-          `- No markup, no emojis.`,
-          `- notesForHumanSupervisor can be null.`,
+          `Response rules:`,
+          `- 1–2 short segments.`,
+          `- Simple spoken language.`,
+          `- No emojis.`,
         ].join('\n'),
       },
     ];
@@ -165,71 +169,47 @@ export class ScriptGeneratorAgent {
     return this.openai.generateJson<ScriptPayload>({
       input,
       schema: scriptPayloadSchema,
-      temperature: 0.7,
-      maxOutputTokens: 380,
+      temperature: 0.6,
+      maxOutputTokens: 220,
     });
   }
 
+  // ---------------- FOLLOW-UP ----------------
   async generateFollowupScript(params: {
     context: CallContext;
     lastUserUtterance: string;
-    runningSummary?: string;
   }): Promise<ScriptPayload> {
-    const { context, lastUserUtterance, runningSummary } = params;
-    const { userProfile, riskLevel = 'low' } = context;
+    const { context, lastUserUtterance } = params;
+    const { userProfile, callMode, riskLevel = 'low' } = context;
 
     const input: SimpleMessage[] = [
       { role: 'system', content: this.systemInstructions },
       {
         role: 'user',
         content: [
-          `You are generating a FOLLOW-UP turn in an ongoing reassurance/wellbeing call.`,
+          `You are generating the NEXT assistant turn in a voice call.`,
           ``,
-          `User profile:`,
-          `- Name (if given): ${userProfile.preferredName ?? userProfile.name ?? 'Unknown'}`,
-          `- Age range: ${userProfile.ageRange ?? 'Unknown'}`,
-          `- Relationship to caller: ${userProfile.relationshipToCaller ?? 'Unknown'}`,
-          `- Locale: ${userProfile.locale ?? 'Unknown'}`,
+          `Call mode: ${callMode}`,
           ``,
-          `Current call running summary (may be short or empty):`,
-          `${runningSummary ?? 'No summary yet.'}`,
+          `Rules:`,
+          `- intent MUST be "medication_reminder".`,
+          `- Briefly acknowledge what the user said.`,
+          `- If they have not taken their medication, remind them again.`,
+          `- Ask ONE simple confirmation question.`,
+          `- Do NOT give medical advice.`,
           ``,
-          `Most recent user utterance (transcribed):`,
-          `${lastUserUtterance}`,
+          `User said:`,
+          lastUserUtterance,
           ``,
-          `Estimated risk level for this user: ${riskLevel}`,
+          `Risk level: ${riskLevel}`,
           ``,
-          `Task:`,
-          `1) Acknowledge what the user just said (use varied phrasing; do not repeat the same opener every time).`,
-          `2) Respond empathically and validate feelings.`,
-          `3) Ask one appropriate follow-up question (open-ended if possible).`,
-          `4) If user sounds distressed or mentions safety issues, encourage reaching out to emergency services or a trusted contact (do NOT invent phone numbers).`,
+          `Emergency rules:`,
+          `- Always return handoffSignal.`,
+          `- Be conservative.`,
           ``,
-          `Emergency/Distress detection (CRITICAL):`,
-          `- Always populate handoffSignal.`,
-          `- Set handoffSignal.level based on the user's utterance and summary:`,
-          `  - "none": normal, no notable distress.`,
-          `  - "monitor": mild distress but no safety threat.`,
-          `  - "handoff": strong distress or credible safety concern.`,
-          `  - "emergency": imminent danger.`,
-          `- detected must be true if level != "none".`,
-          `- reasons: 1–4 short phrases, factual and conservative.`,
-          `- userQuotedTriggers: 0–3 short direct excerpts from lastUserUtterance.`,
-          `- recommendedNextStep mapping:`,
-          `  - none -> "continue_script"`,
-          `  - monitor -> "offer_trusted_contact"`,
-          `  - handoff -> "handoff_to_human"`,
-          `  - emergency -> "suggest_emergency_services"`,
-          `- If level is "handoff" or "emergency", also include a clear note in notesForHumanSupervisor.`,
-          ``,
-          `Response length rules (CRITICAL):`,
-          `- Return ONLY 1–2 segments whenever possible.`,
-          `- NEVER return more than 3 segments.`,
-          `- Each segment must be 1–2 sentences.`,
-          ``,
-          `Voice constraints:`,
-          `- Simple language suitable for voice.`,
-          `- No markup, no emojis.`,
+          `Response rules:`,
+          `- 1 short segment preferred.`,
+          `- Never more than 2 segments.`,
         ].join('\n'),
       },
     ];
@@ -237,55 +217,45 @@ export class ScriptGeneratorAgent {
     return this.openai.generateJson<ScriptPayload>({
       input,
       schema: scriptPayloadSchema,
-      temperature: 0.8, // a bit more variety
-      maxOutputTokens: 420,
+      temperature: 0.6,
+      maxOutputTokens: 200,
     });
   }
 
+  // ---------------- CLOSING ----------------
   async generateClosingScript(params: {
     context: CallContext;
     runningSummary?: string;
   }): Promise<ScriptPayload> {
     const { context, runningSummary } = params;
-    const { userProfile, riskLevel = 'low' } = context;
+    const { userProfile, callMode, riskLevel = 'low' } = context;
 
     const input: SimpleMessage[] = [
       { role: 'system', content: this.systemInstructions },
       {
         role: 'user',
         content: [
-          `You are generating the CLOSING of a reassurance/wellbeing call.`,
+          `You are generating the CLOSING of a voice call.`,
           ``,
-          `User profile:`,
-          `- Name (if given): ${userProfile.preferredName ?? userProfile.name ?? 'Unknown'}`,
-          `- Age range: ${userProfile.ageRange ?? 'Unknown'}`,
-          `- Relationship to caller: ${userProfile.relationshipToCaller ?? 'Unknown'}`,
-          `- Locale: ${userProfile.locale ?? 'Unknown'}`,
+          `Call mode: ${callMode}`,
           ``,
-          `Call summary so far:`,
+          `Rules:`,
+          `- intent MUST be "medication_reminder" if callMode="medication_reminder".`,
+          `- Keep it brief and polite.`,
+          ``,
+          `User name: ${userProfile.preferredName ?? 'there'}`,
+          `Risk level: ${riskLevel}`,
+          ``,
+          `Call summary so far (may be empty):`,
           `${runningSummary ?? 'No summary.'}`,
           ``,
-          `Estimated risk level: ${riskLevel}`,
-          ``,
-          `Task:`,
-          `1) Close warmly and respectfully.`,
-          `2) Offer one small supportive line (brief).`,
-          `3) Invite them to reach out to a trusted person if they need support.`,
-          `4) End with a clear goodbye.`,
-          ``,
-          `Emergency/Distress detection:`,
+          `Emergency rules:`,
           `- Always populate handoffSignal.`,
-          `- If the summary implies imminent danger, set level accordingly; otherwise "none".`,
+          `- Default to level="none" unless imminent danger is implied.`,
           ``,
-          `Response length rules (CRITICAL):`,
-          `- Return 1 segment (preferred) or at most 2 segments.`,
-          `- NEVER more than 3 segments.`,
-          `- Each segment 1–2 sentences.`,
-          ``,
-          `Voice constraints:`,
-          `- Simple language, natural voice.`,
-          `- No markup, no emojis.`,
-          `- notesForHumanSupervisor can be null unless handoff/emergency.`,
+          `Response rules:`,
+          `- 1 short segment.`,
+          `- Simple, calm voice.`,
         ].join('\n'),
       },
     ];
@@ -293,35 +263,27 @@ export class ScriptGeneratorAgent {
     return this.openai.generateJson<ScriptPayload>({
       input,
       schema: scriptPayloadSchema,
-      temperature: 0.7,
-      maxOutputTokens: 260,
+      temperature: 0.5,
+      maxOutputTokens: 120,
     });
   }
 }
 
 const defaultSystemInstructions = `
-You are an AI assistant that writes short, natural-sounding scripts
-for voice-based reassurance / wellbeing phone calls.
+You are an AI assistant that makes short, calm, voice-based phone calls.
 
-General style:
-- Warm, calm, reassuring.
-- Simple, clear language for all ages, including older adults.
-- Keep sentences short so they are easy to understand over the phone.
-- Add gentle variety in wording so the call does not sound repetitive.
-  Examples: vary acknowledgements ("I hear you", "That sounds heavy", "Thanks for telling me"),
-  vary greetings, and avoid using the same phrase every turn.
-- No slang, no sarcasm, no dark humor, no cheesy clichés.
+Style:
+- Warm, polite, simple.
+- Short sentences suitable for phone audio.
+- No emojis, no markup.
 
-Important safety constraints:
-- Do NOT claim to be a doctor, therapist, or emergency service.
-- Do NOT give medical or legal instructions.
-- If the user appears to be in danger, encourage them to contact local
-  emergency services or a trusted person, but do NOT invent specific phone numbers.
-- Avoid making definitive diagnoses or promises.
+Medication reminder rules:
+- Only remind the person to take their medication.
+- Do NOT give dosing instructions.
+- Do NOT give medical advice.
+- Ask for confirmation in simple terms.
 
-Emergency/Distress signaling:
-- You MUST always return a handoffSignal object in the JSON.
-- Be conservative: do not mark emergency unless there is imminent danger.
-- If emergency, the script should explicitly encourage contacting local emergency services
-  or someone nearby immediately.
+Safety:
+- Always return a handoffSignal.
+- Encourage emergency services only if there is imminent danger.
 `.trim();
