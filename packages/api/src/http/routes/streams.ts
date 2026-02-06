@@ -189,6 +189,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
     let transcriptSeq = 0;
     let recordingId: string | null = null;
     const pendingFinals: Array<{ text: string; info: any }> = [];
+    let openingDelivered = false;
 
     // ✅ Track outbound audio position for assistant transcript timings
     let outboundByteCursor = 0;
@@ -488,6 +489,16 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         if (!sessionId || !contactId) return;
         if (busyGenerating) return;
         if (finalUtterance.trim().length < 2) return;
+
+        if (callMode === 'medication_reminder' && assistantReplyCount >= 1) {
+          await gracefulHangupAfterGoodbye({
+            goodbyeText: 'Okay, thank you. Take care. Goodbye.',
+          });
+          return;
+        }
+        if (!openingDelivered) {
+          return;
+        }
 
         if (shouldEndConversation(finalUtterance)) {
           try {
@@ -851,7 +862,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           },
         } as any);
       }
-
+      openingDelivered = true;
       // ✅ Speak + insert assistant transcript rows (new behavior)
       await speakScriptPayload(openingPayload);
 
