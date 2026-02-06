@@ -133,6 +133,8 @@ export class ScriptGeneratorAgent {
   async generateOpeningScript(context: CallContext): Promise<ScriptPayload> {
     const { userProfile, riskLevel = 'low', callMode } = context;
 
+    const calleeName = userProfile.preferredName ?? userProfile.name ?? 'there';
+
     const input: SimpleMessage[] = [
       { role: 'system', content: this.systemInstructions },
       {
@@ -142,15 +144,19 @@ export class ScriptGeneratorAgent {
           ``,
           `Call mode: ${callMode}`,
           ``,
-          `Rules:`,
-          `- If callMode="medication_reminder":`,
-          `  - intent MUST be "medication_reminder".`,
-          `  - Greet briefly.`,
-          `  - Remind the person to take their medication.`,
-          `  - Ask if they have taken it or will take it now.`,
-          `  - Do NOT give dosing instructions.`,
+          `Hard requirements (must follow):`,
+          `- The FIRST sentence must be a warm greeting that includes the callee's name: "${calleeName}".`,
+          `- In the FIRST segment, explicitly mention the purpose of the call.`,
+          `- Keep it natural for a phone call.`,
           ``,
-          `User name: ${userProfile.preferredName ?? userProfile.name ?? 'there'}`,
+          `If callMode="medication_reminder":`,
+          `- intent MUST be "medication_reminder".`,
+          `- Purpose must be "a quick medication reminder".`,
+          `- Remind the person to take their medication.`,
+          `- Ask if they have taken it or will take it now.`,
+          `- Do NOT give dosing instructions.`,
+          ``,
+          `User name (callee): ${calleeName}`,
           `Locale: ${userProfile.locale ?? 'Unknown'}`,
           `Risk level: ${riskLevel}`,
           ``,
