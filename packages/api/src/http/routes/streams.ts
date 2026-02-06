@@ -245,6 +245,8 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
     let recordingId: string | null = null;
     const pendingFinals: Array<{ text: string; info: any }> = [];
     let openingDelivered = false;
+    let isSpeaking = false;
+    const finalsWhileSpeaking: string[] = [];
 
     // ✅ Track outbound audio position for assistant transcript timings
     let outboundByteCursor = 0;
@@ -326,21 +328,35 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       start_ms: number;
       end_ms: number;
     }> {
-      const startBytes = outboundByteCursor;
+      isSpeaking = true;
+      try {
+        const startBytes = outboundByteCursor;
 
-      const chunks = await (elevenlabsTts as any).ttsToMulawChunks(text);
-      for await (const chunk of chunks as any) {
-        if (!chunk) continue;
-        const b64 = Buffer.from(chunk).toString('base64');
-        sendAudioToTwilio(b64);
+        const chunks = await (elevenlabsTts as any).ttsToMulawChunks(text);
+        for await (const chunk of chunks as any) {
+          if (!chunk) continue;
+          const b64 = Buffer.from(chunk).toString('base64');
+          sendAudioToTwilio(b64);
+        }
+
+        const endBytes = outboundByteCursor;
+
+        return {
+          start_ms: bytesToMs(startBytes),
+          end_ms: bytesToMs(endBytes),
+        };
+      } finally {
+        isSpeaking = false;
+
+        // ✅ flush anything the user said while we were speaking
+        if (finalsWhileSpeaking.length) {
+          const queued = finalsWhileSpeaking.splice(
+            0,
+            finalsWhileSpeaking.length
+          );
+          for (const q of queued) utteranceBuffer.addFinal(q);
+        }
       }
-
-      const endBytes = outboundByteCursor;
-
-      return {
-        start_ms: bytesToMs(startBytes),
-        end_ms: bytesToMs(endBytes),
-      };
     }
 
     // ✅ Speak all segments, and insert each assistant segment into transcripts
@@ -349,13 +365,26 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
     ) {
       clearTwilioAudio();
 
-      for (const seg of payload.segments) {
-        const timing = await speakTextStreamingWithTiming(seg.text);
-        await saveOutboundTranscript({
-          text: seg.text,
-          start_ms: timing.start_ms,
-          end_ms: timing.end_ms,
-        });
+      isSpeaking = true;
+      try {
+        for (const seg of payload.segments) {
+          const timing = await speakTextStreamingWithTiming(seg.text);
+          await saveOutboundTranscript({
+            text: seg.text,
+            start_ms: timing.start_ms,
+            end_ms: timing.end_ms,
+          });
+        }
+      } finally {
+        isSpeaking = false;
+
+        if (finalsWhileSpeaking.length) {
+          const queued = finalsWhileSpeaking.splice(
+            0,
+            finalsWhileSpeaking.length
+          );
+          for (const q of queued) utteranceBuffer.addFinal(q);
+        }
       }
     }
 
@@ -544,6 +573,11 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         if (finalUtterance.trim().length < 2) return;
 
         if (!openingDelivered) {
+          return;
+        }
+        if (isSpeaking) {
+          // ✅ prevent overlap: user answered while assistant is talking
+          finalsWhileSpeaking.push(finalUtterance);
           return;
         }
 
