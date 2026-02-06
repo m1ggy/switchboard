@@ -271,8 +271,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       start_ms: number;
       end_ms: number;
     }> {
-      clearTwilioAudio();
-
       const startBytes = outboundByteCursor;
 
       const chunks = await (elevenlabsTts as any).ttsToMulawChunks(text);
