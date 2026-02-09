@@ -55,12 +55,20 @@ export const FEATURES = {
 export type FeatureKey = keyof typeof FEATURES;
 
 // --- Plans & feature mapping ---
-export type PlanName = 'starter' | 'professional' | 'business';
+export type PlanName = 'starter' | 'professional' | 'business' | 'ADMIN';
 
 export const PLAN_FEATURES: Record<PlanName, readonly FeatureKey[]> = {
   starter: ['support_email_basic'],
   professional: ['support_email_priority', 'mms'],
   business: ['support_dedicated', 'mms', 'fax'],
+  ADMIN: [
+    'support_email_basic',
+    'support_email_priority',
+    'mms',
+    'support_dedicated',
+    'mms',
+    'fax',
+  ],
 } as const;
 
 // --- Quick helpers ---
