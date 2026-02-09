@@ -29,8 +29,6 @@ function CompanySwitcherDialog() {
   } = useMainStore();
 
   const trpc = useTRPC();
-
-  // ✅ NEW: access twilio lifecycle helpers
   const { destroyClient, setTokenOverride } = useTwilioVoice();
 
   const { data: companies, isFetching } = useQuery({
@@ -54,23 +52,16 @@ function CompanySwitcherDialog() {
 
     const mainNumber = numbers[0];
 
-    // ✅ 1) Destroy old device first so we don't miss calls or double-register
     destroyClient();
-
-    // ✅ 2) Update store with new identity
     setActiveNumber(mainNumber);
 
-    // ✅ 3) Ping presence for new identity
     await mutatePresence({ identity: mainNumber.number });
 
-    // ✅ 4) Fetch the token for the NEW identity (not activeNumber!)
     const newToken = await trpc.twilio.token.fetch({
       identity: mainNumber.number,
     });
 
-    // ✅ 5) Apply token immediately so provider initializes right away
     setTokenOverride(newToken);
-
     setCompanySwitcherDialogShown(false);
   };
 
@@ -123,7 +114,9 @@ function CompanySwitcherDialog() {
             className={clsx(
               'overflow-y-auto',
               'max-h-[unset] sm:max-h-[60vh]',
-              'h-[calc(92dvh-56px)] sm:h-auto'
+              'h-[calc(92dvh-56px)] sm:h-auto',
+              // 👇 gutter prevents ring clipping
+              'p-1'
             )}
             style={{ paddingBottom: 'max(env(safe-area-inset-bottom),0px)' }}
           >
@@ -148,11 +141,11 @@ function CompanySwitcherDialog() {
                       aria-disabled={disabled}
                       className={clsx(
                         'transition-colors select-none',
-                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
                         disabled
                           ? 'bg-muted text-muted-foreground opacity-60 cursor-not-allowed pointer-events-none'
                           : 'hover:bg-accent cursor-pointer',
-                        isActive && 'bg-accent'
+                        isActive && 'bg-accent ring-2 ring-primary ring-inset'
                       )}
                     >
                       <CardContent className="py-4 px-4 sm:py-5 sm:px-6">
@@ -166,16 +159,13 @@ function CompanySwitcherDialog() {
                                 formatDate(company.created_at, 'd MMM yyyy')}
                             </CardDescription>
                             <div className="mt-2">
-                              {company.numbers.length === 0 ? (
-                                <span className="text-muted-foreground text-xs sm:text-sm font-medium">
-                                  No active numbers
-                                </span>
-                              ) : (
-                                <span className="text-muted-foreground text-xs sm:text-sm font-medium">
-                                  {company.numbers.length} number
-                                  {company.numbers.length > 1 && 's'}
-                                </span>
-                              )}
+                              <span className="text-muted-foreground text-xs sm:text-sm font-medium">
+                                {company.numbers.length === 0
+                                  ? 'No active numbers'
+                                  : `${company.numbers.length} number${
+                                      company.numbers.length > 1 ? 's' : ''
+                                    }`}
+                              </span>
                             </div>
                           </div>
 
