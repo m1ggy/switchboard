@@ -60,7 +60,7 @@ export type PlanName = 'starter' | 'professional' | 'business' | 'ADMIN';
 export const PLAN_FEATURES: Record<PlanName, readonly FeatureKey[]> = {
   starter: ['support_email_basic'],
   professional: ['support_email_priority', 'mms'],
-  business: ['support_dedicated', 'mms', 'fax'],
+  business: ['support_dedicated', 'mms', 'fax', 'video_calls'],
   ADMIN: [
     'support_email_basic',
     'support_email_priority',
@@ -68,6 +68,7 @@ export const PLAN_FEATURES: Record<PlanName, readonly FeatureKey[]> = {
     'support_dedicated',
     'mms',
     'fax',
+    'video_calls',
   ],
 } as const;
 
