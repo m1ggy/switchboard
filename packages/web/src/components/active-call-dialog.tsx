@@ -5,7 +5,7 @@ import { useTwilioVoice } from '@/hooks/twilio-provider';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from './ui/button';
 import {
   Dialog,
@@ -85,7 +85,14 @@ function ActiveCallDialog() {
     if (!companies) return [];
 
     const seen = new Set<string>(); // de-dupe by number
-    const opts = [];
+    const opts: Array<{
+      id: string;
+      number: string;
+      label: string;
+      companyId: string;
+      companyName: string;
+      numberId: string;
+    }> = [];
 
     for (const c of companies) {
       const nums = c?.numbers ?? [];
@@ -111,6 +118,83 @@ function ActiveCallDialog() {
 
     return opts;
   }, [companies, activeNumber?.id]);
+
+  // =========================
+  // ✅ Wake Lock integration
+  // =========================
+  const wakeLockRef = useRef<any>(null);
+  const [wakeLockSupported, setWakeLockSupported] = useState(false);
+
+  useEffect(() => {
+    setWakeLockSupported(
+      typeof window !== 'undefined' && 'wakeLock' in navigator
+    );
+  }, []);
+
+  // Request wake lock while call is active, and re-request on visibility changes
+  useEffect(() => {
+    if (!open || callState !== 'connected') return;
+
+    let cancelled = false;
+
+    const requestWakeLock = async () => {
+      if (!('wakeLock' in navigator)) return;
+
+      try {
+        // @ts-expect-error - Wake Lock API may not be in TS lib depending on setup
+        const sentinel = await navigator.wakeLock.request('screen');
+
+        if (cancelled) {
+          await sentinel.release().catch(() => {});
+          return;
+        }
+
+        wakeLockRef.current = sentinel;
+
+        sentinel.addEventListener?.('release', () => {
+          wakeLockRef.current = null;
+        });
+      } catch (err) {
+        // Often NotAllowedError if no user gesture (esp. on incoming calls)
+        console.warn('Wake lock request failed:', err);
+      }
+    };
+
+    const releaseWakeLock = async () => {
+      const sentinel = wakeLockRef.current;
+      wakeLockRef.current = null;
+      if (sentinel) {
+        await sentinel.release().catch(() => {});
+      }
+    };
+
+    // Initial request
+    requestWakeLock();
+
+    // Re-request when visible again (locks often drop when hidden)
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') requestWakeLock();
+      else releaseWakeLock();
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      releaseWakeLock();
+    };
+  }, [open, callState]);
+
+  // Also release wake lock if the dialog is force-closed while connected (belt & suspenders)
+  useEffect(() => {
+    if (open) return;
+    const sentinel = wakeLockRef.current;
+    wakeLockRef.current = null;
+    if (sentinel) {
+      sentinel.release?.().catch?.(() => {});
+    }
+  }, [open]);
 
   useEffect(() => {
     if (activeCall && callState === 'connected') {
@@ -377,6 +461,7 @@ function ActiveCallDialog() {
           <DialogTitle className="text-base sm:text-lg">
             📞 Call In Progress
           </DialogTitle>
+
           <div className="text-muted-foreground text-sm mt-1">
             Talking to: <span className="font-medium">{callerId}</span>
           </div>
@@ -384,6 +469,13 @@ function ActiveCallDialog() {
             Duration:{' '}
             <span className="font-mono">{formatDuration(callDuration)}</span>
           </div>
+
+          {/* Optional info to indicate wake lock attempt */}
+          {wakeLockSupported && callState === 'connected' && (
+            <div className="text-xs text-muted-foreground mt-1">
+              Screen will stay awake during this call
+            </div>
+          )}
         </DialogHeader>
 
         {/* Body */}

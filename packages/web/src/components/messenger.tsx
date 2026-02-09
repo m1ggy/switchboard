@@ -71,6 +71,8 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
     trpc.inboxes.markAsViewed.mutationOptions()
   );
 
+  console.log({ userInfo });
+
   const { mutateAsync: sendMessage, isPending } = useMutation(
     trpc.twilio.sendSMS.mutationOptions()
   );
