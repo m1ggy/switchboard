@@ -27,8 +27,6 @@ export async function createContext({
     ? await UsersRepository.findByFirebaseUid(user.uid)
     : null;
 
-  if (!user) throw new Error('User does not exist');
-
   return { user, userInfo };
 }
 export type Context = Awaited<ReturnType<typeof createContext>>;
