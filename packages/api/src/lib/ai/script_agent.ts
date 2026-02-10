@@ -1,3 +1,4 @@
+// src/lib/ai/script_agent.ts
 import { OpenAIClient, SimpleMessage } from './openai_client';
 
 export type ScriptIntent =
@@ -52,6 +53,10 @@ export interface CallContext {
 
   // ✅ single switch
   callMode: CallMode;
+
+  // ✅ NEW: brand + callback
+  companyName?: string; // e.g. "Acme Health"
+  callbackNumber?: string; // e.g. "+1 (415) 555-1212"
 }
 
 /**
@@ -123,6 +128,19 @@ const scriptPayloadSchema = {
   },
 };
 
+// ✅ helper: ensures consistent “recite digits”
+function toSpokenDigits(phone: string | undefined | null): string {
+  const raw = (phone ?? '').trim();
+  if (!raw) return '';
+
+  const hasPlus = raw.startsWith('+');
+  const digits = raw.replace(/[^\d]/g, '');
+  if (!digits) return '';
+
+  const spaced = digits.split('').join(' ');
+  return hasPlus ? `plus ${spaced}` : spaced;
+}
+
 export class ScriptGeneratorAgent {
   constructor(
     private openai: OpenAIClient,
@@ -134,6 +152,10 @@ export class ScriptGeneratorAgent {
     const { userProfile, riskLevel = 'low', callMode } = context;
 
     const calleeName = userProfile.preferredName ?? userProfile.name ?? 'there';
+    const companyName = context.companyName ?? 'our team';
+
+    const expectedIntent: ScriptIntent =
+      callMode === 'medication_reminder' ? 'medication_reminder' : 'opening';
 
     const input: SimpleMessage[] = [
       { role: 'system', content: this.systemInstructions },
@@ -145,17 +167,22 @@ export class ScriptGeneratorAgent {
           `Call mode: ${callMode}`,
           ``,
           `Hard requirements (must follow):`,
+          `- intent MUST be "${expectedIntent}".`,
           `- The FIRST sentence must be a warm greeting that includes the callee's name: "${calleeName}".`,
+          `- The FIRST sentence must also include the company name: "${companyName}".`,
           `- In the FIRST segment, explicitly mention the purpose of the call.`,
           `- Keep it natural for a phone call.`,
           ``,
           `If callMode="medication_reminder":`,
-          `- intent MUST be "medication_reminder".`,
           `- Purpose must be "a quick medication reminder".`,
           `- Remind the person to take their medication.`,
           `- Ask if they have taken it or will take it now.`,
           `- Do NOT give dosing instructions.`,
           ``,
+          `If callMode="reassurance":`,
+          `- Purpose must be "a quick reassurance check-in".`,
+          ``,
+          `Company name: ${companyName}`,
           `User name (callee): ${calleeName}`,
           `Locale: ${userProfile.locale ?? 'Unknown'}`,
           `Risk level: ${riskLevel}`,
@@ -176,7 +203,7 @@ export class ScriptGeneratorAgent {
       input,
       schema: scriptPayloadSchema,
       temperature: 0.6,
-      maxOutputTokens: 220,
+      maxOutputTokens: 240,
     });
   }
 
@@ -184,9 +211,13 @@ export class ScriptGeneratorAgent {
   async generateFollowupScript(params: {
     context: CallContext;
     lastUserUtterance: string;
+    runningSummary?: string; // ✅ allow existing caller signature; not required
   }): Promise<ScriptPayload> {
     const { context, lastUserUtterance } = params;
-    const { userProfile, callMode, riskLevel = 'low' } = context;
+    const { callMode, riskLevel = 'low' } = context;
+
+    const expectedIntent: ScriptIntent =
+      callMode === 'medication_reminder' ? 'medication_reminder' : 'followup';
 
     const input: SimpleMessage[] = [
       { role: 'system', content: this.systemInstructions },
@@ -198,11 +229,17 @@ export class ScriptGeneratorAgent {
           `Call mode: ${callMode}`,
           ``,
           `Rules:`,
-          `- intent MUST be "medication_reminder".`,
+          `- intent MUST be "${expectedIntent}".`,
           `- Briefly acknowledge what the user said.`,
+          ``,
+          `If callMode="medication_reminder":`,
           `- If the user already confirmed they took it, thank them and do NOT ask again.`,
           `- If they have not taken it, gently remind once, then prepare to end the call.`,
           `- Do NOT give medical advice.`,
+          ``,
+          `If callMode="reassurance":`,
+          `- Ask a short, supportive follow-up question.`,
+          `- Keep it calm and practical.`,
           ``,
           `User said:`,
           lastUserUtterance,
@@ -224,7 +261,7 @@ export class ScriptGeneratorAgent {
       input,
       schema: scriptPayloadSchema,
       temperature: 0.6,
-      maxOutputTokens: 200,
+      maxOutputTokens: 220,
     });
   }
 
@@ -236,6 +273,13 @@ export class ScriptGeneratorAgent {
     const { context, runningSummary } = params;
     const { userProfile, callMode, riskLevel = 'low' } = context;
 
+    const expectedIntent: ScriptIntent =
+      callMode === 'medication_reminder' ? 'medication_reminder' : 'closing';
+
+    const companyName = context.companyName ?? 'our team';
+    const callbackNumber = context.callbackNumber ?? '';
+    const callbackSpokenDigits = toSpokenDigits(callbackNumber);
+
     const input: SimpleMessage[] = [
       { role: 'system', content: this.systemInstructions },
       {
@@ -246,8 +290,15 @@ export class ScriptGeneratorAgent {
           `Call mode: ${callMode}`,
           ``,
           `Rules:`,
-          `- intent MUST be "medication_reminder" if callMode="medication_reminder".`,
+          `- intent MUST be "${expectedIntent}".`,
           `- Keep it brief and polite.`,
+          `- Before ending, ask the callee if they need anything else at all.`,
+          `- If a callbackNumber is provided, tell them to call it and recite it as spoken digits.`,
+          `- If callbackSpokenDigits is empty, do NOT invent a number; omit the callback instruction.`,
+          ``,
+          `Company name: ${companyName}`,
+          `Callback number (raw): ${callbackNumber || '(none)'}`,
+          `Callback number (spoken digits, must be verbatim if used): ${callbackSpokenDigits || '(none)'}`,
           ``,
           `User name: ${userProfile.preferredName ?? 'there'}`,
           `Risk level: ${riskLevel}`,
@@ -262,6 +313,7 @@ export class ScriptGeneratorAgent {
           `Response rules:`,
           `- 1 short segment.`,
           `- Simple, calm voice.`,
+          `- No emojis.`,
         ].join('\n'),
       },
     ];
@@ -270,7 +322,7 @@ export class ScriptGeneratorAgent {
       input,
       schema: scriptPayloadSchema,
       temperature: 0.5,
-      maxOutputTokens: 120,
+      maxOutputTokens: 170,
     });
   }
 }

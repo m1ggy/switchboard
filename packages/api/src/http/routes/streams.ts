@@ -26,6 +26,8 @@ import { ReassuranceContactMemorySummaryRepository } from '@/db/repositories/rea
 import { ReassuranceContactProfilesRepository } from '@/db/repositories/reassurance_contact_profiles';
 import { ReassuranceSchedulesRepository } from '@/db/repositories/reassurance_schedules';
 
+import { UserCompaniesRepository } from '@/db/repositories/companies';
+import { NumbersRepository } from '@/db/repositories/numbers';
 import { ReassuranceCallRecordingsRepository } from '@/db/repositories/reassurance_call_recordings';
 import { ReassuranceCallTranscriptsRepository } from '@/db/repositories/reassurance_call_transcripts';
 
@@ -223,12 +225,16 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       string | undefined
     >;
 
+    const { numberId } = req.query as Record<string, string | undefined>;
+
     let streamSid: string | null = null;
     let callSid: string | null = null;
 
     let sessionId: string | null = null;
     let contactId: string | null = null;
     let companyId: string | null = null;
+    let companyName: string | null = null;
+    let callbackNumber: string | null = null;
 
     let contactProfile: any | null = null;
 
@@ -659,6 +665,11 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             },
             riskLevel,
             lastCheckInSummary: contextBlock,
+            callMode, // ✅ REQUIRED
+
+            // ✅ NEW
+            companyName: companyName ?? undefined,
+            callbackNumber: callbackNumber ?? undefined,
           };
 
           const tAi = nowMs();
@@ -698,6 +709,33 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           } as any);
 
           if (callMode === 'medication_reminder') {
+            try {
+              const closing = await scriptAgent.generateClosingScript({
+                context,
+                runningSummary,
+              });
+
+              await speakScriptPayload(closing);
+
+              const closingText = closing.segments
+                .map((s) => s.text)
+                .join(' ')
+                .trim();
+              await ReassuranceCallTurnsRepository.createTurn({
+                id: crypto.randomUUID(),
+                session_id: sessionId,
+                role: 'assistant',
+                content: closingText,
+                meta: {
+                  callSid,
+                  streamSid,
+                  intent: closing.intent,
+                  notesForHumanSupervisor: closing.notesForHumanSupervisor,
+                  phase: 'closing',
+                },
+              } as any);
+            } catch {}
+
             await gracefulHangupAfterGoodbye({
               goodbyeText: 'Okay, thank you. Take care. Goodbye.',
             });
@@ -817,8 +855,19 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         Number(scheduleId)
       );
       if (!schedule) throw new Error('Schedule not found');
-
+      if (!numberId) throw new Error('Number ID not found');
       companyId = schedule.company_id;
+      const company = companyId
+        ? await UserCompaniesRepository.findCompanyById(companyId)
+        : null;
+
+      companyName = company?.name ?? null;
+
+      const numberRow = numberId
+        ? await NumbersRepository.findById(numberId)
+        : null;
+
+      callbackNumber = numberRow?.number ?? null;
 
       const contactLabel = schedule.name || schedule.phone_number || 'Unknown';
       const contact = await ContactsRepository.findOrCreate({
@@ -903,6 +952,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         },
         lastCheckInSummary: memSummary?.summary_text ?? undefined,
         riskLevel,
+        companyName: companyName ?? undefined,
+        callbackNumber: callbackNumber ?? undefined,
+        callMode, // ✅ REQUIRED
       };
 
       try {
@@ -914,13 +966,19 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           '[ReassuranceStream] Failed to generate opening script; using fallback'
         );
         openingPayload = {
-          intent: 'opening',
+          intent:
+            callMode === 'medication_reminder'
+              ? 'medication_reminder'
+              : 'opening',
           segments: [
             {
               id: crypto.randomUUID(),
-              text: `Hi ${preferredName || 'there'}. This is your reassurance call. How are you feeling today?`,
+              text:
+                callMode === 'medication_reminder'
+                  ? `Hi ${preferredName || 'there'}, this is ${companyName ?? 'our team'}. This is a quick medication reminder. Have you taken your medication, or can you take it now?`
+                  : `Hi ${preferredName || 'there'}, this is ${companyName ?? 'our team'}. This is a quick reassurance check-in. How are you feeling today?`,
               tone: 'reassuring',
-              maxDurationSeconds: 10,
+              maxDurationSeconds: 12,
             },
           ],
           notesForHumanSupervisor: null,
