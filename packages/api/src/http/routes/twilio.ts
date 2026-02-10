@@ -1550,6 +1550,10 @@ async function routes(app: FastifyInstance) {
       stream.parameter({ name: 'scheduleId', value: String(sched.id) });
       stream.parameter({ name: 'jobId', value: jobId });
       stream.parameter({ name: 'callId', value: callId });
+      stream.parameter({
+        name: 'numberId',
+        value: '71d01b59-e51c-48d4-a81a-05e13655b707',
+      });
 
       r.say(
         'Starting media stream test now. Please say something after the beep.'
