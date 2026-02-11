@@ -1394,11 +1394,15 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             await bootstrapSessionAndOpening();
           } catch (err) {
             app.log.error(
-              JSON.stringify(
-                { err, scheduleId, jobId, callId, callSid },
-                null,
-                2
-              ),
+              {
+                message: (err as any)?.message,
+                stack: (err as any)?.stack,
+                scheduleId,
+                jobId,
+                callId,
+                callSid,
+                streamSid,
+              },
               '[ReassuranceStream] bootstrap failed'
             );
             socket.close();
