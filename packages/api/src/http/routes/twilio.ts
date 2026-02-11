@@ -1333,6 +1333,7 @@ async function routes(app: FastifyInstance) {
       stream.parameter({ name: 'scheduleId', value: String(schedule.id) });
       if (jobId) stream.parameter({ name: 'jobId', value: String(jobId) });
       stream.parameter({ name: 'callId', value: String(callRow.id) });
+      stream.parameter({ name: 'numberId', value: String(schedule.number_id) });
 
       return reply.type('text/xml').status(200).send(r.toString());
     }
