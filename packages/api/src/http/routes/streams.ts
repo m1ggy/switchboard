@@ -280,12 +280,10 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       : null;
 
   app.get('/reassurance/stream', { websocket: true }, (socket, req) => {
-    let { scheduleId, jobId, callId } = req.query as Record<
+    let { scheduleId, jobId, callId, numberId } = req.query as Record<
       string,
       string | undefined
     >;
-
-    const { numberId } = req.query as Record<string, string | undefined>;
 
     let streamSid: string | null = null;
     let callSid: string | null = null;
@@ -1356,6 +1354,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           scheduleId = cp.scheduleId ?? q.scheduleId ?? null;
           jobId = cp.jobId ?? q.jobId ?? null;
           callId = cp.callId ?? q.callId ?? callSid ?? null;
+          numberId = cp.numberId ?? q.numberId ?? null;
 
           app.log.info(
             {

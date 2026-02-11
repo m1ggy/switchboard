@@ -1553,13 +1553,13 @@ async function routes(app: FastifyInstance) {
       stream.parameter({ name: 'callId', value: callId });
       stream.parameter({ name: 'numberId', value: String(sched.number_id) });
 
-      r.say(
+      stream.say(
         'Starting media stream test now. Please say something after the beep.'
       );
 
-      r.pause({ length: 5 });
+      stream.pause({ length: 5 });
 
-      return reply.type('text/xml').status(200).send(r.toString());
+      return reply.type('text/xml').status(200).send(stream.toString());
     }
   );
 }
