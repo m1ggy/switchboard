@@ -1556,8 +1556,6 @@ async function routes(app: FastifyInstance) {
       r.say(
         'Starting media stream test now. Please say something after the beep.'
       );
-      r.connect().stream({ url: wsUrl.toString() });
-      r.pause({ length: 5 });
 
       return reply.type('text/xml').status(200).send(r.toString());
     }
