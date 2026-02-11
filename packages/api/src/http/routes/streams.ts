@@ -100,6 +100,66 @@ async function generateRollingMemorySummary(args: {
   return (text || '').trim().slice(0, 2000);
 }
 
+async function generateSessionAiSummary(args: {
+  openai: OpenAIClient;
+  transcriptText: string;
+  callMode: 'reassurance' | 'medication_reminder';
+}): Promise<string> {
+  const { openai, transcriptText, callMode } = args;
+
+  const styleHint =
+    callMode === 'medication_reminder'
+      ? `This was a medication reminder call. Keep it extremely short.`
+      : `This was a reassurance check-in. Keep it short and practical.`;
+
+  const input = [
+    {
+      role: 'system',
+      content:
+        'You write a concise call summary for internal call logs. ' +
+        'Plain text only. No bullet points. No headings. No PHI beyond what is in the transcript.',
+    },
+    {
+      role: 'user',
+      content: [
+        styleHint,
+        '',
+        'Transcript (user + assistant, chronological):',
+        transcriptText || '(none)',
+        '',
+        'Write a 2–4 sentence summary focusing on: how the person is doing, key concerns, actions/next steps, and any risk signals mentioned.',
+      ].join('\n'),
+    },
+  ];
+
+  const resp = await (openai as any).client.responses.create({
+    model: 'gpt-4.1-mini',
+    input,
+    temperature: 0.2,
+    max_output_tokens: 220,
+  });
+
+  const text =
+    resp.output_text ??
+    resp.output
+      ?.map((o: any) => o?.content?.map((c: any) => c?.text).join(''))
+      .join('') ??
+    '';
+
+  return (text || '').trim().slice(0, 2000);
+}
+
+function formatTranscriptForSummary(
+  rows: Array<{ speaker: string; transcript: string }>
+) {
+  return rows
+    .map(
+      (r) =>
+        `${r.speaker === 'user' ? 'User' : r.speaker === 'assistant' ? 'Assistant' : 'System'}: ${r.transcript}`
+    )
+    .join('\n');
+}
+
 /**
  * Convert Twilio Media Stream μ-law raw file -> mp3
  * Twilio μ-law: 8000 Hz, mono
@@ -1158,10 +1218,34 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           }
         }
 
+        let sessionAiSummary: string | null = null;
+
+        try {
+          const rows =
+            await ReassuranceCallTranscriptsRepository.listBySessionId(
+              sessionId
+            );
+          const transcriptText = clamp(formatTranscriptForSummary(rows), 12000);
+
+          if (transcriptText.trim().length >= 20) {
+            sessionAiSummary = await generateSessionAiSummary({
+              openai,
+              transcriptText,
+              callMode,
+            });
+          }
+        } catch (e) {
+          app.log.warn(
+            { e, sessionId },
+            '[ReassuranceStream] session ai_summary gen failed'
+          );
+        }
+
         try {
           await ReassuranceCallSessionsRepository.finalizeSession(sessionId, {
             status,
             ended_at: new Date(),
+            ai_summary: sessionAiSummary, // ✅ stored for UI
           });
         } catch (e) {
           app.log.error(
