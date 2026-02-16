@@ -5,7 +5,12 @@ import { formatDistanceToNow } from 'date-fns';
 import { Badge } from './ui/badge';
 
 interface InboxItemProps {
-  inbox: InboxWithDetails & { unreadCount: number };
+  inbox: InboxWithDetails & {
+    unreadCount: number;
+    // from your updated API
+    lastFileInbound?: boolean;
+    lastFileOutbound?: boolean;
+  };
   isSelected: boolean;
   onSelect: () => void;
 }
@@ -48,6 +53,45 @@ export function InboxItem({ inbox, isSelected, onSelect }: InboxItemProps) {
 
   const isUnread = inbox.unreadCount > 0;
 
+  // ----------------------------
+  // File sentence logic
+  // ----------------------------
+  const contactName = inbox.contact.label;
+
+  const lastMessageAttachments = (inbox.lastMessage as any)?.attachments as
+    | {
+        id: string;
+        media_url: string;
+        content_type: string;
+        file_name: string | null;
+      }[]
+    | undefined;
+
+  const attachmentCount = lastMessageAttachments?.length ?? 0;
+  const hasAttachmentFiles = attachmentCount > 0;
+
+  const hasLatestFileFlag =
+    Boolean(inbox.lastFileInbound) || Boolean(inbox.lastFileOutbound);
+
+  // Mutually exclusive by backend rule
+  const isInboundFile = Boolean(inbox.lastFileInbound);
+  const isOutboundFile = Boolean(inbox.lastFileOutbound);
+
+  let fileSentence: string | null = null;
+
+  if (hasAttachmentFiles) {
+    const countText =
+      attachmentCount === 1 ? '1 file' : `${attachmentCount} files`;
+    fileSentence = isInboundFile
+      ? `${contactName} sent ${countText}`
+      : `You sent ${countText}`;
+  } else if (hasLatestFileFlag) {
+    // file exists (likely fax), but count unknown
+    fileSentence = isInboundFile
+      ? `${contactName} sent a file`
+      : `You sent a file`;
+  }
+
   return (
     <div
       className={cn(
@@ -68,7 +112,16 @@ export function InboxItem({ inbox, isSelected, onSelect }: InboxItemProps) {
 
       {latestActivity === 'message' && inbox.lastMessage && (
         <span className="text-sm text-muted-foreground truncate overflow-hidden whitespace-nowrap max-w-48">
-          {inbox.lastMessage.message}
+          {inbox.lastMessage.message?.trim()
+            ? inbox.lastMessage.message
+            : (fileSentence ?? '')}
+        </span>
+      )}
+
+      {/* If latest activity is NOT message (or message text exists), still show file sentence when present */}
+      {latestActivity !== 'message' && fileSentence && (
+        <span className="text-sm text-muted-foreground truncate overflow-hidden whitespace-nowrap max-w-48">
+          📎 {fileSentence}
         </span>
       )}
 
@@ -76,7 +129,6 @@ export function InboxItem({ inbox, isSelected, onSelect }: InboxItemProps) {
         <span className="text-xs text-muted-foreground text-right">
           {formatDistanceToNow(latestDate, {
             addSuffix: true,
-            // Key: compute the distance *in* the user's timezone
             in: inTZ,
           })}
         </span>

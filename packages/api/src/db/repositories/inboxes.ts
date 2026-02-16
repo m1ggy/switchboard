@@ -43,29 +43,30 @@ export const InboxesRepository = {
   async findByNumberId(
     numberId: string,
     opts?: { search?: string }
-  ): Promise<(InboxWithDetails & { unreadCount: number })[]> {
+  ): Promise<
+    (InboxWithDetails & {
+      unreadCount: number;
+      lastFileInbound: boolean;
+      lastFileOutbound: boolean;
+    })[]
+  > {
     const search = opts?.search?.trim() ?? '';
     const like = `%${search}%`;
     const digitsOnly = search.replace(/\D/g, '');
 
     const params: any[] = [numberId];
     const searchParts: string[] = [];
-    // we will push params in the same order we add predicates
 
     if (search) {
-      // last message text
       params.push(like);
       searchParts.push(`lm.message ILIKE $${params.length}`);
 
-      // contact label
       params.push(like);
       searchParts.push(`c.label ILIKE $${params.length}`);
 
-      // contact number (raw ILIKE)
       params.push(like);
       searchParts.push(`c.number ILIKE $${params.length}`);
 
-      // digits-only match only if we actually have digits
       if (digitsOnly.length > 0) {
         params.push(`%${digitsOnly}%`);
         searchParts.push(
@@ -78,6 +79,7 @@ export const InboxesRepository = {
       ? `AND (${searchParts.join(' OR ')})`
       : '';
 
+    // 1) Base inbox fetch (keep SQL simple)
     const sql = `
     WITH unread_counts AS (
       SELECT 
@@ -124,7 +126,7 @@ export const InboxesRepository = {
 
     const result = await pool.query(sql, params);
 
-    return result.rows.map((row) => ({
+    const inboxes = result.rows.map((row) => ({
       id: row.id,
       numberId: row.number_id,
       contactId: row.contact_id,
@@ -135,7 +137,144 @@ export const InboxesRepository = {
       lastCall: row.lastCall,
       lastViewedAt: row.last_viewed_at,
       unreadCount: Number(row.unreadCount),
+      // will fill
+      lastFileInbound: false,
+      lastFileOutbound: false,
     }));
+
+    if (inboxes.length === 0) return inboxes;
+
+    // 2) Collect IDs for bulk enrichment
+    const contactIds = [...new Set(inboxes.map((i) => i.contactId))];
+    const lastMessageIds = [
+      ...new Set(inboxes.map((i) => i.lastMessageId).filter(Boolean)),
+    ] as string[];
+
+    // 3) Attachments for lastMessage (bulk, not per-row)
+    let attachmentsByMessageId: Record<
+      string,
+      {
+        id: string;
+        media_url: string;
+        content_type: string;
+        file_name: string | null;
+      }[]
+    > = {};
+
+    if (lastMessageIds.length > 0) {
+      const attRes = await pool.query(
+        `
+      SELECT id, message_id, media_url, content_type, file_name
+      FROM media_attachments
+      WHERE message_id = ANY($1::uuid[])
+      ORDER BY id DESC
+      `,
+        [lastMessageIds]
+      );
+
+      attachmentsByMessageId = attRes.rows.reduce(
+        (acc, row) => {
+          if (!acc[row.message_id]) acc[row.message_id] = [];
+          acc[row.message_id].push({
+            id: row.id,
+            media_url: row.media_url,
+            content_type: row.content_type,
+            file_name: row.file_name,
+          });
+          return acc;
+        },
+        {} as typeof attachmentsByMessageId
+      );
+    }
+
+    // 4) Latest file-bearing MESSAGE per (contact_id, number_id)
+    // Uses DISTINCT ON to pick newest message that has at least 1 attachment.
+    // IMPORTANT: this is still SQL for *fetching data*, but the business logic stays in JS.
+    const latestMsgFileRes = await pool.query(
+      `
+    SELECT DISTINCT ON (m.contact_id, m.number_id)
+      m.contact_id,
+      m.number_id,
+      m.created_at AS created_at,
+      m.direction::text AS direction
+    FROM messages m
+    JOIN media_attachments ma ON ma.message_id = m.id
+    WHERE m.number_id = $1
+      AND m.contact_id = ANY($2::uuid[])
+    ORDER BY m.contact_id, m.number_id, m.created_at DESC, m.id DESC
+    `,
+      [numberId, contactIds]
+    );
+
+    const latestMsgFileByKey = new Map<
+      string,
+      { createdAt: string; direction: 'inbound' | 'outbound' }
+    >();
+    for (const row of latestMsgFileRes.rows) {
+      const key = `${row.contact_id}:${row.number_id}`;
+      latestMsgFileByKey.set(key, {
+        createdAt: row.created_at,
+        direction: row.direction,
+      });
+    }
+
+    // 5) Latest file-bearing FAX per (contact_id, number_id)
+    const latestFaxFileRes = await pool.query(
+      `
+    SELECT DISTINCT ON (f.contact_id, f.number_id)
+      f.contact_id,
+      f.number_id,
+      COALESCE(f.initiated_at, f.created_at, '1970-01-01'::timestamptz) AS created_at,
+      f.direction::text AS direction
+    FROM faxes f
+    WHERE f.number_id = $1
+      AND f.contact_id = ANY($2::uuid[])
+      AND f.media_url IS NOT NULL
+    ORDER BY f.contact_id, f.number_id, created_at DESC, f.id DESC
+    `,
+      [numberId, contactIds]
+    );
+
+    const latestFaxFileByKey = new Map<
+      string,
+      { createdAt: string; direction: 'inbound' | 'outbound' }
+    >();
+    for (const row of latestFaxFileRes.rows) {
+      const key = `${row.contact_id}:${row.number_id}`;
+      latestFaxFileByKey.set(key, {
+        createdAt: row.created_at,
+        direction: row.direction,
+      });
+    }
+
+    // 6) Merge everything in JS: attachments + single direction flag
+    return inboxes.map((inbox) => {
+      // enrich lastMessage.attachments
+      if (inbox.lastMessage?.id) {
+        const atts = attachmentsByMessageId[inbox.lastMessage.id] ?? [];
+        inbox.lastMessage = { ...inbox.lastMessage, attachments: atts };
+      }
+
+      const key = `${inbox.contactId}:${inbox.numberId}`;
+
+      const msgFile = latestMsgFileByKey.get(key);
+      const faxFile = latestFaxFileByKey.get(key);
+
+      // pick the newer “file-bearing” activity
+      const msgTime = msgFile
+        ? new Date(msgFile.createdAt).getTime()
+        : -Infinity;
+      const faxTime = faxFile
+        ? new Date(faxFile.createdAt).getTime()
+        : -Infinity;
+
+      const winner = msgTime >= faxTime ? (msgFile ?? null) : (faxFile ?? null);
+
+      inbox.lastFileInbound = winner?.direction === 'inbound';
+      inbox.lastFileOutbound = winner?.direction === 'outbound';
+
+      return inbox;
+    });
   },
   async findActivityByContactPaginated(
     contactId: string,
