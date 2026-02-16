@@ -554,15 +554,16 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
     async function gracefulHangupAfterGoodbye(opts?: {
       goodbyeText?: string;
       context?: CallContext;
-      skipAiClosing?: boolean; // ✅ NEW
+      skipAiClosing?: boolean;
     }) {
       if (isEnding) return;
       isEnding = true;
+      busyGenerating = true;
 
       let estimatedPlaybackMs = 0;
 
       try {
-        if (opts?.context && !opts?.skipAiClosing) {
+        if (!opts?.skipAiClosing && opts?.context) {
           const closing = await scriptAgent.generateClosingScript({
             context: opts.context,
             runningSummary,
@@ -584,7 +585,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               callSid,
               streamSid,
               intent: closing.intent,
-              notesForHumanSupervisor: closing.notesForHumanSupervisor,
               phase: 'closing',
             },
           } as any);
@@ -616,7 +616,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         );
       }
 
-      // ✅ wait long enough for the callee to actually hear it (add cushion)
       await sleep(Math.min(15000, estimatedPlaybackMs + 750));
 
       await finalizeAndUpload('completed');
@@ -911,13 +910,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
                 context,
                 skipAiClosing: true,
               });
-            } catch {
-              await gracefulHangupAfterGoodbye({
-                goodbyeText: 'Okay—thank you. Have a great day. Goodbye.',
-                context,
-                skipAiClosing: true,
-              });
-            }
+            } catch {}
             return;
           }
 
@@ -1489,6 +1482,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           );
 
           deepgram.connect(async (text, info) => {
+            if (isEnding) return; // ✅ ignore anything after we begin ending
             if (!info?.isFinal) return;
 
             if (!sessionId || !contactId) {
@@ -1505,6 +1499,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               );
             }
 
+            if (isEnding) return; // ✅ double-guard (race-safe)
             utteranceBuffer.addFinal(text);
           });
 
