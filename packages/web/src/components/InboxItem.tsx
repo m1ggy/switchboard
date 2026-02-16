@@ -92,6 +92,25 @@ export function InboxItem({ inbox, isSelected, onSelect }: InboxItemProps) {
       : `You sent a file`;
   }
 
+  // ----------------------------
+  // SINGLE preview line logic:
+  // - If latest is message:
+  //   - show message text if present
+  //   - otherwise show fileSentence (e.g., attachments-only message)
+  // - If latest is call:
+  //   - show "Call Ended"
+  //   - DO NOT also show fileSentence (prevents double-line issue)
+  // ----------------------------
+  let previewText: string | null = null;
+
+  if (latestActivity === 'message' && inbox.lastMessage) {
+    previewText = inbox.lastMessage.message?.trim()
+      ? inbox.lastMessage.message
+      : fileSentence;
+  } else if (latestActivity === 'call') {
+    previewText = 'Call Ended';
+  }
+
   return (
     <div
       className={cn(
@@ -106,22 +125,9 @@ export function InboxItem({ inbox, isSelected, onSelect }: InboxItemProps) {
         {isUnread && <Badge>{inbox.unreadCount}</Badge>}
       </div>
 
-      {latestActivity === 'call' && (
-        <span className="text-sm text-muted-foreground">Call Ended</span>
-      )}
-
-      {latestActivity === 'message' && inbox.lastMessage && (
+      {previewText && (
         <span className="text-sm text-muted-foreground truncate overflow-hidden whitespace-nowrap max-w-48">
-          {inbox.lastMessage.message?.trim()
-            ? inbox.lastMessage.message
-            : (fileSentence ?? '')}
-        </span>
-      )}
-
-      {/* If latest activity is NOT message (or message text exists), still show file sentence when present */}
-      {latestActivity !== 'message' && fileSentence && (
-        <span className="text-sm text-muted-foreground truncate overflow-hidden whitespace-nowrap max-w-48">
-          📎 {fileSentence}
+          {previewText}
         </span>
       )}
 
