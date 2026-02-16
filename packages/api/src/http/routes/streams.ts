@@ -100,6 +100,66 @@ async function generateRollingMemorySummary(args: {
   return (text || '').trim().slice(0, 2000);
 }
 
+async function generateSessionAiSummary(args: {
+  openai: OpenAIClient;
+  transcriptText: string;
+  callMode: 'reassurance' | 'medication_reminder';
+}): Promise<string> {
+  const { openai, transcriptText, callMode } = args;
+
+  const styleHint =
+    callMode === 'medication_reminder'
+      ? `This was a medication reminder call. Keep it extremely short.`
+      : `This was a reassurance check-in. Keep it short and practical.`;
+
+  const input = [
+    {
+      role: 'system',
+      content:
+        'You write a concise call summary for internal call logs. ' +
+        'Plain text only. No bullet points. No headings. No PHI beyond what is in the transcript.',
+    },
+    {
+      role: 'user',
+      content: [
+        styleHint,
+        '',
+        'Transcript (user + assistant, chronological):',
+        transcriptText || '(none)',
+        '',
+        'Write a 2–4 sentence summary focusing on: how the person is doing, key concerns, actions/next steps, and any risk signals mentioned.',
+      ].join('\n'),
+    },
+  ];
+
+  const resp = await (openai as any).client.responses.create({
+    model: 'gpt-4.1-mini',
+    input,
+    temperature: 0.2,
+    max_output_tokens: 220,
+  });
+
+  const text =
+    resp.output_text ??
+    resp.output
+      ?.map((o: any) => o?.content?.map((c: any) => c?.text).join(''))
+      .join('') ??
+    '';
+
+  return (text || '').trim().slice(0, 2000);
+}
+
+function formatTranscriptForSummary(
+  rows: Array<{ speaker: string; transcript: string }>
+) {
+  return rows
+    .map(
+      (r) =>
+        `${r.speaker === 'user' ? 'User' : r.speaker === 'assistant' ? 'Assistant' : 'System'}: ${r.transcript}`
+    )
+    .join('\n');
+}
+
 /**
  * Convert Twilio Media Stream μ-law raw file -> mp3
  * Twilio μ-law: 8000 Hz, mono
@@ -157,6 +217,10 @@ function safeJson(obj: any) {
   } catch {
     return '{}';
   }
+}
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 function hasMedicationReminderGoal(goals: unknown): boolean {
@@ -220,12 +284,10 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       : null;
 
   app.get('/reassurance/stream', { websocket: true }, (socket, req) => {
-    let { scheduleId, jobId, callId } = req.query as Record<
+    let { scheduleId, jobId, callId, numberId } = req.query as Record<
       string,
       string | undefined
     >;
-
-    const { numberId } = req.query as Record<string, string | undefined>;
 
     let streamSid: string | null = null;
     let callSid: string | null = null;
@@ -276,6 +338,8 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       socket.close();
       return;
     }
+
+    const pendingMarkWaiters = new Map<string, () => void>();
 
     // ---- server -> Twilio helpers ----
     function sendAudioToTwilio(mulawBase64: string) {
@@ -394,6 +458,64 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       }
     }
 
+    async function speakScriptPayloadNoClear(
+      payload: Pick<ScriptPayload, 'segments'>
+    ) {
+      isSpeaking = true;
+      try {
+        for (const seg of payload.segments) {
+          const timing = await speakTextStreamingWithTiming(seg.text);
+          await saveOutboundTranscript({
+            text: seg.text,
+            start_ms: timing.start_ms,
+            end_ms: timing.end_ms,
+          });
+        }
+      } finally {
+        isSpeaking = false;
+
+        if (finalsWhileSpeaking.length) {
+          const queued = finalsWhileSpeaking.splice(
+            0,
+            finalsWhileSpeaking.length
+          );
+          for (const q of queued) utteranceBuffer.addFinal(q);
+        }
+      }
+    }
+
+    async function speakScriptPayloadNoClearWithDuration(
+      payload: Pick<ScriptPayload, 'segments'>
+    ): Promise<number> {
+      let totalMs = 0;
+
+      isSpeaking = true;
+      try {
+        for (const seg of payload.segments) {
+          const timing = await speakTextStreamingWithTiming(seg.text);
+          totalMs += Math.max(0, timing.end_ms - timing.start_ms);
+
+          await saveOutboundTranscript({
+            text: seg.text,
+            start_ms: timing.start_ms,
+            end_ms: timing.end_ms,
+          });
+        }
+      } finally {
+        isSpeaking = false;
+
+        if (finalsWhileSpeaking.length) {
+          const queued = finalsWhileSpeaking.splice(
+            0,
+            finalsWhileSpeaking.length
+          );
+          for (const q of queued) utteranceBuffer.addFinal(q);
+        }
+      }
+
+      return totalMs;
+    }
+
     // ---- End-of-conversation detection + hangup ----
     function shouldEndConversation(text: string) {
       const t = (text || '').trim().toLowerCase();
@@ -449,13 +571,55 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       }
     }
 
-    async function gracefulHangupAfterGoodbye(opts?: { goodbyeText?: string }) {
+    async function gracefulHangupAfterGoodbye(opts?: {
+      goodbyeText?: string;
+      context?: CallContext;
+    }) {
+      let estimatedPlaybackMs = 0;
+
+      try {
+        if (opts?.context) {
+          const closing = await scriptAgent.generateClosingScript({
+            context: opts.context,
+            runningSummary,
+          });
+
+          estimatedPlaybackMs +=
+            await speakScriptPayloadNoClearWithDuration(closing);
+
+          const closingText = closing.segments
+            .map((s) => s.text)
+            .join(' ')
+            .trim();
+          await ReassuranceCallTurnsRepository.createTurn({
+            id: crypto.randomUUID(),
+            session_id: sessionId!,
+            role: 'assistant',
+            content: closingText,
+            meta: {
+              callSid,
+              streamSid,
+              intent: closing.intent,
+              notesForHumanSupervisor: closing.notesForHumanSupervisor,
+              phase: 'closing',
+            },
+          } as any);
+        }
+      } catch (err) {
+        app.log.warn(
+          { err, callSid, streamSid },
+          '[ReassuranceStream] closing gen/speak failed; continuing'
+        );
+      }
+
       const goodbye =
         opts?.goodbyeText ??
         "Okay — thanks for chatting. I'll let you go now. Goodbye.";
 
       try {
         const timing = await speakTextStreamingWithTiming(goodbye);
+        estimatedPlaybackMs += Math.max(0, timing.end_ms - timing.start_ms);
+
         await saveOutboundTranscript({
           text: goodbye,
           start_ms: timing.start_ms,
@@ -467,6 +631,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           '[ReassuranceStream] Failed to speak goodbye; continuing hangup'
         );
       }
+
+      // ✅ wait long enough for the callee to actually hear it (add cushion)
+      await sleep(Math.min(15000, estimatedPlaybackMs + 750));
 
       await finalizeAndUpload('completed');
       await endTwilioCall('user_end_intent');
@@ -598,7 +765,29 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             } as any);
           } catch {}
 
-          await gracefulHangupAfterGoodbye();
+          const context: CallContext = {
+            userProfile: {
+              id: contactId,
+              preferredName:
+                contactProfile?.preferred_name ||
+                contactProfile?.last_state?.preferred_name ||
+                'there',
+              locale: contactProfile?.locale || 'en-US',
+              ageRange: 'adult',
+              relationshipToCaller: 'reassurance system',
+            },
+            riskLevel:
+              contactProfile?.risk_flags?.high_risk === true
+                ? 'high'
+                : contactProfile?.risk_flags?.medium_risk === true
+                  ? 'medium'
+                  : 'low',
+            callMode,
+            companyName: companyName ?? undefined,
+            callbackNumber: callbackNumber ?? undefined,
+          };
+
+          await gracefulHangupAfterGoodbye({ context });
           return;
         }
 
@@ -715,8 +904,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
                 runningSummary,
               });
 
-              await speakScriptPayload(closing);
-
               const closingText = closing.segments
                 .map((s) => s.text)
                 .join(' ')
@@ -734,11 +921,12 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
                   phase: 'closing',
                 },
               } as any);
+              await gracefulHangupAfterGoodbye({
+                goodbyeText: closingText,
+                context,
+              });
             } catch {}
 
-            await gracefulHangupAfterGoodbye({
-              goodbyeText: 'Okay, thank you. Take care. Goodbye.',
-            });
             return;
           }
 
@@ -789,6 +977,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               await gracefulHangupAfterGoodbye({
                 goodbyeText:
                   'Thanks for talking with me today. If you need support, please reach out to someone you trust. Goodbye.',
+                context,
               });
               return;
             }
@@ -1158,10 +1347,34 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           }
         }
 
+        let sessionAiSummary: string | null = null;
+
+        try {
+          const rows =
+            await ReassuranceCallTranscriptsRepository.listBySessionId(
+              sessionId
+            );
+          const transcriptText = clamp(formatTranscriptForSummary(rows), 12000);
+
+          if (transcriptText.trim().length >= 20) {
+            sessionAiSummary = await generateSessionAiSummary({
+              openai,
+              transcriptText,
+              callMode,
+            });
+          }
+        } catch (e) {
+          app.log.warn(
+            { e, sessionId },
+            '[ReassuranceStream] session ai_summary gen failed'
+          );
+        }
+
         try {
           await ReassuranceCallSessionsRepository.finalizeSession(sessionId, {
             status,
             ended_at: new Date(),
+            ai_summary: sessionAiSummary, // ✅ stored for UI
           });
         } catch (e) {
           app.log.error(
@@ -1272,6 +1485,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           scheduleId = cp.scheduleId ?? q.scheduleId ?? null;
           jobId = cp.jobId ?? q.jobId ?? null;
           callId = cp.callId ?? q.callId ?? callSid ?? null;
+          numberId = cp.numberId ?? q.numberId ?? null;
 
           app.log.info(
             {
@@ -1310,11 +1524,15 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             await bootstrapSessionAndOpening();
           } catch (err) {
             app.log.error(
-              JSON.stringify(
-                { err, scheduleId, jobId, callId, callSid },
-                null,
-                2
-              ),
+              {
+                message: (err as any)?.message,
+                stack: (err as any)?.stack,
+                scheduleId,
+                jobId,
+                callId,
+                callSid,
+                streamSid,
+              },
               '[ReassuranceStream] bootstrap failed'
             );
             socket.close();
@@ -1336,6 +1554,14 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           await finalizeAndUpload('user_hung_up');
           socket.close();
           break;
+
+        case 'mark': {
+          const name = msg.mark?.name;
+          app.log.info({ name }, '[ReassuranceStream] mark received');
+          const cb = name ? pendingMarkWaiters.get(name) : undefined;
+          if (cb) cb();
+          break;
+        }
 
         default:
           break;

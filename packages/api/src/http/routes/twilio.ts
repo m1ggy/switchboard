@@ -1333,6 +1333,7 @@ async function routes(app: FastifyInstance) {
       stream.parameter({ name: 'scheduleId', value: String(schedule.id) });
       if (jobId) stream.parameter({ name: 'jobId', value: String(jobId) });
       stream.parameter({ name: 'callId', value: String(callRow.id) });
+      stream.parameter({ name: 'numberId', value: String(schedule.number_id) });
 
       return reply.type('text/xml').status(200).send(r.toString());
     }
@@ -1550,18 +1551,9 @@ async function routes(app: FastifyInstance) {
       stream.parameter({ name: 'scheduleId', value: String(sched.id) });
       stream.parameter({ name: 'jobId', value: jobId });
       stream.parameter({ name: 'callId', value: callId });
-      stream.parameter({
-        name: 'numberId',
-        value: '71d01b59-e51c-48d4-a81a-05e13655b707',
-      });
+      stream.parameter({ name: 'numberId', value: String(sched.number_id) });
 
-      r.say(
-        'Starting media stream test now. Please say something after the beep.'
-      );
-      r.connect().stream({ url: wsUrl.toString() });
-      r.pause({ length: 5 });
-
-      return reply.type('text/xml').status(200).send(r.toString());
+      return reply.type('text/xml').status(200).send(stream.toString());
     }
   );
 }
