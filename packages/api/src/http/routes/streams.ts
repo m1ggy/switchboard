@@ -219,6 +219,10 @@ function safeJson(obj: any) {
   }
 }
 
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 function hasMedicationReminderGoal(goals: unknown): boolean {
   return (goals ?? '').toString().toLowerCase().includes('medication reminder');
 }
@@ -504,6 +508,38 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       }
     }
 
+    async function speakScriptPayloadNoClearWithDuration(
+      payload: Pick<ScriptPayload, 'segments'>
+    ): Promise<number> {
+      let totalMs = 0;
+
+      isSpeaking = true;
+      try {
+        for (const seg of payload.segments) {
+          const timing = await speakTextStreamingWithTiming(seg.text);
+          totalMs += Math.max(0, timing.end_ms - timing.start_ms);
+
+          await saveOutboundTranscript({
+            text: seg.text,
+            start_ms: timing.start_ms,
+            end_ms: timing.end_ms,
+          });
+        }
+      } finally {
+        isSpeaking = false;
+
+        if (finalsWhileSpeaking.length) {
+          const queued = finalsWhileSpeaking.splice(
+            0,
+            finalsWhileSpeaking.length
+          );
+          for (const q of queued) utteranceBuffer.addFinal(q);
+        }
+      }
+
+      return totalMs;
+    }
+
     // ---- End-of-conversation detection + hangup ----
     function shouldEndConversation(text: string) {
       const t = (text || '').trim().toLowerCase();
@@ -561,17 +597,19 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
     async function gracefulHangupAfterGoodbye(opts?: {
       goodbyeText?: string;
-      context?: CallContext; // ✅ add this
+      context?: CallContext;
     }) {
+      let estimatedPlaybackMs = 0;
+
       try {
-        // ✅ Speak proper closing (includes callback number)
         if (opts?.context) {
           const closing = await scriptAgent.generateClosingScript({
             context: opts.context,
             runningSummary,
           });
 
-          await speakScriptPayloadNoClear(closing);
+          estimatedPlaybackMs +=
+            await speakScriptPayloadNoClearWithDuration(closing);
 
           const closingText = closing.segments
             .map((s) => s.text)
@@ -604,6 +642,8 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
       try {
         const timing = await speakTextStreamingWithTiming(goodbye);
+        estimatedPlaybackMs += Math.max(0, timing.end_ms - timing.start_ms);
+
         await saveOutboundTranscript({
           text: goodbye,
           start_ms: timing.start_ms,
@@ -616,9 +656,8 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         );
       }
 
-      const markName = `end_${crypto.randomUUID()}`;
-      sendMark(markName);
-      await waitForMark(markName, 8000);
+      // ✅ wait long enough for the callee to actually hear it (add cushion)
+      await sleep(Math.min(15000, estimatedPlaybackMs + 750));
 
       await finalizeAndUpload('completed');
       await endTwilioCall('user_end_intent');
@@ -889,8 +928,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
                 runningSummary,
               });
 
-              await speakScriptPayload(closing);
-
               const closingText = closing.segments
                 .map((s) => s.text)
                 .join(' ')
@@ -908,12 +945,12 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
                   phase: 'closing',
                 },
               } as any);
+              await gracefulHangupAfterGoodbye({
+                goodbyeText: closingText,
+                context,
+              });
             } catch {}
 
-            await gracefulHangupAfterGoodbye({
-              goodbyeText: 'Okay, thank you. Take care. Goodbye.',
-              context,
-            });
             return;
           }
 
