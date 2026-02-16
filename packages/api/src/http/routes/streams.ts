@@ -341,30 +341,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
     const pendingMarkWaiters = new Map<string, () => void>();
 
-    function sendMark(name: string) {
-      if (!streamSid) return;
-      socket.send(JSON.stringify({ event: 'mark', streamSid, mark: { name } }));
-    }
-
-    function waitForMark(name: string, timeoutMs = 8000): Promise<void> {
-      return new Promise((resolve) => {
-        const timer = setTimeout(() => {
-          pendingMarkWaiters.delete(name);
-          app.log.warn({ name }, '[ReassuranceStream] mark wait timed out');
-          resolve();
-        }, timeoutMs);
-
-        pendingMarkWaiters.set(name, () => {
-          clearTimeout(timer);
-          pendingMarkWaiters.delete(name);
-          resolve();
-        });
-      });
-    }
-
-    // map markName -> callback
-    const pendingMarkWaiters = new Map<string, (markName: string) => void>();
-
     // ---- server -> Twilio helpers ----
     function sendAudioToTwilio(mulawBase64: string) {
       if (!streamSid) return;
