@@ -263,7 +263,7 @@ export default function CallLogsContent() {
             <CardDescription>Click to view details</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-2">
+            <div className="space-y-2 max-h-[60vh] overflow-scroll">
               {sessions.map((log) => {
                 const session = log.session;
 

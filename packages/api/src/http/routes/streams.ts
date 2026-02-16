@@ -335,6 +335,32 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       return;
     }
 
+    const pendingMarkWaiters = new Map<string, () => void>();
+
+    function sendMark(name: string) {
+      if (!streamSid) return;
+      socket.send(JSON.stringify({ event: 'mark', streamSid, mark: { name } }));
+    }
+
+    function waitForMark(name: string, timeoutMs = 8000): Promise<void> {
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          pendingMarkWaiters.delete(name);
+          app.log.warn({ name }, '[ReassuranceStream] mark wait timed out');
+          resolve();
+        }, timeoutMs);
+
+        pendingMarkWaiters.set(name, () => {
+          clearTimeout(timer);
+          pendingMarkWaiters.delete(name);
+          resolve();
+        });
+      });
+    }
+
+    // map markName -> callback
+    const pendingMarkWaiters = new Map<string, (markName: string) => void>();
+
     // ---- server -> Twilio helpers ----
     function sendAudioToTwilio(mulawBase64: string) {
       if (!streamSid) return;
@@ -452,6 +478,32 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       }
     }
 
+    async function speakScriptPayloadNoClear(
+      payload: Pick<ScriptPayload, 'segments'>
+    ) {
+      isSpeaking = true;
+      try {
+        for (const seg of payload.segments) {
+          const timing = await speakTextStreamingWithTiming(seg.text);
+          await saveOutboundTranscript({
+            text: seg.text,
+            start_ms: timing.start_ms,
+            end_ms: timing.end_ms,
+          });
+        }
+      } finally {
+        isSpeaking = false;
+
+        if (finalsWhileSpeaking.length) {
+          const queued = finalsWhileSpeaking.splice(
+            0,
+            finalsWhileSpeaking.length
+          );
+          for (const q of queued) utteranceBuffer.addFinal(q);
+        }
+      }
+    }
+
     // ---- End-of-conversation detection + hangup ----
     function shouldEndConversation(text: string) {
       const t = (text || '').trim().toLowerCase();
@@ -507,7 +559,45 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       }
     }
 
-    async function gracefulHangupAfterGoodbye(opts?: { goodbyeText?: string }) {
+    async function gracefulHangupAfterGoodbye(opts?: {
+      goodbyeText?: string;
+      context?: CallContext; // ✅ add this
+    }) {
+      try {
+        // ✅ Speak proper closing (includes callback number)
+        if (opts?.context) {
+          const closing = await scriptAgent.generateClosingScript({
+            context: opts.context,
+            runningSummary,
+          });
+
+          await speakScriptPayloadNoClear(closing);
+
+          const closingText = closing.segments
+            .map((s) => s.text)
+            .join(' ')
+            .trim();
+          await ReassuranceCallTurnsRepository.createTurn({
+            id: crypto.randomUUID(),
+            session_id: sessionId!,
+            role: 'assistant',
+            content: closingText,
+            meta: {
+              callSid,
+              streamSid,
+              intent: closing.intent,
+              notesForHumanSupervisor: closing.notesForHumanSupervisor,
+              phase: 'closing',
+            },
+          } as any);
+        }
+      } catch (err) {
+        app.log.warn(
+          { err, callSid, streamSid },
+          '[ReassuranceStream] closing gen/speak failed; continuing'
+        );
+      }
+
       const goodbye =
         opts?.goodbyeText ??
         "Okay — thanks for chatting. I'll let you go now. Goodbye.";
@@ -525,6 +615,10 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           '[ReassuranceStream] Failed to speak goodbye; continuing hangup'
         );
       }
+
+      const markName = `end_${crypto.randomUUID()}`;
+      sendMark(markName);
+      await waitForMark(markName, 8000);
 
       await finalizeAndUpload('completed');
       await endTwilioCall('user_end_intent');
@@ -656,7 +750,29 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             } as any);
           } catch {}
 
-          await gracefulHangupAfterGoodbye();
+          const context: CallContext = {
+            userProfile: {
+              id: contactId,
+              preferredName:
+                contactProfile?.preferred_name ||
+                contactProfile?.last_state?.preferred_name ||
+                'there',
+              locale: contactProfile?.locale || 'en-US',
+              ageRange: 'adult',
+              relationshipToCaller: 'reassurance system',
+            },
+            riskLevel:
+              contactProfile?.risk_flags?.high_risk === true
+                ? 'high'
+                : contactProfile?.risk_flags?.medium_risk === true
+                  ? 'medium'
+                  : 'low',
+            callMode,
+            companyName: companyName ?? undefined,
+            callbackNumber: callbackNumber ?? undefined,
+          };
+
+          await gracefulHangupAfterGoodbye({ context });
           return;
         }
 
@@ -796,6 +912,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
             await gracefulHangupAfterGoodbye({
               goodbyeText: 'Okay, thank you. Take care. Goodbye.',
+              context,
             });
             return;
           }
@@ -847,6 +964,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               await gracefulHangupAfterGoodbye({
                 goodbyeText:
                   'Thanks for talking with me today. If you need support, please reach out to someone you trust. Goodbye.',
+                context,
               });
               return;
             }
@@ -1423,6 +1541,14 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           await finalizeAndUpload('user_hung_up');
           socket.close();
           break;
+
+        case 'mark': {
+          const name = msg.mark?.name;
+          app.log.info({ name }, '[ReassuranceStream] mark received');
+          const cb = name ? pendingMarkWaiters.get(name) : undefined;
+          if (cb) cb();
+          break;
+        }
 
         default:
           break;
