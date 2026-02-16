@@ -46,6 +46,20 @@ function runFfmpeg(args: string[]): Promise<void> {
   });
 }
 
+function classifyMedAnswer(text: string) {
+  const t = (text || '').toLowerCase();
+
+  const neg = /\b(no|not|haven't|have not|didn't|did not)\b/.test(t);
+  const took = /\b(took|taken|already|i did)\b/.test(t);
+  const will = /\b(will|gonna|going to|i'll|i will|soon|later)\b/.test(t);
+
+  if (took && !neg) return 'took';
+  if (neg && will) return 'will_take';
+  if (neg && !will) return 'not_taking';
+  // fallback: if unclear, treat as will_take (safer for reminder UX)
+  return 'will_take';
+}
+
 async function generateRollingMemorySummary(args: {
   openai: OpenAIClient;
   priorSummary: string | null;
@@ -879,38 +893,59 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
           // ✅ Medication reminders: generate ONE closing, speak it ONCE, then hang up.
           if (callMode === 'medication_reminder') {
+            const kind = classifyMedAnswer(finalUtterance);
+            const ttsNumber = phoneForTts(callbackNumber);
+
+            let reply = '';
+            if (kind === 'took') {
+              reply = `Thank you for letting me know. I'm glad you've taken your medication.`;
+            } else if (kind === 'will_take') {
+              reply = `Thank you for letting me know. Please take your medication when you can.`;
+            } else {
+              reply = `Okay, thanks for telling me. If you need help or have questions, you can call us back.`;
+            }
+
+            const closing = ttsNumber
+              ? `Thank you for your time, ${preferredName}. Do you need anything else at all? If you need to reach us, please call ${ttsNumber}. Have a great day!`
+              : `Thank you for your time, ${preferredName}. Have a great day!`;
+
+            // speak reply + closing as two segments (so you keep your timing + transcript inserts)
+            await speakScriptPayload({
+              segments: [
+                {
+                  id: crypto.randomUUID(),
+                  text: reply,
+                  tone: 'reassuring',
+                } as any,
+                {
+                  id: crypto.randomUUID(),
+                  text: closing,
+                  tone: 'reassuring',
+                } as any,
+              ],
+            });
+
+            // log turn text
             try {
-              const closing = await scriptAgent.generateClosingScript({
-                context,
-                runningSummary,
-              });
-
-              const closingText = closing.segments
-                .map((s) => s.text)
-                .join(' ')
-                .trim();
-
               await ReassuranceCallTurnsRepository.createTurn({
                 id: crypto.randomUUID(),
                 session_id: sessionId,
                 role: 'assistant',
-                content: closingText,
+                content: `${reply} ${closing}`.trim(),
                 meta: {
                   callSid,
                   streamSid,
-                  intent: closing.intent,
-                  notesForHumanSupervisor: closing.notesForHumanSupervisor,
-                  phase: 'closing',
+                  intent: 'medication_reminder_closing',
                 },
               } as any);
-
-              // ✅ KEY FIX: skipAiClosing so we don't generate/speak ANOTHER closing inside gracefulHangupAfterGoodbye
-              await gracefulHangupAfterGoodbye({
-                goodbyeText: closingText,
-                context,
-                skipAiClosing: true,
-              });
             } catch {}
+
+            // now end
+            await gracefulHangupAfterGoodbye({
+              goodbyeText: '', // already said goodbye-ish in closing
+              context,
+              skipAiClosing: true,
+            });
             return;
           }
 
