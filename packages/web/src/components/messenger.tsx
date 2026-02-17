@@ -3,6 +3,7 @@ import { useJitsi } from '@/hooks/jitsi-provider';
 import { useTwilioVoice } from '@/hooks/twilio-provider';
 import { useLightbox } from '@/hooks/use-lightbox';
 import { useAttachmentPrep } from '@/hooks/useAttachmentPrep';
+import type { Contact } from '@/lib/schemas';
 import useMainStore from '@/lib/store';
 import { useVideoCallStore } from '@/lib/stores/videocall';
 import { parseTapback } from '@/lib/tapback';
@@ -56,7 +57,7 @@ type UIItem = any & {
   _hidden?: boolean;
 };
 
-function mergeTapbacks(list: any[]): UIItem[] {
+function mergeTapbacks(list: any[], contact: Contact): UIItem[] {
   const items: UIItem[] = list.map((x) => ({ ...x }));
 
   // index messages by chronological order: assumes `list` is already oldest->newest
@@ -83,7 +84,7 @@ function mergeTapbacks(list: any[]): UIItem[] {
       const target = items[targetIndex];
       const reaction: UIReaction = {
         emoji: tap.emoji,
-        from: it.meta?.From || it.meta?.from || it.numberId,
+        from: contact.label,
       };
 
       // dedupe same emoji/from
@@ -219,8 +220,8 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
       .slice()
       .reverse();
 
-    setItems(mergeTapbacks(ordered));
-  }, [data]);
+    setItems(mergeTapbacks(ordered, contact as Contact));
+  }, [data, contact]);
 
   useEffect(() => {
     const scrollToBottom = () => {

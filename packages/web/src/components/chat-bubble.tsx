@@ -230,6 +230,9 @@ function ChatBubble({
     ? 'bg-[#61355A] text-white'
     : 'bg-gray-200 text-gray-900';
 
+  const hasReactions = item.type === 'message' && (reactions?.length ?? 0) > 0;
+  const reactionDock = isOutbound ? 'right-3' : 'left-3';
+
   const imageAttachments =
     item.attachments?.filter((a) => a.content_type?.startsWith('image/')) || [];
   const previewImages = imageAttachments.slice(0, 3);
@@ -270,8 +273,15 @@ function ChatBubble({
   };
 
   return (
-    <div key={item.id} className={`flex flex-col gap-1 ${alignClass}`}>
-      <div className={`max-w-xs px-4 py-3 rounded-2xl ${bubbleClass}`}>
+    <div
+      key={item.id}
+      className={`flex flex-col ${alignClass} ${hasReactions ? 'gap-3' : 'gap-1'}`}
+    >
+      <div
+        className={`relative max-w-xs px-4 py-3 rounded-2xl ${bubbleClass} ${
+          hasReactions ? 'pb-5' : ''
+        }`}
+      >
         {/* image previews */}
         {previewImages.length > 0 && (
           <div className="flex gap-2 mt-1 mb-2">
@@ -315,21 +325,35 @@ function ChatBubble({
             {item.message}
           </span>
         )}
-        {item.type === 'message' && reactions?.length ? (
-          <div className="mt-2 flex flex-wrap gap-1">
-            {reactions.map((r, idx) => (
+
+        {/* dangling reactions (Messenger-style) */}
+        {hasReactions ? (
+          <div
+            className={`absolute -bottom-3 ${reactionDock} flex items-center gap-1 px-2 py-1 rounded-full shadow-sm ring-1 ${
+              isOutbound
+                ? 'bg-[#4f2a49] ring-white/15'
+                : 'bg-white ring-black/10'
+            }`}
+          >
+            {reactions!.slice(0, 6).map((r, idx) => (
               <span
                 key={`${r.emoji}-${r.from ?? ''}-${idx}`}
-                className={`text-xs px-2 py-1 rounded-full ${
-                  isOutbound
-                    ? 'bg-white/15 text-white'
-                    : 'bg-black/10 text-gray-900'
-                }`}
+                className="text-sm leading-none"
                 title={r.from ? `Reaction from ${r.from}` : 'Reaction'}
               >
                 {r.emoji}
               </span>
             ))}
+
+            {reactions!.length > 6 ? (
+              <span
+                className={`text-[10px] ${
+                  isOutbound ? 'text-white/80' : 'text-gray-600'
+                }`}
+              >
+                +{reactions!.length - 6}
+              </span>
+            ) : null}
           </div>
         ) : null}
 
