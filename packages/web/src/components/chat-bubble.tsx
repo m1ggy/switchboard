@@ -26,6 +26,11 @@ type Voicemail = {
   created_at: string;
 };
 
+type UIReaction = {
+  emoji: string;
+  from?: string;
+};
+
 type ChatBubbleProps = {
   item: {
     type: 'message' | 'call' | 'fax';
@@ -48,6 +53,7 @@ type ChatBubbleProps = {
   setIndex: (index: number) => void;
   setOpen: (open: boolean) => void;
   onPreviewFax?: (url: string) => void;
+  reactions?: UIReaction[];
 };
 
 function secondsToMMSS(s: number) {
@@ -215,6 +221,7 @@ function ChatBubble({
   setIndex,
   setOpen,
   onPreviewFax,
+  reactions,
 }: ChatBubbleProps) {
   const isOutbound =
     item?.meta?.Direction === 'OUTGOING' || item.direction === 'outbound';
@@ -308,6 +315,23 @@ function ChatBubble({
             {item.message}
           </span>
         )}
+        {item.type === 'message' && reactions?.length ? (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {reactions.map((r, idx) => (
+              <span
+                key={`${r.emoji}-${r.from ?? ''}-${idx}`}
+                className={`text-xs px-2 py-1 rounded-full ${
+                  isOutbound
+                    ? 'bg-white/15 text-white'
+                    : 'bg-black/10 text-gray-900'
+                }`}
+                title={r.from ? `Reaction from ${r.from}` : 'Reaction'}
+              >
+                {r.emoji}
+              </span>
+            ))}
+          </div>
+        ) : null}
 
         {/* plain call (no voicemail) */}
         {item.type === 'call' && !item.voicemails?.length && (

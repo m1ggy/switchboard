@@ -5,6 +5,7 @@ import { useLightbox } from '@/hooks/use-lightbox';
 import { useAttachmentPrep } from '@/hooks/useAttachmentPrep';
 import useMainStore from '@/lib/store';
 import { useVideoCallStore } from '@/lib/stores/videocall';
+import { parseTapback } from '@/lib/tapbacks';
 import { useTRPC } from '@/lib/trpc';
 import { hasFeature, type PlanName } from '@/lib/utils';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -42,6 +43,68 @@ interface MessengerProps {
   inboxId?: string | null;
   /** Optional: parent can clear selection */
   onBack?: () => void;
+}
+
+type UIReaction = {
+  emoji: string;
+  // optional: who reacted; you might have item.meta?.From or similar
+  from?: string;
+};
+
+type UIItem = any & {
+  reactions?: UIReaction[];
+  _hidden?: boolean;
+};
+
+function mergeTapbacks(list: any[]): UIItem[] {
+  const items: UIItem[] = list.map((x) => ({ ...x }));
+
+  // index messages by chronological order: assumes `list` is already oldest->newest
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it.type !== 'message') continue;
+
+    const tap = parseTapback(it.message ?? it.body);
+    if (!tap) continue;
+
+    // Find target: most recent previous message with exact same text
+    let targetIndex = -1;
+    for (let j = i - 1; j >= 0; j--) {
+      const candidate = items[j];
+      if (candidate.type !== 'message') continue;
+      const text = (candidate.message ?? candidate.body ?? '').trim();
+      if (text && text === tap.targetText.trim()) {
+        targetIndex = j;
+        break;
+      }
+    }
+
+    if (targetIndex !== -1) {
+      const target = items[targetIndex];
+      const reaction: UIReaction = {
+        emoji: tap.emoji,
+        from: it.meta?.From || it.meta?.from || it.numberId,
+      };
+
+      // dedupe same emoji/from
+      const existing = target.reactions ?? [];
+      const key = `${reaction.emoji}:${reaction.from ?? ''}`;
+      const deduped = new Map(
+        existing.map((r) => [`${r.emoji}:${r.from ?? ''}`, r])
+      );
+      deduped.set(key, reaction);
+
+      target.reactions = Array.from(deduped.values());
+
+      // hide the tapback row itself
+      it._hidden = true;
+    } else {
+      // If you can't match, keep it visible OR mark hidden depending on preference
+      // it._hidden = true;
+    }
+  }
+
+  return items.filter((x) => !x._hidden);
 }
 
 function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
@@ -155,7 +218,8 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
       .flatMap((page) => page.items)
       .slice()
       .reverse();
-    setItems(ordered);
+
+    setItems(mergeTapbacks(ordered));
   }, [data]);
 
   useEffect(() => {
@@ -574,6 +638,7 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
                     )}
                     <ChatBubble
                       item={item}
+                      reactions={item.reactions}
                       setFiles={setFiles}
                       setIndex={setIndex}
                       setOpen={setOpen}
