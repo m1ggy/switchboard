@@ -5,7 +5,7 @@ import { useLightbox } from '@/hooks/use-lightbox';
 import { useAttachmentPrep } from '@/hooks/useAttachmentPrep';
 import useMainStore from '@/lib/store';
 import { useVideoCallStore } from '@/lib/stores/videocall';
-import { parseTapback } from '@/lib/tapbacks';
+import { parseTapback } from '@/lib/tapback';
 import { useTRPC } from '@/lib/trpc';
 import { hasFeature, type PlanName } from '@/lib/utils';
 import { zodResolver } from '@hookform/resolvers/zod';
