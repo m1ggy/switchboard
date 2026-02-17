@@ -694,19 +694,20 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
       {/* COMPOSER (sticky + compact) */}
       <div
         className="
-          sticky bottom-0 z-10
-          flex flex-col gap-1 px-3 py-2 items-stretch border-t bg-background
-          md:pb-2 pb-[env(safe-area-inset-bottom)]
-        "
+    sticky bottom-0 z-10
+    flex flex-col gap-1 px-3 py-2 items-stretch border-t bg-background
+    md:pb-2 pb-[env(safe-area-inset-bottom)]
+    w-full overflow-x-hidden
+  "
       >
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-end w-full min-w-0 overflow-x-hidden">
           {hasFeature(userInfo?.selected_plan as PlanName, 'mms') && (
             <TooltipStandalone content="Add Attachment">
               <Button
                 size="icon"
                 variant="outline"
                 type="button"
-                className="h-9 w-9"
+                className="h-9 w-9 flex-shrink-0"
                 onClick={() => inputRef.current?.click()}
               >
                 <Paperclip className="h-4 w-4" />
@@ -730,9 +731,10 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
 
           <Form {...form}>
             <form
-              className="flex gap-2 items-center w-full"
+              className="flex gap-2 items-end w-full min-w-0 overflow-x-hidden"
               onSubmit={form.handleSubmit(onSubmitMessage)}
             >
+              {/* IMPORTANT: wrapper must be flex-1 min-w-0 so textarea can shrink */}
               <div className="flex-1 min-w-0">
                 <FormField
                   control={form.control}
@@ -740,14 +742,19 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
                   render={({ field }) => (
                     <FormControl>
                       <Textarea
+                        {...field}
                         ref={textareaRef}
                         rows={1}
-                        {...field}
-                        className={`w-full min-w-0 max-w-full resize-none overflow-y-auto overflow-x-hidden break-words whitespace-pre-wrap border rounded ring-accent text-sm leading-5 px-3 py-2 ${
-                          isTooLong
-                            ? 'border-red-500 focus-visible:ring-red-500'
-                            : ''
-                        }`}
+                        wrap="soft"
+                        className={`
+                    w-full min-w-0 max-w-full
+                    resize-none max-h-40
+                    overflow-y-auto overflow-x-hidden
+                    border rounded ring-accent text-sm leading-5 px-3 py-2
+                    whitespace-pre-wrap
+                    [overflow-wrap:anywhere] [word-break:break-word]
+                    ${isTooLong ? 'border-red-500 focus-visible:ring-red-500' : ''}
+                  `}
                         style={{ height: 'auto' }}
                         onInput={(e) => autosizeTextarea(e.currentTarget)}
                         onFocus={(e) => autosizeTextarea(e.currentTarget)}
@@ -770,6 +777,7 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
                 aria-label="Send message"
                 className="h-9 w-9 flex-shrink-0"
                 disabled={isTooLong || charCount === 0 || isPending}
+                title={isTooLong ? 'Message exceeds 2000 characters' : 'Send'}
               >
                 <Send className="h-4 w-4" />
               </Button>
@@ -778,7 +786,7 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
         </div>
 
         {/* counter */}
-        <div className="flex justify-end">
+        <div className="flex justify-end w-full overflow-x-hidden">
           <span
             className={`text-[11px] tabular-nums ${
               isTooLong ? 'text-red-500' : 'text-muted-foreground'
