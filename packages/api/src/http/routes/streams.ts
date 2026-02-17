@@ -1,11 +1,12 @@
+// src/routes/twilio/reassurance_stream.ts
+
+import { spawn } from 'child_process';
 import crypto from 'crypto';
+import type { FastifyInstance } from 'fastify';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import twilio from 'twilio';
-// src/routes/twilio/reassurance_stream.ts
-import { spawn } from 'child_process';
-import type { FastifyInstance } from 'fastify';
 
 import { OpenAIClient } from '@/lib/ai/openai_client';
 import {
@@ -45,6 +46,20 @@ function runFfmpeg(args: string[]): Promise<void> {
   });
 }
 
+function classifyMedAnswer(text: string) {
+  const t = (text || '').toLowerCase();
+
+  const neg = /\b(no|not|haven't|have not|didn't|did not)\b/.test(t);
+  const took = /\b(took|taken|already|i did)\b/.test(t);
+  const will = /\b(will|gonna|going to|i'll|i will|soon|later)\b/.test(t);
+
+  if (took && !neg) return 'took';
+  if (neg && will) return 'will_take';
+  if (neg && !will) return 'not_taking';
+  // fallback: if unclear, treat as will_take (safer for reminder UX)
+  return 'will_take';
+}
+
 async function generateRollingMemorySummary(args: {
   openai: OpenAIClient;
   priorSummary: string | null;
@@ -53,7 +68,6 @@ async function generateRollingMemorySummary(args: {
 }): Promise<string> {
   const { openai, priorSummary, callTranscriptSummary, callMode } = args;
 
-  // Keep it minimal: for medication reminders we don’t want long memory.
   const styleHint =
     callMode === 'medication_reminder'
       ? `This was a quick medication reminder call. Keep the summary extremely short.`
@@ -89,7 +103,6 @@ async function generateRollingMemorySummary(args: {
     max_output_tokens: 220,
   });
 
-  // Adjust if your OpenAIClient wraps differently. This is the typical responses API shape.
   const text =
     resp.output_text ??
     resp.output
@@ -316,6 +329,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
     let isSpeaking = false;
     const finalsWhileSpeaking: string[] = [];
 
+    // ✅ Prevent any repeated generation while we're hanging up
+    let isEnding = false;
+
     // ✅ Track outbound audio position for assistant transcript timings
     let outboundByteCursor = 0;
     function bytesToMs(bytes: number) {
@@ -339,12 +355,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       return;
     }
 
-    const pendingMarkWaiters = new Map<string, () => void>();
-
     // ---- server -> Twilio helpers ----
     function sendAudioToTwilio(mulawBase64: string) {
       if (!streamSid) return;
-
       socket.send(
         JSON.stringify({
           event: 'media',
@@ -434,33 +447,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       payload: Pick<ScriptPayload, 'segments'>
     ) {
       clearTwilioAudio();
-
-      isSpeaking = true;
-      try {
-        for (const seg of payload.segments) {
-          const timing = await speakTextStreamingWithTiming(seg.text);
-          await saveOutboundTranscript({
-            text: seg.text,
-            start_ms: timing.start_ms,
-            end_ms: timing.end_ms,
-          });
-        }
-      } finally {
-        isSpeaking = false;
-
-        if (finalsWhileSpeaking.length) {
-          const queued = finalsWhileSpeaking.splice(
-            0,
-            finalsWhileSpeaking.length
-          );
-          for (const q of queued) utteranceBuffer.addFinal(q);
-        }
-      }
-    }
-
-    async function speakScriptPayloadNoClear(
-      payload: Pick<ScriptPayload, 'segments'>
-    ) {
       isSpeaking = true;
       try {
         for (const seg of payload.segments) {
@@ -571,14 +557,27 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       }
     }
 
+    /**
+     * IMPORTANT FIX:
+     * We were accidentally speaking TWO closings on medication reminders because:
+     * - medication branch generated a closingText and passed it as goodbyeText
+     * - gracefulHangupAfterGoodbye ALSO generated & spoke a closing when context was provided
+     *
+     * So: add `skipAiClosing` and set it true for med reminders.
+     */
     async function gracefulHangupAfterGoodbye(opts?: {
       goodbyeText?: string;
       context?: CallContext;
+      skipAiClosing?: boolean;
     }) {
+      if (isEnding) return;
+      isEnding = true;
+      busyGenerating = true;
+
       let estimatedPlaybackMs = 0;
 
       try {
-        if (opts?.context) {
+        if (!opts?.skipAiClosing && opts?.context) {
           const closing = await scriptAgent.generateClosingScript({
             context: opts.context,
             runningSummary,
@@ -600,7 +599,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               callSid,
               streamSid,
               intent: closing.intent,
-              notesForHumanSupervisor: closing.notesForHumanSupervisor,
               phase: 'closing',
             },
           } as any);
@@ -632,7 +630,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         );
       }
 
-      // ✅ wait long enough for the callee to actually hear it (add cushion)
       await sleep(Math.min(15000, estimatedPlaybackMs + 750));
 
       await finalizeAndUpload('completed');
@@ -743,11 +740,10 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       async (finalUtterance) => {
         if (!sessionId || !contactId) return;
         if (busyGenerating) return;
+        if (isEnding) return; // ✅ NEW
         if (finalUtterance.trim().length < 2) return;
+        if (!openingDelivered) return;
 
-        if (!openingDelivered) {
-          return;
-        }
         if (isSpeaking) {
           // ✅ prevent overlap: user answered while assistant is talking
           finalsWhileSpeaking.push(finalUtterance);
@@ -854,9 +850,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             },
             riskLevel,
             lastCheckInSummary: contextBlock,
-            callMode, // ✅ REQUIRED
-
-            // ✅ NEW
+            callMode,
             companyName: companyName ?? undefined,
             callbackNumber: callbackNumber ?? undefined,
           };
@@ -873,7 +867,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           );
 
           const tSpeak = nowMs();
-          await speakScriptPayload(payload); // ✅ inserts assistant transcript rows
+          await speakScriptPayload(payload);
           app.log.info(
             { ms: Math.round(nowMs() - tSpeak) },
             '[ReassuranceStream] TTS spoken + transcript saved'
@@ -897,39 +891,65 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             },
           } as any);
 
+          // ✅ Medication reminders: generate ONE closing, speak it ONCE, then hang up.
           if (callMode === 'medication_reminder') {
-            try {
-              const closing = await scriptAgent.generateClosingScript({
-                context,
-                runningSummary,
-              });
+            const kind = classifyMedAnswer(finalUtterance);
+            const ttsNumber = phoneForTts(callbackNumber);
 
-              const closingText = closing.segments
-                .map((s) => s.text)
-                .join(' ')
-                .trim();
+            let reply = '';
+            if (kind === 'took') {
+              reply = `Thank you for letting me know. I'm glad you've taken your medication.`;
+            } else if (kind === 'will_take') {
+              reply = `Thank you for letting me know. Please take your medication when you can.`;
+            } else {
+              reply = `Okay, thanks for telling me. If you need help or have questions, you can call us back.`;
+            }
+
+            const closing = ttsNumber
+              ? `Thank you for your time, ${preferredName}. Do you need anything else at all? If you need to reach us, please call ${ttsNumber}. Have a great day!`
+              : `Thank you for your time, ${preferredName}. Have a great day!`;
+
+            // speak reply + closing as two segments (so you keep your timing + transcript inserts)
+            await speakScriptPayload({
+              segments: [
+                {
+                  id: crypto.randomUUID(),
+                  text: reply,
+                  tone: 'reassuring',
+                } as any,
+                {
+                  id: crypto.randomUUID(),
+                  text: closing,
+                  tone: 'reassuring',
+                } as any,
+              ],
+            });
+
+            // log turn text
+            try {
               await ReassuranceCallTurnsRepository.createTurn({
                 id: crypto.randomUUID(),
                 session_id: sessionId,
                 role: 'assistant',
-                content: closingText,
+                content: `${reply} ${closing}`.trim(),
                 meta: {
                   callSid,
                   streamSid,
-                  intent: closing.intent,
-                  notesForHumanSupervisor: closing.notesForHumanSupervisor,
-                  phase: 'closing',
+                  intent: 'medication_reminder_closing',
                 },
               } as any);
-              await gracefulHangupAfterGoodbye({
-                goodbyeText: closingText,
-                context,
-              });
             } catch {}
 
+            // now end
+            await gracefulHangupAfterGoodbye({
+              goodbyeText: '', // already said goodbye-ish in closing
+              context,
+              skipAiClosing: true,
+            });
             return;
           }
 
+          // ---- reassurance normal flow ----
           ReassuranceContactProfilesRepository.mergeLastState(contactId, {
             last_checkin_at: new Date().toISOString(),
             last_user_utterance: finalUtterance.slice(0, 500),
@@ -948,7 +968,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
                 runningSummary,
               });
 
-              await speakScriptPayload(closing); // ✅ inserts closing segments into transcript
+              await speakScriptPayload(closing);
 
               const closingText = closing.segments
                 .map((s) => s.text)
@@ -1045,6 +1065,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       );
       if (!schedule) throw new Error('Schedule not found');
       if (!numberId) throw new Error('Number ID not found');
+
       companyId = schedule.company_id;
       const company = companyId
         ? await UserCompaniesRepository.findCompanyById(companyId)
@@ -1055,7 +1076,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       const numberRow = numberId
         ? await NumbersRepository.findById(numberId)
         : null;
-
       callbackNumber = numberRow?.number ?? null;
 
       const contactLabel = schedule.name || schedule.phone_number || 'Unknown';
@@ -1143,7 +1163,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         riskLevel,
         companyName: companyName ?? undefined,
         callbackNumber: callbackNumber ?? undefined,
-        callMode, // ✅ REQUIRED
+        callMode,
       };
 
       try {
@@ -1197,7 +1217,8 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           },
         } as any);
       }
-      // ✅ Speak + insert assistant transcript rows (new behavior)
+
+      // Speak + insert assistant transcript rows
       await speakScriptPayload(openingPayload);
       openingDelivered = true;
       runningSummary = `Opening delivered.`;
@@ -1374,7 +1395,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           await ReassuranceCallSessionsRepository.finalizeSession(sessionId, {
             status,
             ended_at: new Date(),
-            ai_summary: sessionAiSummary, // ✅ stored for UI
+            ai_summary: sessionAiSummary,
           });
         } catch (e) {
           app.log.error(
@@ -1395,17 +1416,12 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
         // ---- rolling memory summary upsert ----
         try {
-          // Get prior summary
           const prior =
             await ReassuranceContactMemorySummaryRepository.getByContactId(
               contactId
             );
 
-          // Keep the "call notes" compact. runningSummary is fine as a starter.
-          // You can also pull recent turns if you want, but you asked to keep it simple.
           const callNotes = clamp(runningSummary || '', 2500);
-
-          // If there was basically no conversation, don’t overwrite the summary.
           if (callNotes.trim().length >= 10) {
             const updatedSummary = await generateRollingMemorySummary({
               openai,
@@ -1501,6 +1517,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           );
 
           deepgram.connect(async (text, info) => {
+            if (isEnding) return; // ✅ ignore anything after we begin ending
             if (!info?.isFinal) return;
 
             if (!sessionId || !contactId) {
@@ -1517,6 +1534,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               );
             }
 
+            if (isEnding) return; // ✅ double-guard (race-safe)
             utteranceBuffer.addFinal(text);
           });
 
@@ -1554,14 +1572,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           await finalizeAndUpload('user_hung_up');
           socket.close();
           break;
-
-        case 'mark': {
-          const name = msg.mark?.name;
-          app.log.info({ name }, '[ReassuranceStream] mark received');
-          const cb = name ? pendingMarkWaiters.get(name) : undefined;
-          if (cb) cb();
-          break;
-        }
 
         default:
           break;
