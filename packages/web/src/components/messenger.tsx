@@ -733,42 +733,43 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
               className="flex gap-2 items-center w-full"
               onSubmit={form.handleSubmit(onSubmitMessage)}
             >
-              <FormField
-                control={form.control}
-                name="message"
-                render={({ field }) => (
-                  <FormControl>
-                    <Textarea
-                      ref={textareaRef}
-                      className={`border rounded w-full resize-none max-h-40 overflow-y-auto ring-accent text-sm leading-5 px-3 py-2 ${
-                        isTooLong
-                          ? 'border-red-500 focus-visible:ring-red-500'
-                          : ''
-                      }`}
-                      rows={1}
-                      {...field}
-                      onInput={(e) => autosizeTextarea(e.currentTarget)}
-                      onFocus={(e) => autosizeTextarea(e.currentTarget)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          form.handleSubmit(onSubmitMessage)();
-                        }
-                      }}
-                      style={{ height: 'auto' }}
-                    />
-                  </FormControl>
-                )}
-              />
+              <div className="flex-1 min-w-0">
+                <FormField
+                  control={form.control}
+                  name="message"
+                  render={({ field }) => (
+                    <FormControl>
+                      <Textarea
+                        ref={textareaRef}
+                        rows={1}
+                        {...field}
+                        className={`w-full min-w-0 max-w-full resize-none overflow-y-auto overflow-x-hidden break-words whitespace-pre-wrap border rounded ring-accent text-sm leading-5 px-3 py-2 ${
+                          isTooLong
+                            ? 'border-red-500 focus-visible:ring-red-500'
+                            : ''
+                        }`}
+                        style={{ height: 'auto' }}
+                        onInput={(e) => autosizeTextarea(e.currentTarget)}
+                        onFocus={(e) => autosizeTextarea(e.currentTarget)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            form.handleSubmit(onSubmitMessage)();
+                          }
+                        }}
+                      />
+                    </FormControl>
+                  )}
+                />
+              </div>
 
               <Button
                 size="icon"
                 variant="outline"
                 type="submit"
                 aria-label="Send message"
-                className="h-9 w-9"
+                className="h-9 w-9 flex-shrink-0"
                 disabled={isTooLong || charCount === 0 || isPending}
-                title={isTooLong ? 'Message exceeds 2000 characters' : 'Send'}
               >
                 <Send className="h-4 w-4" />
               </Button>
