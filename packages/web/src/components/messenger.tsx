@@ -135,8 +135,6 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
     trpc.inboxes.markAsViewed.mutationOptions()
   );
 
-  console.log({ userInfo });
-
   const { mutateAsync: sendMessage, isPending } = useMutation(
     trpc.twilio.sendSMS.mutationOptions()
   );
@@ -151,11 +149,10 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
       { enabled: !!contactId }
     )
   );
-  // 👇 new: mutation for updating contact label
+
   const { mutateAsync: updateContactLabel, isPending: isUpdatingLabel } =
     useMutation(trpc.contacts.updateCompanyContact.mutationOptions());
 
-  // 👇 new: local state for popover and label input
   const [isEditingLabel, setIsEditingLabel] = useState(false);
   const [contactLabel, setContactLabel] = useState(contact?.label ?? '');
 
@@ -209,9 +206,19 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
     }
   }, [contactId, inboxId, refetchMessages]);
 
+  // ---- form + char counter ----
+  const MAX_CHARS = 2000;
+
   const form = useForm({
-    resolver: zodResolver(z.object({ message: z.string().min(1).max(500) })),
+    resolver: zodResolver(
+      z.object({ message: z.string().min(1).max(MAX_CHARS) })
+    ),
+    defaultValues: { message: '' },
   });
+
+  const messageValue = form.watch('message') ?? '';
+  const charCount = messageValue.length;
+  const isTooLong = charCount > MAX_CHARS;
 
   useEffect(() => {
     if (!data?.pages) return;
@@ -219,7 +226,6 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
       .flatMap((page) => page.items)
       .slice()
       .reverse();
-
     setItems(mergeTapbacks(ordered, contact as Contact));
   }, [data, contact]);
 
@@ -283,6 +289,7 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
 
   async function onSubmitMessage(data: { message: string }) {
     if (!contactId) return;
+    if (data.message.length > MAX_CHARS) return; // extra guard
 
     const base64s = await getBase64Attachments();
     const mappedAttachments = attachments.map((_, index) => ({
@@ -439,7 +446,6 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
       });
 
       setIsEditingLabel(false);
-      // Ensure query reflects latest label
       refetchContact();
     } catch (err) {
       console.error('Failed to update contact label', err);
@@ -689,78 +695,97 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
       <div
         className="
           sticky bottom-0 z-10
-          flex gap-2 px-3 py-2 items-center border-t bg-background
+          flex flex-col gap-1 px-3 py-2 items-stretch border-t bg-background
           md:pb-2 pb-[env(safe-area-inset-bottom)]
         "
       >
-        {hasFeature(userInfo?.selected_plan as PlanName, 'mms') && (
-          <TooltipStandalone content="Add Attachment">
-            <Button
-              size="icon"
-              variant="outline"
-              type="button"
-              className="h-9 w-9"
-              onClick={() => inputRef.current?.click()}
+        <div className="flex gap-2 items-center">
+          {hasFeature(userInfo?.selected_plan as PlanName, 'mms') && (
+            <TooltipStandalone content="Add Attachment">
+              <Button
+                size="icon"
+                variant="outline"
+                type="button"
+                className="h-9 w-9"
+                onClick={() => inputRef.current?.click()}
+              >
+                <Paperclip className="h-4 w-4" />
+              </Button>
+            </TooltipStandalone>
+          )}
+
+          <input
+            ref={inputRef}
+            id="file-upload"
+            type="file"
+            accept="image/*,video/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              if (files.length) files.forEach(addAttachment);
+              e.target.value = '';
+            }}
+          />
+
+          <Form {...form}>
+            <form
+              className="flex gap-2 items-center w-full"
+              onSubmit={form.handleSubmit(onSubmitMessage)}
             >
-              <Paperclip className="h-4 w-4" />
-            </Button>
-          </TooltipStandalone>
-        )}
+              <FormField
+                control={form.control}
+                name="message"
+                render={({ field }) => (
+                  <FormControl>
+                    <Textarea
+                      ref={textareaRef}
+                      className={`border rounded w-full resize-none max-h-40 overflow-y-auto ring-accent text-sm leading-5 px-3 py-2 ${
+                        isTooLong
+                          ? 'border-red-500 focus-visible:ring-red-500'
+                          : ''
+                      }`}
+                      rows={1}
+                      {...field}
+                      onInput={(e) => autosizeTextarea(e.currentTarget)}
+                      onFocus={(e) => autosizeTextarea(e.currentTarget)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          form.handleSubmit(onSubmitMessage)();
+                        }
+                      }}
+                      style={{ height: 'auto' }}
+                    />
+                  </FormControl>
+                )}
+              />
 
-        <input
-          ref={inputRef}
-          id="file-upload"
-          type="file"
-          accept="image/*,video/*"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            const files = Array.from(e.target.files ?? []);
-            if (files.length) files.forEach(addAttachment);
-            e.target.value = '';
-          }}
-        />
+              <Button
+                size="icon"
+                variant="outline"
+                type="submit"
+                aria-label="Send message"
+                className="h-9 w-9"
+                disabled={isTooLong || charCount === 0 || isPending}
+                title={isTooLong ? 'Message exceeds 2000 characters' : 'Send'}
+              >
+                <Send className="h-4 w-4" />
+              </Button>
+            </form>
+          </Form>
+        </div>
 
-        <Form {...form}>
-          <form
-            className="flex gap-2 items-center w-full"
-            onSubmit={form.handleSubmit(onSubmitMessage)}
+        {/* counter */}
+        <div className="flex justify-end">
+          <span
+            className={`text-[11px] tabular-nums ${
+              isTooLong ? 'text-red-500' : 'text-muted-foreground'
+            }`}
           >
-            <FormField
-              control={form.control}
-              name="message"
-              render={({ field }) => (
-                <FormControl>
-                  <Textarea
-                    ref={textareaRef}
-                    className="border rounded w-full resize-none max-h-40 overflow-y-auto ring-accent text-sm leading-5 px-3 py-2"
-                    rows={1}
-                    {...field}
-                    onInput={(e) => autosizeTextarea(e.currentTarget)}
-                    onFocus={(e) => autosizeTextarea(e.currentTarget)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        form.handleSubmit(onSubmitMessage)();
-                      }
-                    }}
-                    style={{ height: 'auto' }}
-                  />
-                </FormControl>
-              )}
-            />
-
-            <Button
-              size="icon"
-              variant="outline"
-              type="submit"
-              aria-label="Send message"
-              className="h-9 w-9"
-            >
-              <Send className="h-4 w-4" />
-            </Button>
-          </form>
-        </Form>
+            {charCount}/{MAX_CHARS}
+          </span>
+        </div>
       </div>
 
       {/* PORTALS / MODALS */}
