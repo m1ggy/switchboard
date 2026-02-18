@@ -46,6 +46,17 @@ function runFfmpeg(args: string[]): Promise<void> {
   });
 }
 
+function resolveCallModeFromScheduleTemplate(
+  template: string | null | undefined
+): 'reassurance' | 'medication_reminder' {
+  const t = (template ?? '').trim().toLowerCase();
+
+  if (t === 'medication_reminder') return 'medication_reminder';
+
+  // treat 'wellness' (and anything else) as normal reassurance
+  return 'reassurance';
+}
+
 function classifyMedAnswer(text: string) {
   const t = (text || '').toLowerCase();
 
@@ -894,7 +905,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           // ✅ Medication reminders: generate ONE closing, speak it ONCE, then hang up.
           if (callMode === 'medication_reminder') {
             const kind = classifyMedAnswer(finalUtterance);
-            const ttsNumber = phoneForTts(callbackNumber);
+            const ttsNumber = callbackNumber;
 
             let reply = '';
             if (kind === 'took') {
@@ -1063,6 +1074,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       const schedule = await ReassuranceSchedulesRepository.find(
         Number(scheduleId)
       );
+
       if (!schedule) throw new Error('Schedule not found');
       if (!numberId) throw new Error('Number ID not found');
 
@@ -1090,9 +1102,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       contactProfile =
         await ReassuranceContactProfilesRepository.getByContactId(contact.id);
 
-      callMode = hasMedicationReminderGoal(contactProfile?.goals)
-        ? 'medication_reminder'
-        : 'reassurance';
+      callMode = resolveCallModeFromScheduleTemplate(
+        (schedule as any)?.template
+      );
 
       // medication reminder calls are one-turn
       MAX_ASSISTANT_REPLIES = callMode === 'medication_reminder' ? 1 : 3;
