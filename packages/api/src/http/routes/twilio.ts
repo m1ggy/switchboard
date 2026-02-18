@@ -858,7 +858,7 @@ async function routes(app: FastifyInstance) {
     }
 
     notifyNewMessage({
-      from: From,
+      from: contact.label,
       toNumber: To,
       message: Body,
       app,

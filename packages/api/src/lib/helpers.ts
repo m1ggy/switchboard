@@ -1,4 +1,5 @@
 import { UserCompaniesRepository } from '@/db/repositories/companies';
+import { ContactsRepository } from '@/db/repositories/contacts';
 import { NotificationsRepository } from '@/db/repositories/notifications';
 import { NumbersRepository } from '@/db/repositories/numbers';
 import crypto from 'crypto';
@@ -45,9 +46,11 @@ async function notifyIncomingCall({
       `👤 Found user ${userCompany.user_id} for company ${existingCompany.name}`
     );
 
+    const contact = await ContactsRepository.findByNumber(callerId);
+
     const notif = await NotificationsRepository.create({
       id: crypto.randomUUID() as string,
-      message: `Incoming call from ${callerId}`,
+      message: `Incoming call from ${contact?.label ?? callerId}`,
       createdAt: new Date(),
       meta: { companyId: existingCompany.id },
       userId: userCompany.user_id,
