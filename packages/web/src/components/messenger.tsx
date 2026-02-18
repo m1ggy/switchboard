@@ -84,7 +84,7 @@ function mergeTapbacks(list: any[], contact: Contact): UIItem[] {
       const target = items[targetIndex];
       const reaction: UIReaction = {
         emoji: tap.emoji,
-        from: contact.label,
+        from: contact?.label,
       };
 
       // dedupe same emoji/from
