@@ -442,13 +442,15 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       } finally {
         isSpeaking = false;
 
-        // ✅ flush anything the user said while we were speaking
-        if (finalsWhileSpeaking.length) {
+        // ✅ flush anything the user said while we were speaking (unless we're ending)
+        if (!isEnding && finalsWhileSpeaking.length) {
           const queued = finalsWhileSpeaking.splice(
             0,
             finalsWhileSpeaking.length
           );
           for (const q of queued) utteranceBuffer.addFinal(q);
+        } else {
+          finalsWhileSpeaking.length = 0;
         }
       }
     }
@@ -471,12 +473,14 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       } finally {
         isSpeaking = false;
 
-        if (finalsWhileSpeaking.length) {
+        if (!isEnding && finalsWhileSpeaking.length) {
           const queued = finalsWhileSpeaking.splice(
             0,
             finalsWhileSpeaking.length
           );
           for (const q of queued) utteranceBuffer.addFinal(q);
+        } else {
+          finalsWhileSpeaking.length = 0;
         }
       }
     }
@@ -501,12 +505,14 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       } finally {
         isSpeaking = false;
 
-        if (finalsWhileSpeaking.length) {
+        if (!isEnding && finalsWhileSpeaking.length) {
           const queued = finalsWhileSpeaking.splice(
             0,
             finalsWhileSpeaking.length
           );
           for (const q of queued) utteranceBuffer.addFinal(q);
+        } else {
+          finalsWhileSpeaking.length = 0;
         }
       }
 
@@ -568,88 +574,108 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       }
     }
 
-    /**
-     * IMPORTANT FIX:
-     * We were accidentally speaking TWO closings on medication reminders because:
-     * - medication branch generated a closingText and passed it as goodbyeText
-     * - gracefulHangupAfterGoodbye ALSO generated & spoke a closing when context was provided
-     *
-     * So: add `skipAiClosing` and set it true for med reminders.
-     */
-    async function gracefulHangupAfterGoodbye(opts?: {
-      goodbyeText?: string;
+    // =====================================================================
+    // ✅ NEW (added near top of the WS handler):
+    // Unified end-of-call flow used by ALL branches to prevent repeats + cutoffs.
+    // =====================================================================
+    async function endCallFlow(opts: {
+      reason: string;
+      status: 'completed' | 'user_hung_up' | 'failed';
       context?: CallContext;
-      skipAiClosing?: boolean;
+      speakAiClosing?: boolean;
+      sayTextSegments?: string[];
+      goodbyeText?: string;
     }) {
       if (isEnding) return;
       isEnding = true;
       busyGenerating = true;
 
+      // Once ending, discard any queued finals so we don't generate again after closing.
+      finalsWhileSpeaking.length = 0;
+
       let estimatedPlaybackMs = 0;
 
       try {
-        if (!opts?.skipAiClosing && opts?.context) {
-          const closing = await scriptAgent.generateClosingScript({
-            context: opts.context,
-            runningSummary,
+        // Speak provided segments first (e.g., medication reply + closing)
+        if (opts.sayTextSegments?.length) {
+          estimatedPlaybackMs += await speakScriptPayloadNoClearWithDuration({
+            segments: opts.sayTextSegments.map((t) => ({
+              id: crypto.randomUUID(),
+              text: t,
+              tone: 'reassuring',
+            })) as any,
           });
-
-          estimatedPlaybackMs +=
-            await speakScriptPayloadNoClearWithDuration(closing);
-
-          const closingText = closing.segments
-            .map((s) => s.text)
-            .join(' ')
-            .trim();
-          await ReassuranceCallTurnsRepository.createTurn({
-            id: crypto.randomUUID(),
-            session_id: sessionId!,
-            role: 'assistant',
-            content: closingText,
-            meta: {
-              callSid,
-              streamSid,
-              intent: closing.intent,
-              phase: 'closing',
-            },
-          } as any);
         }
-      } catch (err) {
-        app.log.warn(
-          { err, callSid, streamSid },
-          '[ReassuranceStream] closing gen/speak failed; continuing'
-        );
+
+        // Optional AI closing
+        if (opts.speakAiClosing && opts.context) {
+          try {
+            const closing = await scriptAgent.generateClosingScript({
+              context: opts.context,
+              runningSummary,
+            });
+
+            estimatedPlaybackMs +=
+              await speakScriptPayloadNoClearWithDuration(closing);
+
+            const closingText = closing.segments
+              .map((s) => s.text)
+              .join(' ')
+              .trim();
+
+            await ReassuranceCallTurnsRepository.createTurn({
+              id: crypto.randomUUID(),
+              session_id: sessionId!,
+              role: 'assistant',
+              content: closingText,
+              meta: {
+                callSid,
+                streamSid,
+                intent: closing.intent,
+                phase: 'closing',
+              },
+            } as any);
+          } catch (err) {
+            app.log.warn(
+              { err, callSid, streamSid },
+              '[ReassuranceStream] AI closing failed; continuing'
+            );
+          }
+        }
+
+        // Optional final goodbye line (only if non-empty)
+        if (opts.goodbyeText && opts.goodbyeText.trim().length) {
+          try {
+            const timing = await speakTextStreamingWithTiming(opts.goodbyeText);
+            estimatedPlaybackMs += Math.max(0, timing.end_ms - timing.start_ms);
+
+            await saveOutboundTranscript({
+              text: opts.goodbyeText,
+              start_ms: timing.start_ms,
+              end_ms: timing.end_ms,
+            });
+          } catch (err) {
+            app.log.warn(
+              { err, callSid, streamSid },
+              '[ReassuranceStream] goodbye TTS failed; continuing hangup'
+            );
+          }
+        }
+
+        // ✅ wait enough for Twilio to play last frames
+        await sleep(Math.min(15000, estimatedPlaybackMs + 750));
+
+        await finalizeAndUpload(opts.status);
+        await endTwilioCall(opts.reason);
+
+        try {
+          socket.close();
+        } catch {}
+      } finally {
+        // keep isEnding = true
       }
-
-      const goodbye =
-        opts?.goodbyeText ??
-        "Okay — thanks for chatting. I'll let you go now. Goodbye.";
-
-      try {
-        const timing = await speakTextStreamingWithTiming(goodbye);
-        estimatedPlaybackMs += Math.max(0, timing.end_ms - timing.start_ms);
-
-        await saveOutboundTranscript({
-          text: goodbye,
-          start_ms: timing.start_ms,
-          end_ms: timing.end_ms,
-        });
-      } catch (err) {
-        app.log.warn(
-          { err, callSid, streamSid },
-          '[ReassuranceStream] Failed to speak goodbye; continuing hangup'
-        );
-      }
-
-      await sleep(Math.min(15000, estimatedPlaybackMs + 750));
-
-      await finalizeAndUpload('completed');
-      await endTwilioCall('user_end_intent');
-
-      try {
-        socket.close();
-      } catch {}
     }
+    // =====================================================================
 
     // ---- Deepgram ----
     const deepgram = new DeepgramLiveTranscriber({
@@ -746,70 +772,36 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       }
     }
 
+    // ✅ UPDATED: streamlined buffer callback (med reminders handled early; max-turn uses endCallFlow)
     const utteranceBuffer = new FinalUtteranceBuffer(
       300,
       async (finalUtterance) => {
         if (!sessionId || !contactId) return;
         if (busyGenerating) return;
-        if (isEnding) return; // ✅ NEW
+        if (isEnding) return;
         if (finalUtterance.trim().length < 2) return;
         if (!openingDelivered) return;
 
         if (isSpeaking) {
-          // ✅ prevent overlap: user answered while assistant is talking
           finalsWhileSpeaking.push(finalUtterance);
           return;
         }
 
-        if (shouldEndConversation(finalUtterance)) {
-          try {
-            await ReassuranceCallTurnsRepository.createTurn({
-              id: crypto.randomUUID(),
-              session_id: sessionId,
-              role: 'user',
-              content: finalUtterance,
-              meta: { callSid, streamSid, end_intent: true },
-            } as any);
-          } catch {}
-
-          const context: CallContext = {
-            userProfile: {
-              id: contactId,
-              preferredName:
-                contactProfile?.preferred_name ||
-                contactProfile?.last_state?.preferred_name ||
-                'there',
-              locale: contactProfile?.locale || 'en-US',
-              ageRange: 'adult',
-              relationshipToCaller: 'reassurance system',
-            },
-            riskLevel:
-              contactProfile?.risk_flags?.high_risk === true
-                ? 'high'
-                : contactProfile?.risk_flags?.medium_risk === true
-                  ? 'medium'
-                  : 'low',
-            callMode,
-            companyName: companyName ?? undefined,
-            callbackNumber: callbackNumber ?? undefined,
-          };
-
-          await gracefulHangupAfterGoodbye({ context });
-          return;
-        }
-
-        busyGenerating = true;
-        const tAll = nowMs();
-
+        // Log user turn (best-effort)
         try {
-          const userTurnPromise = ReassuranceCallTurnsRepository.createTurn({
+          await ReassuranceCallTurnsRepository.createTurn({
             id: crypto.randomUUID(),
             session_id: sessionId,
             role: 'user',
             content: finalUtterance,
             meta: { callSid, streamSid },
           } as any);
+        } catch {}
 
+        busyGenerating = true;
+        const tAll = nowMs();
+
+        try {
           const memSummaryPromise =
             ReassuranceContactMemorySummaryRepository.getByContactId(contactId);
 
@@ -818,8 +810,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               sessionId,
               15
             );
-
-          await userTurnPromise;
 
           const [memSummary, recentTurnsRaw] = await Promise.all([
             memSummaryPromise,
@@ -866,6 +856,76 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             callbackNumber: callbackNumber ?? undefined,
           };
 
+          // User wants to end
+          if (shouldEndConversation(finalUtterance)) {
+            await endCallFlow({
+              reason: 'user_end_intent',
+              status: 'completed',
+              context,
+              speakAiClosing: true,
+              goodbyeText:
+                "Okay — thanks for chatting. I'll let you go now. Goodbye.",
+            });
+            return;
+          }
+
+          // ✅ Medication reminders: NO AI followup; speak reply + closing once, then end.
+          if (callMode === 'medication_reminder') {
+            const kind = classifyMedAnswer(finalUtterance);
+            const ttsNumber = callbackNumber;
+
+            let reply = '';
+            if (kind === 'took') {
+              reply = `Thank you for letting me know. I'm glad you've taken your medication.`;
+            } else if (kind === 'will_take') {
+              reply = `Thank you for letting me know. Please take your medication when you can.`;
+            } else {
+              reply = `Okay, thanks for telling me. If you need help or have questions, you can call us back.`;
+            }
+
+            const closing = ttsNumber
+              ? `Thank you for your time, ${preferredName}. If you need to reach us, please call ${ttsNumber}. Have a great day!`
+              : `Thank you for your time, ${preferredName}. Have a great day!`;
+
+            await speakScriptPayload({
+              segments: [
+                {
+                  id: crypto.randomUUID(),
+                  text: reply,
+                  tone: 'reassuring',
+                } as any,
+                {
+                  id: crypto.randomUUID(),
+                  text: closing,
+                  tone: 'reassuring',
+                } as any,
+              ],
+            });
+
+            try {
+              await ReassuranceCallTurnsRepository.createTurn({
+                id: crypto.randomUUID(),
+                session_id: sessionId,
+                role: 'assistant',
+                content: `${reply} ${closing}`.trim(),
+                meta: {
+                  callSid,
+                  streamSid,
+                  intent: 'medication_reminder_closing',
+                },
+              } as any);
+            } catch {}
+
+            await endCallFlow({
+              reason: 'medication_reminder_done',
+              status: 'completed',
+              context,
+              speakAiClosing: false,
+            });
+            return;
+          }
+
+          // ---- reassurance normal flow ----
           const tAi = nowMs();
           const payload = await scriptAgent.generateFollowupScript({
             context,
@@ -902,65 +962,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             },
           } as any);
 
-          // ✅ Medication reminders: generate ONE closing, speak it ONCE, then hang up.
-          if (callMode === 'medication_reminder') {
-            const kind = classifyMedAnswer(finalUtterance);
-            const ttsNumber = callbackNumber;
-
-            let reply = '';
-            if (kind === 'took') {
-              reply = `Thank you for letting me know. I'm glad you've taken your medication.`;
-            } else if (kind === 'will_take') {
-              reply = `Thank you for letting me know. Please take your medication when you can.`;
-            } else {
-              reply = `Okay, thanks for telling me. If you need help or have questions, you can call us back.`;
-            }
-
-            const closing = ttsNumber
-              ? `Thank you for your time, ${preferredName}. Do you need anything else at all? If you need to reach us, please call ${ttsNumber}. Have a great day!`
-              : `Thank you for your time, ${preferredName}. Have a great day!`;
-
-            // speak reply + closing as two segments (so you keep your timing + transcript inserts)
-            await speakScriptPayload({
-              segments: [
-                {
-                  id: crypto.randomUUID(),
-                  text: reply,
-                  tone: 'reassuring',
-                } as any,
-                {
-                  id: crypto.randomUUID(),
-                  text: closing,
-                  tone: 'reassuring',
-                } as any,
-              ],
-            });
-
-            // log turn text
-            try {
-              await ReassuranceCallTurnsRepository.createTurn({
-                id: crypto.randomUUID(),
-                session_id: sessionId,
-                role: 'assistant',
-                content: `${reply} ${closing}`.trim(),
-                meta: {
-                  callSid,
-                  streamSid,
-                  intent: 'medication_reminder_closing',
-                },
-              } as any);
-            } catch {}
-
-            // now end
-            await gracefulHangupAfterGoodbye({
-              goodbyeText: '', // already said goodbye-ish in closing
-              context,
-              skipAiClosing: true,
-            });
-            return;
-          }
-
-          // ---- reassurance normal flow ----
           ReassuranceContactProfilesRepository.mergeLastState(contactId, {
             last_checkin_at: new Date().toISOString(),
             last_user_utterance: finalUtterance.slice(0, 500),
@@ -972,46 +973,18 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           ).trim();
 
           assistantReplyCount += 1;
+
+          // ✅ MAX TURNS: unified end flow (prevents repeats + prevents cutoffs)
           if (assistantReplyCount >= MAX_ASSISTANT_REPLIES) {
-            try {
-              const closing = await scriptAgent.generateClosingScript({
-                context,
-                runningSummary,
-              });
-
-              await speakScriptPayload(closing);
-
-              const closingText = closing.segments
-                .map((s) => s.text)
-                .join(' ')
-                .trim();
-
-              await ReassuranceCallTurnsRepository.createTurn({
-                id: crypto.randomUUID(),
-                session_id: sessionId,
-                role: 'assistant',
-                content: closingText,
-                meta: {
-                  callSid,
-                  streamSid,
-                  intent: closing.intent,
-                  notesForHumanSupervisor: closing.notesForHumanSupervisor,
-                  phase: 'closing',
-                },
-              } as any);
-
-              await finalizeAndUpload('completed');
-              await endTwilioCall('ai_max_turns');
-              socket.close();
-              return;
-            } catch {
-              await gracefulHangupAfterGoodbye({
-                goodbyeText:
-                  'Thanks for talking with me today. If you need support, please reach out to someone you trust. Goodbye.',
-                context,
-              });
-              return;
-            }
+            await endCallFlow({
+              reason: 'ai_max_turns',
+              status: 'completed',
+              context,
+              speakAiClosing: true,
+              goodbyeText:
+                "Okay — thanks for chatting. I'll let you go now. Goodbye.",
+            });
+            return;
           }
 
           // embeddings + memory insert AFTER speaking (best effort)
@@ -1529,7 +1502,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           );
 
           deepgram.connect(async (text, info) => {
-            if (isEnding) return; // ✅ ignore anything after we begin ending
+            if (isEnding) return;
             if (!info?.isFinal) return;
 
             if (!sessionId || !contactId) {
@@ -1546,7 +1519,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               );
             }
 
-            if (isEnding) return; // ✅ double-guard (race-safe)
+            if (isEnding) return;
             utteranceBuffer.addFinal(text);
           });
 
