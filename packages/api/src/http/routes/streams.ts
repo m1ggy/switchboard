@@ -211,6 +211,52 @@ async function mulawToMp3(inputMulawPath: string, outputMp3Path: string) {
   ]);
 }
 
+/**
+ * Mix inbound + outbound Twilio μ-law (8kHz mono) into a single MP3 (mono mix).
+ */
+async function mixMulawToMp3(
+  inboundMulawPath: string,
+  outboundMulawPath: string,
+  outputMp3Path: string
+) {
+  await runFfmpeg([
+    '-y',
+
+    // input 0: inbound
+    '-f',
+    'mulaw',
+    '-ar',
+    '8000',
+    '-ac',
+    '1',
+    '-i',
+    inboundMulawPath,
+
+    // input 1: outbound
+    '-f',
+    'mulaw',
+    '-ar',
+    '8000',
+    '-ac',
+    '1',
+    '-i',
+    outboundMulawPath,
+
+    // mix -> resample -> mp3
+    '-filter_complex',
+    '[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=2,aresample=44100',
+
+    '-ac',
+    '1',
+    '-codec:a',
+    'libmp3lame',
+    '-b:a',
+    '96k',
+
+    outputMp3Path,
+  ]);
+}
+
 // -------------------- tiny helpers --------------------
 function tmpFile(name: string) {
   return path.join(os.tmpdir(), name);
@@ -575,8 +621,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
     }
 
     // =====================================================================
-    // ✅ NEW (added near top of the WS handler):
-    // Unified end-of-call flow used by ALL branches to prevent repeats + cutoffs.
+    // ✅ Unified end-of-call flow used by ALL branches to prevent repeats + cutoffs.
     // =====================================================================
     async function endCallFlow(opts: {
       reason: string;
@@ -772,7 +817,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       }
     }
 
-    // ✅ UPDATED: streamlined buffer callback (med reminders handled early; max-turn uses endCallFlow)
+    // ✅ Streamlined buffer callback (med reminders handled early; max-turn uses endCallFlow)
     const utteranceBuffer = new FinalUtteranceBuffer(
       300,
       async (finalUtterance) => {
@@ -1240,11 +1285,13 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
         const inboundMp3Path = tmpFile(`reassurance-in-${sessionId}.mp3`);
         const outboundMp3Path = tmpFile(`reassurance-out-${sessionId}.mp3`);
+        const mixedMp3Path = tmpFile(`reassurance-mixed-${sessionId}.mp3`);
 
         let inboundMulawUrl: string | null = null;
         let outboundMulawUrl: string | null = null;
         let inboundMp3Url: string | null = null;
         let outboundMp3Url: string | null = null;
+        let mixedMp3Url: string | null = null;
 
         try {
           await mulawToMp3(inboundPath, inboundMp3Path);
@@ -1252,7 +1299,16 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         } catch (e) {
           app.log.error(
             { e, sessionId },
-            '[ReassuranceStream] ffmpeg convert failed (mp3 will be missing)'
+            '[ReassuranceStream] ffmpeg convert failed (in/out mp3 may be missing)'
+          );
+        }
+
+        try {
+          await mixMulawToMp3(inboundPath, outboundPath, mixedMp3Path);
+        } catch (e) {
+          app.log.error(
+            { e, sessionId },
+            '[ReassuranceStream] ffmpeg mix convert failed (mixed mp3 will be missing)'
           );
         }
 
@@ -1262,6 +1318,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             : null;
           const outMp3Buf = fs.existsSync(outboundMp3Path)
             ? fs.readFileSync(outboundMp3Path)
+            : null;
+          const mixedMp3Buf = fs.existsSync(mixedMp3Path)
+            ? fs.readFileSync(mixedMp3Path)
             : null;
 
           if (inMp3Buf) {
@@ -1274,6 +1333,12 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             outboundMp3Url = await uploadAttachmentBuffer(
               outMp3Buf,
               `reassurance/audio/outbound-${sessionId}.mp3`
+            );
+          }
+          if (mixedMp3Buf) {
+            mixedMp3Url = await uploadAttachmentBuffer(
+              mixedMp3Buf,
+              `reassurance/audio/mixed-${sessionId}.mp3`
             );
           }
         } catch (e) {
@@ -1313,6 +1378,10 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
         if (companyId) {
           try {
+            const hasAnyMp3 = Boolean(
+              inboundMp3Url || outboundMp3Url || mixedMp3Url
+            );
+
             const rec = await ReassuranceCallRecordingsRepository.create({
               session_id: sessionId,
               company_id: companyId,
@@ -1321,8 +1390,8 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               stream_sid: streamSid,
               inbound_url: primaryInboundUrl,
               outbound_url: primaryOutboundUrl,
-              codec: inboundMp3Url || outboundMp3Url ? 'mp3' : 'mulaw',
-              sample_rate: inboundMp3Url || outboundMp3Url ? 44100 : 8000,
+              codec: hasAnyMp3 ? 'mp3' : 'mulaw',
+              sample_rate: hasAnyMp3 ? 44100 : 8000,
               channels: 1,
               inbound_bytes: inboundMp3Url
                 ? safeStatBytes(inboundMp3Path)
@@ -1340,6 +1409,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
                 mp3: {
                   inbound_url: inboundMp3Url,
                   outbound_url: outboundMp3Url,
+                  mixed_url: mixedMp3Url,
                 },
               },
             });
@@ -1435,6 +1505,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             status,
             inboundUrl: primaryInboundUrl,
             outboundUrl: primaryOutboundUrl,
+            mixedMp3Url,
           },
           '[ReassuranceStream] finalized + uploaded'
         );
@@ -1444,6 +1515,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         } catch {}
         try {
           fs.unlinkSync(outboundMp3Path);
+        } catch {}
+        try {
+          fs.unlinkSync(mixedMp3Path);
         } catch {}
       } catch (err) {
         app.log.error(
