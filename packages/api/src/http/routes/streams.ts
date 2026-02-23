@@ -730,10 +730,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           }
         }
 
-        // ✅ Wait based on actual bytes sent (plus a jitter buffer)
-        const jitterMs = 900;
-        const minWaitMs = 1500; // extra safety for carrier/Twilio jitter on last frames
-        await sleep(Math.min(30000, Math.max(minWaitMs, waitMs + jitterMs)));
+        const jitterMs = 350;
+        const extraPadMs = 1400; // fixed safety pad for Twilio drain
+        await sleep(Math.min(20000, waitMs + jitterMs + extraPadMs));
 
         await finalizeAndUpload(opts.status);
         await endTwilioCall(opts.reason);
