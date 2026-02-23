@@ -25,6 +25,108 @@ const getCallLogsInput = z.object({
     .default(200),
 });
 
+const createScheduleInput = z
+  .object({
+    contactId: z.string().uuid(),
+    companyId: z.string().uuid(),
+    numberId: z.string().uuid(),
+
+    name: z.string().min(1),
+    caller_name: z.string().optional().nullable(),
+
+    script_type: z.enum(['template', 'custom']),
+    template: z
+      .enum(['wellness', 'safety', 'medication', 'social'])
+      .optional()
+      .nullable(),
+    script_content: z.string().optional().nullable(),
+    name_in_script: z.enum(['contact', 'caller']),
+
+    frequency: z.enum(['daily', 'weekly', 'biweekly', 'monthly', 'custom']),
+    frequency_days: z.number().int().positive().optional().nullable(),
+    frequency_time: z.string().min(1),
+
+    selected_days: z
+      .array(
+        z.enum([
+          'monday',
+          'tuesday',
+          'wednesday',
+          'thursday',
+          'friday',
+          'saturday',
+          'sunday',
+        ])
+      )
+      .optional()
+      .nullable(),
+
+    calls_per_day: z.number().int().positive(),
+    max_attempts: z.number().int().positive(),
+    retry_interval: z.number().int().positive(),
+
+    is_active: z.boolean().optional().nullable(),
+
+    emergency_contact_name: z.string().optional().nullable(),
+    emergency_contact_phone_number: z.string().optional().nullable(),
+  })
+  .superRefine((data, ctx) => {
+    // WEEKLY / BIWEEKLY must have selected_days
+    if (data.frequency === 'weekly' || data.frequency === 'biweekly') {
+      if (!data.selected_days || data.selected_days.length === 0) {
+        ctx.addIssue({
+          path: ['selected_days'],
+          code: z.ZodIssueCode.custom,
+          message: 'selected_days is required for weekly/biweekly frequency',
+        });
+      }
+    }
+
+    // CUSTOM must have frequency_days
+    if (data.frequency === 'custom') {
+      if (!data.frequency_days || data.frequency_days <= 0) {
+        ctx.addIssue({
+          path: ['frequency_days'],
+          code: z.ZodIssueCode.custom,
+          message: 'frequency_days is required for custom frequency',
+        });
+      }
+    }
+
+    // MONTHLY should be 30 (if provided)
+    if (data.frequency === 'monthly') {
+      if (data.frequency_days && data.frequency_days !== 30) {
+        ctx.addIssue({
+          path: ['frequency_days'],
+          code: z.ZodIssueCode.custom,
+          message: 'monthly frequency must use frequency_days = 30',
+        });
+      }
+    }
+
+    // TEMPLATE SCRIPT must have template
+    if (data.script_type === 'template') {
+      if (!data.template) {
+        ctx.addIssue({
+          path: ['template'],
+          code: z.ZodIssueCode.custom,
+          message: 'template is required when script_type = template',
+        });
+      }
+    }
+
+    // CUSTOM SCRIPT must have script_content
+    if (data.script_type === 'custom') {
+      if (!data.script_content || data.script_content.trim().length === 0) {
+        ctx.addIssue({
+          path: ['script_content'],
+          code: z.ZodIssueCode.custom,
+          message: 'script_content is required when script_type = custom',
+        });
+      }
+    }
+  });
+
 const updateScheduleInput = z.object({
   id: z.number().int(),
 
@@ -456,5 +558,83 @@ export const reassuranceContactProfilesRouter = t.router({
         emergency_contact_phone_number:
           input.emergency_contact_phone_number ?? null,
       });
+    }),
+
+  /**
+   * ✅ Then add this new procedure inside reassuranceContactProfilesRouter
+   * Place it near `update` (same router)
+   */
+  createSchedule: protectedProcedure
+    .input(createScheduleInput)
+    .mutation(async ({ input }) => {
+      const client = await pool.connect();
+
+      try {
+        await client.query('BEGIN');
+
+        // Ensure contact exists (and get phone number)
+        const contact = await ContactsRepository.findById?.(input.contactId);
+        if (!contact) {
+          throw new Error('Contact not found');
+        }
+
+        // Create schedule
+        const schedule = await ReassuranceSchedulesRepository.include(
+          {
+            name: input.name,
+            phone_number: contact.number, // ✅ from contact (source of truth)
+            caller_name: input.caller_name ?? null,
+
+            emergency_contact_name: input.emergency_contact_name ?? null,
+            emergency_contact_phone_number:
+              input.emergency_contact_phone_number ?? null,
+
+            script_type: input.script_type,
+            template: input.template ?? null,
+            script_content: input.script_content ?? null,
+            name_in_script: input.name_in_script,
+
+            frequency: input.frequency,
+            frequency_days: input.frequency_days ?? null,
+            frequency_time: input.frequency_time,
+
+            // ✅ only use selected_days if weekly/biweekly, otherwise null
+            selected_days:
+              input.frequency === 'weekly' || input.frequency === 'biweekly'
+                ? (input.selected_days ?? ['monday'])
+                : null,
+
+            calls_per_day: input.calls_per_day,
+            max_attempts: input.max_attempts,
+            retry_interval: input.retry_interval,
+
+            company_id: input.companyId,
+            number_id: input.numberId,
+          },
+          client
+        );
+
+        // Create job
+        const runAt = getNextRunAtForSchedule(schedule);
+
+        await ReassuranceCallJobsRepository.include(
+          {
+            id: crypto.randomUUID(),
+            schedule_id: schedule.id,
+            run_at: runAt,
+            attempt: 1,
+            status: 'pending',
+          },
+          client
+        );
+
+        await client.query('COMMIT');
+        return schedule;
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
     }),
 });

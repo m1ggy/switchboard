@@ -181,6 +181,34 @@ export default function Dashboard({
                     </div>
 
                     <div className="flex gap-2">
+                      {/* ✅ Add Schedule */}
+                      <button
+                        onClick={() => {
+                          const newSchedule: Schedule = {
+                            id: 0, // sentinel "new" (adjust if your dialog expects undefined/null)
+                            phone_number: contact.number,
+                            name:
+                              profile?.preferred_name ??
+                              contact.label ??
+                              'New Schedule',
+                            frequency: 'daily',
+                            is_active: true,
+                            emergency_contact_name: null,
+                            selected_days: null,
+                            frequency_time: null,
+                          };
+
+                          setEditingSchedule(newSchedule);
+                          setEditingContact(contact);
+                          setShowEditSchedule(true);
+                        }}
+                        className="p-1 hover:bg-muted rounded-md transition-colors"
+                        title="Add schedule"
+                        aria-label="Add schedule"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+
                       {/* Edit Profile */}
                       <button
                         onClick={() => {
@@ -198,6 +226,8 @@ export default function Dashboard({
                           setShowEditProfile(true);
                         }}
                         className="p-1 hover:bg-muted rounded-md transition-colors"
+                        title="Edit profile"
+                        aria-label="Edit profile"
                       >
                         <Edit className="w-4 h-4" />
                       </button>
@@ -206,6 +236,8 @@ export default function Dashboard({
                       <button
                         onClick={() => handleDeleteProfile(contact.id)}
                         className="p-1 hover:bg-destructive/10 rounded-md transition-colors"
+                        title="Delete profile"
+                        aria-label="Delete profile"
                       >
                         <Trash2 className="w-4 h-4 text-destructive" />
                       </button>
@@ -287,6 +319,8 @@ export default function Dashboard({
                                   setShowEditSchedule(true);
                                 }}
                                 className="p-1 hover:bg-background rounded transition-colors"
+                                title="Edit schedule"
+                                aria-label="Edit schedule"
                               >
                                 <Edit className="w-3 h-3" />
                               </button>
@@ -296,6 +330,8 @@ export default function Dashboard({
                                   handleDeleteSchedule(schedule.id)
                                 }
                                 className="p-1 hover:bg-destructive/10 rounded transition-colors"
+                                title="Delete schedule"
+                                aria-label="Delete schedule"
                               >
                                 <Trash2 className="w-3 h-3 text-destructive" />
                               </button>
@@ -316,10 +352,14 @@ export default function Dashboard({
       {editingProfile && (
         <EditProfileDialog
           open={showEditProfile}
-          onOpenChange={setShowEditProfile}
+          onOpenChange={(open) => {
+            setShowEditProfile(open);
+            if (!open) setEditingProfile(null);
+          }}
           profile={editingProfile}
           onSuccess={async () => {
             setShowEditProfile(false);
+            setEditingProfile(null);
             await refetch();
           }}
         />
@@ -329,13 +369,21 @@ export default function Dashboard({
       {editingSchedule && editingContact && (
         <EditScheduleDialog
           open={showEditSchedule}
-          onOpenChange={setShowEditSchedule}
+          onOpenChange={(open) => {
+            setShowEditSchedule(open);
+            if (!open) {
+              setEditingSchedule(null);
+              setEditingContact(null);
+            }
+          }}
           schedule={editingSchedule}
+          contact={editingContact}
           onSuccess={async () => {
             setShowEditSchedule(false);
+            setEditingSchedule(null);
+            setEditingContact(null);
             await refetch();
           }}
-          contact={editingContact}
         />
       )}
     </div>
