@@ -12,6 +12,10 @@ import { ReassuranceSchedulesRepository } from '@/db/repositories/reassurance_sc
 import { getNextRunAtForSchedule } from '@/lib/jobs/getNextRunAtForSchedule';
 import { ReassuranceCallSchedule } from '@/types/db';
 
+const deleteScheduleInput = z.object({
+  id: z.number().int(),
+});
+
 const getCallLogsInput = z.object({
   contactId: z.string().uuid(),
   limit: z.number().int().positive().max(200).optional().default(20),
@@ -630,6 +634,43 @@ export const reassuranceContactProfilesRouter = t.router({
 
         await client.query('COMMIT');
         return schedule;
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    }),
+
+  deleteSchedule: protectedProcedure
+    .input(deleteScheduleInput)
+    .mutation(async ({ input }) => {
+      const client = await pool.connect();
+
+      try {
+        await client.query('BEGIN');
+
+        // 1) Delete any jobs for this schedule first (avoid FK issues)
+        // NOTE: adjust table name/column if yours differs
+        await client.query(
+          `DELETE FROM reassurance_calls_jobs WHERE schedule_id = $1`,
+          [input.id]
+        );
+
+        // 2) Delete schedule
+        // Prefer repository if you have one; otherwise use SQL
+        // If you already have ReassuranceSchedulesRepository.delete(id, client), use that instead.
+        const res = await client.query(
+          `DELETE FROM reassurance_schedules WHERE id = $1 RETURNING id`,
+          [input.id]
+        );
+
+        if (res.rowCount === 0) {
+          throw new Error('Schedule not found');
+        }
+
+        await client.query('COMMIT');
+        return { id: input.id };
       } catch (err) {
         await client.query('ROLLBACK');
         throw err;

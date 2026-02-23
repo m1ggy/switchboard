@@ -4,8 +4,18 @@ import { Link } from 'react-router';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -71,6 +81,12 @@ export default function Dashboard({
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [showEditSchedule, setShowEditSchedule] = useState(false);
 
+  // ✅ Delete schedule confirmation dialog state
+  const [showDeleteSchedule, setShowDeleteSchedule] = useState(false);
+  const [scheduleToDelete, setScheduleToDelete] = useState<Schedule | null>(
+    null
+  );
+
   /**
    * ✅ Fetch Contact + Profile + Schedules[]
    */
@@ -80,6 +96,11 @@ export default function Dashboard({
         companyId: activeCompany?.id as string,
       }
     )
+  );
+
+  // ✅ Delete schedule mutation
+  const deleteScheduleMutation = useMutation(
+    trpc.reassuranceContactProfiles.deleteSchedule.mutationOptions()
   );
 
   const rows: Row[] = (data ?? []) as any;
@@ -110,10 +131,22 @@ export default function Dashboard({
     // await refetch()
   };
 
-  const handleDeleteSchedule = async (scheduleId: number) => {
-    console.log('Delete schedule:', scheduleId);
-    // if you add delete schedule endpoint later, call it here
-    // await refetch()
+  const openDeleteScheduleDialog = (schedule: Schedule) => {
+    setScheduleToDelete(schedule);
+    setShowDeleteSchedule(true);
+  };
+
+  const confirmDeleteSchedule = async () => {
+    if (!scheduleToDelete) return;
+
+    try {
+      await deleteScheduleMutation.mutateAsync({ id: scheduleToDelete.id });
+      setShowDeleteSchedule(false);
+      setScheduleToDelete(null);
+      await refetch();
+    } catch (err) {
+      console.error('[Dashboard] delete schedule failed', err);
+    }
   };
 
   return (
@@ -185,7 +218,7 @@ export default function Dashboard({
                       <button
                         onClick={() => {
                           const newSchedule: Schedule = {
-                            id: 0, // sentinel "new" (adjust if your dialog expects undefined/null)
+                            id: 0,
                             phone_number: contact.number,
                             name:
                               profile?.preferred_name ??
@@ -325,9 +358,10 @@ export default function Dashboard({
                                 <Edit className="w-3 h-3" />
                               </button>
 
+                              {/* ✅ Delete Schedule (with confirmation) */}
                               <button
                                 onClick={() =>
-                                  handleDeleteSchedule(schedule.id)
+                                  openDeleteScheduleDialog(schedule)
                                 }
                                 className="p-1 hover:bg-destructive/10 rounded transition-colors"
                                 title="Delete schedule"
@@ -347,6 +381,43 @@ export default function Dashboard({
           })}
         </div>
       )}
+
+      {/* ✅ Delete Schedule Confirmation */}
+      <AlertDialog
+        open={showDeleteSchedule}
+        onOpenChange={(open) => {
+          setShowDeleteSchedule(open);
+          if (!open) setScheduleToDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete schedule?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete{' '}
+              <span className="font-medium">
+                {scheduleToDelete?.name ?? 'this schedule'}
+              </span>
+              . This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteScheduleMutation.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmDeleteSchedule();
+              }}
+              disabled={deleteScheduleMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteScheduleMutation.isPending ? 'Deleting…' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Edit Profile */}
       {editingProfile && (
