@@ -622,6 +622,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
     // =====================================================================
     // ✅ Unified end-of-call flow used by ALL branches to prevent repeats + cutoffs.
+    // Uses outboundByteCursor-based timing (bytesToMs) so we don't guess.
     // =====================================================================
     async function endCallFlow(opts: {
       reason: string;
@@ -638,30 +639,45 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       // Once ending, discard any queued finals so we don't generate again after closing.
       finalsWhileSpeaking.length = 0;
 
-      let estimatedPlaybackMs = 0;
+      // Helper: current outbound "played timeline" position based on bytes sent
+      function getOutboundMs() {
+        return bytesToMs(outboundByteCursor);
+      }
+
+      let waitMs = 0;
 
       try {
         // Speak provided segments first (e.g., medication reply + closing)
         if (opts.sayTextSegments?.length) {
-          estimatedPlaybackMs += await speakScriptPayloadNoClearWithDuration({
+          const startMs = getOutboundMs();
+
+          // IMPORTANT: use NoClear so we don't accidentally wipe Twilio's buffer at end-of-call.
+          await speakScriptPayloadNoClearWithDuration({
             segments: opts.sayTextSegments.map((t) => ({
               id: crypto.randomUUID(),
               text: t,
               tone: 'reassuring',
             })) as any,
           });
+
+          const endMs = getOutboundMs();
+          waitMs += Math.max(0, endMs - startMs);
         }
 
-        // Optional AI closing
+        // Optional AI closing (also measured by outbound bytes)
         if (opts.speakAiClosing && opts.context) {
           try {
+            const startMs = getOutboundMs();
+
             const closing = await scriptAgent.generateClosingScript({
               context: opts.context,
               runningSummary,
             });
 
-            estimatedPlaybackMs +=
-              await speakScriptPayloadNoClearWithDuration(closing);
+            await speakScriptPayloadNoClearWithDuration(closing);
+
+            const endMs = getOutboundMs();
+            waitMs += Math.max(0, endMs - startMs);
 
             const closingText = closing.segments
               .map((s) => s.text)
@@ -688,11 +704,21 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           }
         }
 
-        // Optional final goodbye line (only if non-empty)
+        // Optional final goodbye line (only if non-empty) — measured by bytes
         if (opts.goodbyeText && opts.goodbyeText.trim().length) {
           try {
+            const startMs = getOutboundMs();
+
             const timing = await speakTextStreamingWithTiming(opts.goodbyeText);
-            estimatedPlaybackMs += Math.max(0, timing.end_ms - timing.start_ms);
+
+            // speakTextStreamingWithTiming already uses outbound bytes internally, but we also
+            // compute delta from getOutboundMs() to be consistent with this function.
+            const endMs = getOutboundMs();
+            waitMs += Math.max(
+              0,
+              endMs - startMs,
+              Math.max(0, timing.end_ms - timing.start_ms)
+            );
 
             await saveOutboundTranscript({
               text: opts.goodbyeText,
@@ -707,8 +733,10 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           }
         }
 
-        // ✅ wait enough for Twilio to play last frames
-        await sleep(Math.min(15000, estimatedPlaybackMs + 750));
+        // ✅ Wait based on actual bytes sent (plus a small jitter buffer)
+        const jitterMs = 750;
+        const minWaitMs = 1200; // extra safety for carrier/Twilio jitter on last frames
+        await sleep(Math.min(15000, Math.max(minWaitMs, waitMs + jitterMs)));
 
         await finalizeAndUpload(opts.status);
         await endTwilioCall(opts.reason);
