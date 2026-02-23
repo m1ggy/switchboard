@@ -1,4 +1,6 @@
 // src/routes/twilio/reassurance_stream.ts
+// UPDATED: fixes medication reminder cutoff by (1) moving med speech into endCallFlow via sayTextSegments,
+// and (2) endCallFlow measures wait time via outbound bytes (no guessing), plus a larger cap.
 
 import { spawn } from 'child_process';
 import crypto from 'crypto';
@@ -639,10 +641,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       // Once ending, discard any queued finals so we don't generate again after closing.
       finalsWhileSpeaking.length = 0;
 
-      // Helper: current outbound "played timeline" position based on bytes sent
-      function getOutboundMs() {
-        return bytesToMs(outboundByteCursor);
-      }
+      const getOutboundMs = () => bytesToMs(outboundByteCursor);
 
       let waitMs = 0;
 
@@ -711,8 +710,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
             const timing = await speakTextStreamingWithTiming(opts.goodbyeText);
 
-            // speakTextStreamingWithTiming already uses outbound bytes internally, but we also
-            // compute delta from getOutboundMs() to be consistent with this function.
             const endMs = getOutboundMs();
             waitMs += Math.max(
               0,
@@ -733,10 +730,10 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           }
         }
 
-        // ✅ Wait based on actual bytes sent (plus a small jitter buffer)
-        const jitterMs = 750;
-        const minWaitMs = 1200; // extra safety for carrier/Twilio jitter on last frames
-        await sleep(Math.min(15000, Math.max(minWaitMs, waitMs + jitterMs)));
+        // ✅ Wait based on actual bytes sent (plus a jitter buffer)
+        const jitterMs = 900;
+        const minWaitMs = 1500; // extra safety for carrier/Twilio jitter on last frames
+        await sleep(Math.min(30000, Math.max(minWaitMs, waitMs + jitterMs)));
 
         await finalizeAndUpload(opts.status);
         await endTwilioCall(opts.reason);
@@ -942,7 +939,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             return;
           }
 
-          // ✅ Medication reminders: NO AI followup; speak reply + closing once, then end.
+          // ✅ Medication reminders: SPEAK ONLY via endCallFlow so hangup waits correctly.
           if (callMode === 'medication_reminder') {
             const kind = classifyMedAnswer(finalUtterance);
             const ttsNumber = callbackNumber;
@@ -960,21 +957,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               ? `Thank you for your time, ${preferredName}. If you need to reach us, please call ${ttsNumber}. Have a great day!`
               : `Thank you for your time, ${preferredName}. Have a great day!`;
 
-            await speakScriptPayload({
-              segments: [
-                {
-                  id: crypto.randomUUID(),
-                  text: reply,
-                  tone: 'reassuring',
-                } as any,
-                {
-                  id: crypto.randomUUID(),
-                  text: closing,
-                  tone: 'reassuring',
-                } as any,
-              ],
-            });
-
+            // Log assistant text (best-effort)
             try {
               await ReassuranceCallTurnsRepository.createTurn({
                 id: crypto.randomUUID(),
@@ -989,11 +972,13 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               } as any);
             } catch {}
 
+            // IMPORTANT: do not speak here. endCallFlow will speak + measure + wait + hang up.
             await endCallFlow({
               reason: 'medication_reminder_done',
               status: 'completed',
               context,
               speakAiClosing: false,
+              sayTextSegments: [reply, closing],
             });
             return;
           }
