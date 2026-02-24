@@ -1,6 +1,7 @@
 // src/routes/twilio/reassurance_stream.ts
 // UPDATED: fixes medication reminder cutoff by (1) moving med speech into endCallFlow via sayTextSegments,
 // and (2) endCallFlow measures wait time via outbound bytes (no guessing), plus a larger cap.
+// UPDATED: adds appointment reminder path + callMode with deterministic one-turn appointment flow.
 
 import { spawn } from 'child_process';
 import crypto from 'crypto';
@@ -50,10 +51,11 @@ function runFfmpeg(args: string[]): Promise<void> {
 
 function resolveCallModeFromScheduleTemplate(
   template: string | null | undefined
-): 'reassurance' | 'medication_reminder' {
+): 'reassurance' | 'medication_reminder' | 'appointment_reminder' {
   const t = (template ?? '').trim().toLowerCase();
 
   if (t === 'medication_reminder') return 'medication_reminder';
+  if (t === 'appointment_reminder') return 'appointment_reminder';
 
   // treat 'wellness' (and anything else) as normal reassurance
   return 'reassurance';
@@ -73,18 +75,57 @@ function classifyMedAnswer(text: string) {
   return 'will_take';
 }
 
+function classifyAppointmentAnswer(text: string) {
+  const t = (text || '').toLowerCase();
+
+  // confirm (but don't misclassify "yes, reschedule")
+  if (
+    /\b(yes|yeah|yep|sure|i can|i will|confirm|confirmed|okay|ok)\b/.test(t)
+  ) {
+    if (
+      /\b(resched|reschedule|change|move|another time|different time)\b/.test(t)
+    )
+      return 'reschedule';
+    if (
+      /\b(cancel|canceled|cancelled|can't make it|cannot make it|won't make it)\b/.test(
+        t
+      )
+    )
+      return 'cancel';
+    return 'confirmed';
+  }
+
+  if (
+    /\b(resched|reschedule|change|move|another time|different time|later)\b/.test(
+      t
+    )
+  )
+    return 'reschedule';
+
+  if (
+    /\b(cancel|canceled|cancelled|can't make it|cannot make it|won't make it|no)\b/.test(
+      t
+    )
+  )
+    return 'cancel';
+
+  return 'unknown';
+}
+
 async function generateRollingMemorySummary(args: {
   openai: OpenAIClient;
   priorSummary: string | null;
   callTranscriptSummary: string;
-  callMode: 'reassurance' | 'medication_reminder';
+  callMode: 'reassurance' | 'medication_reminder' | 'appointment_reminder';
 }): Promise<string> {
   const { openai, priorSummary, callTranscriptSummary, callMode } = args;
 
   const styleHint =
     callMode === 'medication_reminder'
       ? `This was a quick medication reminder call. Keep the summary extremely short.`
-      : `This was a reassurance call. Keep the summary short and practical.`;
+      : callMode === 'appointment_reminder'
+        ? `This was a quick appointment reminder call. Keep the summary extremely short.`
+        : `This was a reassurance call. Keep the summary short and practical.`;
 
   const input = [
     {
@@ -129,14 +170,16 @@ async function generateRollingMemorySummary(args: {
 async function generateSessionAiSummary(args: {
   openai: OpenAIClient;
   transcriptText: string;
-  callMode: 'reassurance' | 'medication_reminder';
+  callMode: 'reassurance' | 'medication_reminder' | 'appointment_reminder';
 }): Promise<string> {
   const { openai, transcriptText, callMode } = args;
 
   const styleHint =
     callMode === 'medication_reminder'
       ? `This was a medication reminder call. Keep it extremely short.`
-      : `This was a reassurance check-in. Keep it short and practical.`;
+      : callMode === 'appointment_reminder'
+        ? `This was an appointment reminder call. Keep it extremely short.`
+        : `This was a reassurance check-in. Keep it short and practical.`;
 
   const input = [
     {
@@ -355,1310 +398,1391 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       ? twilio(twilioAccountSid, twilioAuthToken)
       : null;
 
-  app.get('/reassurance/stream', { websocket: true }, (socket, req) => {
-    let { scheduleId, jobId, callId, numberId } = req.query as Record<
-      string,
-      string | undefined
-    >;
+  function registerStreamRoute(routePath: string) {
+    app.get(routePath, { websocket: true }, (socket, req) => {
+      let { scheduleId, jobId, callId, numberId } = req.query as Record<
+        string,
+        string | undefined
+      >;
 
-    let streamSid: string | null = null;
-    let callSid: string | null = null;
+      let streamSid: string | null = null;
+      let callSid: string | null = null;
 
-    let sessionId: string | null = null;
-    let contactId: string | null = null;
-    let companyId: string | null = null;
-    let companyName: string | null = null;
-    let callbackNumber: string | null = null;
+      let sessionId: string | null = null;
+      let contactId: string | null = null;
+      let companyId: string | null = null;
+      let companyName: string | null = null;
+      let callbackNumber: string | null = null;
 
-    let contactProfile: any | null = null;
+      let contactProfile: any | null = null;
 
-    let runningSummary = '';
-    let busyGenerating = false;
-    let callMode: 'reassurance' | 'medication_reminder' = 'reassurance';
+      let runningSummary = '';
+      let busyGenerating = false;
+      let callMode:
+        | 'reassurance'
+        | 'medication_reminder'
+        | 'appointment_reminder' = 'reassurance';
 
-    // ✅ cap responses per call
-    let assistantReplyCount = 0;
-    let MAX_ASSISTANT_REPLIES = 3;
+      // ✅ cap responses per call
+      let assistantReplyCount = 0;
+      let MAX_ASSISTANT_REPLIES = 3;
 
-    // transcript state
-    let transcriptSeq = 0;
-    let recordingId: string | null = null;
-    const pendingFinals: Array<{ text: string; info: any }> = [];
-    let openingDelivered = false;
-    let isSpeaking = false;
-    const finalsWhileSpeaking: string[] = [];
+      // transcript state
+      let transcriptSeq = 0;
+      let recordingId: string | null = null;
+      const pendingFinals: Array<{ text: string; info: any }> = [];
+      let openingDelivered = false;
+      let isSpeaking = false;
+      const finalsWhileSpeaking: string[] = [];
 
-    // ✅ Prevent any repeated generation while we're hanging up
-    let isEnding = false;
+      // ✅ Prevent any repeated generation while we're hanging up
+      let isEnding = false;
 
-    // ✅ Track outbound audio position for assistant transcript timings
-    let outboundByteCursor = 0;
-    function bytesToMs(bytes: number) {
-      return Math.max(0, Math.round((bytes / 8000) * 1000)); // 8kHz ulaw: 8000 bytes/sec
-    }
+      // ✅ Track outbound audio position for assistant transcript timings
+      let outboundByteCursor = 0;
+      function bytesToMs(bytes: number) {
+        return Math.max(0, Math.round((bytes / 8000) * 1000)); // 8kHz ulaw: 8000 bytes/sec
+      }
 
-    // audio sinks (raw mulaw frames)
-    const inboundPath = tmpFile(`reassurance-in-${crypto.randomUUID()}.mulaw`);
-    const outboundPath = tmpFile(
-      `reassurance-out-${crypto.randomUUID()}.mulaw`
-    );
-    const inboundStream = fs.createWriteStream(inboundPath);
-    const outboundStream = fs.createWriteStream(outboundPath);
-
-    let finalized = false;
-
-    const dgApiKey = process.env.DEEPGRAM_API_KEY;
-    if (!dgApiKey) {
-      app.log.error('[ReassuranceStream] Missing DEEPGRAM_API_KEY');
-      socket.close();
-      return;
-    }
-
-    // ---- server -> Twilio helpers ----
-    function sendAudioToTwilio(mulawBase64: string) {
-      if (!streamSid) return;
-      socket.send(
-        JSON.stringify({
-          event: 'media',
-          streamSid,
-          media: { payload: mulawBase64 },
-        })
+      // audio sinks (raw mulaw frames)
+      const inboundPath = tmpFile(
+        `reassurance-in-${crypto.randomUUID()}.mulaw`
       );
+      const outboundPath = tmpFile(
+        `reassurance-out-${crypto.randomUUID()}.mulaw`
+      );
+      const inboundStream = fs.createWriteStream(inboundPath);
+      const outboundStream = fs.createWriteStream(outboundPath);
 
-      const buf = Buffer.from(mulawBase64, 'base64');
-      outboundStream.write(buf);
+      let finalized = false;
 
-      // ✅ advance cursor for assistant transcript timing
-      outboundByteCursor += buf.length;
-    }
-
-    function clearTwilioAudio() {
-      if (!streamSid) return;
-      socket.send(JSON.stringify({ event: 'clear', streamSid }));
-    }
-
-    // ✅ Insert assistant/outbound into transcript timeline
-    async function saveOutboundTranscript(args: {
-      text: string;
-      start_ms: number;
-      end_ms: number;
-    }) {
-      const { text, start_ms, end_ms } = args;
-      if (!sessionId || !contactId) return;
-
-      transcriptSeq += 1;
-
-      await ReassuranceCallTranscriptsRepository.create({
-        session_id: sessionId,
-        recording_id: recordingId,
-        contact_id: contactId,
-        seq: transcriptSeq,
-        speaker: 'assistant',
-        channel: 'outbound',
-        transcript: text,
-        start_ms,
-        end_ms: Math.max(end_ms, start_ms + 1),
-        confidence: null,
-        language: 'en-US',
-        words: null,
-        raw: null,
-      });
-    }
-
-    // ✅ STREAMING: speak + return timing (based on outbound bytes)
-    async function speakTextStreamingWithTiming(text: string): Promise<{
-      start_ms: number;
-      end_ms: number;
-    }> {
-      isSpeaking = true;
-      try {
-        const startBytes = outboundByteCursor;
-
-        const chunks = await (elevenlabsTts as any).ttsToMulawChunks(text);
-        for await (const chunk of chunks as any) {
-          if (!chunk) continue;
-          const b64 = Buffer.from(chunk).toString('base64');
-          sendAudioToTwilio(b64);
-        }
-
-        const endBytes = outboundByteCursor;
-
-        return {
-          start_ms: bytesToMs(startBytes),
-          end_ms: bytesToMs(endBytes),
-        };
-      } finally {
-        isSpeaking = false;
-
-        // ✅ flush anything the user said while we were speaking (unless we're ending)
-        if (!isEnding && finalsWhileSpeaking.length) {
-          const queued = finalsWhileSpeaking.splice(
-            0,
-            finalsWhileSpeaking.length
-          );
-          for (const q of queued) utteranceBuffer.addFinal(q);
-        } else {
-          finalsWhileSpeaking.length = 0;
-        }
-      }
-    }
-
-    // ✅ Speak all segments, and insert each assistant segment into transcripts
-    async function speakScriptPayload(
-      payload: Pick<ScriptPayload, 'segments'>
-    ) {
-      clearTwilioAudio();
-      isSpeaking = true;
-      try {
-        for (const seg of payload.segments) {
-          const timing = await speakTextStreamingWithTiming(seg.text);
-          await saveOutboundTranscript({
-            text: seg.text,
-            start_ms: timing.start_ms,
-            end_ms: timing.end_ms,
-          });
-        }
-      } finally {
-        isSpeaking = false;
-
-        if (!isEnding && finalsWhileSpeaking.length) {
-          const queued = finalsWhileSpeaking.splice(
-            0,
-            finalsWhileSpeaking.length
-          );
-          for (const q of queued) utteranceBuffer.addFinal(q);
-        } else {
-          finalsWhileSpeaking.length = 0;
-        }
-      }
-    }
-
-    async function speakScriptPayloadNoClearWithDuration(
-      payload: Pick<ScriptPayload, 'segments'>
-    ): Promise<number> {
-      let totalMs = 0;
-
-      isSpeaking = true;
-      try {
-        for (const seg of payload.segments) {
-          const timing = await speakTextStreamingWithTiming(seg.text);
-          totalMs += Math.max(0, timing.end_ms - timing.start_ms);
-
-          await saveOutboundTranscript({
-            text: seg.text,
-            start_ms: timing.start_ms,
-            end_ms: timing.end_ms,
-          });
-        }
-      } finally {
-        isSpeaking = false;
-
-        if (!isEnding && finalsWhileSpeaking.length) {
-          const queued = finalsWhileSpeaking.splice(
-            0,
-            finalsWhileSpeaking.length
-          );
-          for (const q of queued) utteranceBuffer.addFinal(q);
-        } else {
-          finalsWhileSpeaking.length = 0;
-        }
-      }
-
-      return totalMs;
-    }
-
-    // ---- End-of-conversation detection + hangup ----
-    function shouldEndConversation(text: string) {
-      const t = (text || '').trim().toLowerCase();
-
-      const negation = /\b(don't|do not|not|never)\b/.test(t);
-      if (negation && /\b(hang up|end the call|goodbye|bye)\b/.test(t))
-        return false;
-
-      const strong =
-        /\b(hang up|end (the )?call|disconnect|terminate|stop calling|goodbye|bye\b|bye bye|talk to you later|that's all|no(,)? (thank you|thanks)|i'?m done|we'?re done|you can go now|see you|see ya)\b/.test(
-          t
-        );
-
-      const haveToGo =
-        /\b(i (have|got) to go|i need to go|i should go|i must go|gotta go)\b/.test(
-          t
-        );
-
-      const thatsIt =
-        /\b(that'?s it|that is it|all good|all set)\b/.test(t) &&
-        t.length <= 40;
-
-      return strong || haveToGo || thatsIt;
-    }
-
-    async function endTwilioCall(reason: string) {
-      if (!twilioClient) {
-        app.log.warn(
-          { reason, callSid, streamSid },
-          '[ReassuranceStream] TWILIO_* env missing; cannot end call via REST'
-        );
-        return;
-      }
-      if (!callSid) {
-        app.log.warn(
-          { reason, callSid, streamSid },
-          '[ReassuranceStream] No callSid; cannot end call'
-        );
+      const dgApiKey = process.env.DEEPGRAM_API_KEY;
+      if (!dgApiKey) {
+        app.log.error('[ReassuranceStream] Missing DEEPGRAM_API_KEY');
+        socket.close();
         return;
       }
 
-      try {
-        await twilioClient.calls(callSid).update({ status: 'completed' });
-        app.log.info(
-          { reason, callSid, streamSid },
-          '[ReassuranceStream] Twilio call ended'
+      // ---- server -> Twilio helpers ----
+      function sendAudioToTwilio(mulawBase64: string) {
+        if (!streamSid) return;
+        socket.send(
+          JSON.stringify({
+            event: 'media',
+            streamSid,
+            media: { payload: mulawBase64 },
+          })
         );
-      } catch (err) {
-        app.log.error(
-          { err, reason, callSid, streamSid },
-          '[ReassuranceStream] Failed to end call'
-        );
+
+        const buf = Buffer.from(mulawBase64, 'base64');
+        outboundStream.write(buf);
+
+        // ✅ advance cursor for assistant transcript timing
+        outboundByteCursor += buf.length;
       }
-    }
 
-    // =====================================================================
-    // ✅ Unified end-of-call flow used by ALL branches to prevent repeats + cutoffs.
-    // Uses outboundByteCursor-based timing (bytesToMs) so we don't guess.
-    // =====================================================================
-    async function endCallFlow(opts: {
-      reason: string;
-      status: 'completed' | 'user_hung_up' | 'failed';
-      context?: CallContext;
-      speakAiClosing?: boolean;
-      sayTextSegments?: string[];
-      goodbyeText?: string;
-    }) {
-      if (isEnding) return;
-      isEnding = true;
-      busyGenerating = true;
+      function clearTwilioAudio() {
+        if (!streamSid) return;
+        socket.send(JSON.stringify({ event: 'clear', streamSid }));
+      }
 
-      // Once ending, discard any queued finals so we don't generate again after closing.
-      finalsWhileSpeaking.length = 0;
+      // ✅ Insert assistant/outbound into transcript timeline
+      async function saveOutboundTranscript(args: {
+        text: string;
+        start_ms: number;
+        end_ms: number;
+      }) {
+        const { text, start_ms, end_ms } = args;
+        if (!sessionId || !contactId) return;
 
-      const getOutboundMs = () => bytesToMs(outboundByteCursor);
+        transcriptSeq += 1;
 
-      let waitMs = 0;
+        await ReassuranceCallTranscriptsRepository.create({
+          session_id: sessionId,
+          recording_id: recordingId,
+          contact_id: contactId,
+          seq: transcriptSeq,
+          speaker: 'assistant',
+          channel: 'outbound',
+          transcript: text,
+          start_ms,
+          end_ms: Math.max(end_ms, start_ms + 1),
+          confidence: null,
+          language: 'en-US',
+          words: null,
+          raw: null,
+        });
+      }
 
-      try {
-        // Speak provided segments first (e.g., medication reply + closing)
-        if (opts.sayTextSegments?.length) {
-          const startMs = getOutboundMs();
+      // ✅ STREAMING: speak + return timing (based on outbound bytes)
+      async function speakTextStreamingWithTiming(text: string): Promise<{
+        start_ms: number;
+        end_ms: number;
+      }> {
+        isSpeaking = true;
+        try {
+          const startBytes = outboundByteCursor;
 
-          // IMPORTANT: use NoClear so we don't accidentally wipe Twilio's buffer at end-of-call.
-          await speakScriptPayloadNoClearWithDuration({
-            segments: opts.sayTextSegments.map((t) => ({
-              id: crypto.randomUUID(),
-              text: t,
-              tone: 'reassuring',
-            })) as any,
-          });
+          const chunks = await (elevenlabsTts as any).ttsToMulawChunks(text);
+          for await (const chunk of chunks as any) {
+            if (!chunk) continue;
+            const b64 = Buffer.from(chunk).toString('base64');
+            sendAudioToTwilio(b64);
+          }
 
-          const endMs = getOutboundMs();
-          waitMs += Math.max(0, endMs - startMs);
+          const endBytes = outboundByteCursor;
+
+          return {
+            start_ms: bytesToMs(startBytes),
+            end_ms: bytesToMs(endBytes),
+          };
+        } finally {
+          isSpeaking = false;
+
+          // ✅ flush anything the user said while we were speaking (unless we're ending)
+          if (!isEnding && finalsWhileSpeaking.length) {
+            const queued = finalsWhileSpeaking.splice(
+              0,
+              finalsWhileSpeaking.length
+            );
+            for (const q of queued) utteranceBuffer.addFinal(q);
+          } else {
+            finalsWhileSpeaking.length = 0;
+          }
+        }
+      }
+
+      // ✅ Speak all segments, and insert each assistant segment into transcripts
+      async function speakScriptPayload(
+        payload: Pick<ScriptPayload, 'segments'>
+      ) {
+        clearTwilioAudio();
+        isSpeaking = true;
+        try {
+          for (const seg of payload.segments) {
+            const timing = await speakTextStreamingWithTiming(seg.text);
+            await saveOutboundTranscript({
+              text: seg.text,
+              start_ms: timing.start_ms,
+              end_ms: timing.end_ms,
+            });
+          }
+        } finally {
+          isSpeaking = false;
+
+          if (!isEnding && finalsWhileSpeaking.length) {
+            const queued = finalsWhileSpeaking.splice(
+              0,
+              finalsWhileSpeaking.length
+            );
+            for (const q of queued) utteranceBuffer.addFinal(q);
+          } else {
+            finalsWhileSpeaking.length = 0;
+          }
+        }
+      }
+
+      async function speakScriptPayloadNoClearWithDuration(
+        payload: Pick<ScriptPayload, 'segments'>
+      ): Promise<number> {
+        let totalMs = 0;
+
+        isSpeaking = true;
+        try {
+          for (const seg of payload.segments) {
+            const timing = await speakTextStreamingWithTiming(seg.text);
+            totalMs += Math.max(0, timing.end_ms - timing.start_ms);
+
+            await saveOutboundTranscript({
+              text: seg.text,
+              start_ms: timing.start_ms,
+              end_ms: timing.end_ms,
+            });
+          }
+        } finally {
+          isSpeaking = false;
+
+          if (!isEnding && finalsWhileSpeaking.length) {
+            const queued = finalsWhileSpeaking.splice(
+              0,
+              finalsWhileSpeaking.length
+            );
+            for (const q of queued) utteranceBuffer.addFinal(q);
+          } else {
+            finalsWhileSpeaking.length = 0;
+          }
         }
 
-        // Optional AI closing (also measured by outbound bytes)
-        if (opts.speakAiClosing && opts.context) {
-          try {
+        return totalMs;
+      }
+
+      // ---- End-of-conversation detection + hangup ----
+      function shouldEndConversation(text: string) {
+        const t = (text || '').trim().toLowerCase();
+
+        const negation = /\b(don't|do not|not|never)\b/.test(t);
+        if (negation && /\b(hang up|end the call|goodbye|bye)\b/.test(t))
+          return false;
+
+        const strong =
+          /\b(hang up|end (the )?call|disconnect|terminate|stop calling|goodbye|bye\b|bye bye|talk to you later|that's all|no(,)? (thank you|thanks)|i'?m done|we'?re done|you can go now|see you|see ya)\b/.test(
+            t
+          );
+
+        const haveToGo =
+          /\b(i (have|got) to go|i need to go|i should go|i must go|gotta go)\b/.test(
+            t
+          );
+
+        const thatsIt =
+          /\b(that'?s it|that is it|all good|all set)\b/.test(t) &&
+          t.length <= 40;
+
+        return strong || haveToGo || thatsIt;
+      }
+
+      async function endTwilioCall(reason: string) {
+        if (!twilioClient) {
+          app.log.warn(
+            { reason, callSid, streamSid },
+            '[ReassuranceStream] TWILIO_* env missing; cannot end call via REST'
+          );
+          return;
+        }
+        if (!callSid) {
+          app.log.warn(
+            { reason, callSid, streamSid },
+            '[ReassuranceStream] No callSid; cannot end call'
+          );
+          return;
+        }
+
+        try {
+          await twilioClient.calls(callSid).update({ status: 'completed' });
+          app.log.info(
+            { reason, callSid, streamSid },
+            '[ReassuranceStream] Twilio call ended'
+          );
+        } catch (err) {
+          app.log.error(
+            { err, reason, callSid, streamSid },
+            '[ReassuranceStream] Failed to end call'
+          );
+        }
+      }
+
+      // =====================================================================
+      // ✅ Unified end-of-call flow used by ALL branches to prevent repeats + cutoffs.
+      // Uses outboundByteCursor-based timing (bytesToMs) so we don't guess.
+      // =====================================================================
+      async function endCallFlow(opts: {
+        reason: string;
+        status: 'completed' | 'user_hung_up' | 'failed';
+        context?: CallContext;
+        speakAiClosing?: boolean;
+        sayTextSegments?: string[];
+        goodbyeText?: string;
+      }) {
+        if (isEnding) return;
+        isEnding = true;
+        busyGenerating = true;
+
+        // Once ending, discard any queued finals so we don't generate again after closing.
+        finalsWhileSpeaking.length = 0;
+
+        const getOutboundMs = () => bytesToMs(outboundByteCursor);
+
+        let waitMs = 0;
+
+        try {
+          // Speak provided segments first (e.g., medication reply + closing)
+          if (opts.sayTextSegments?.length) {
             const startMs = getOutboundMs();
 
-            const closing = await scriptAgent.generateClosingScript({
-              context: opts.context,
-              runningSummary,
+            // IMPORTANT: use NoClear so we don't accidentally wipe Twilio's buffer at end-of-call.
+            await speakScriptPayloadNoClearWithDuration({
+              segments: opts.sayTextSegments.map((t) => ({
+                id: crypto.randomUUID(),
+                text: t,
+                tone: 'reassuring',
+              })) as any,
             });
-
-            await speakScriptPayloadNoClearWithDuration(closing);
 
             const endMs = getOutboundMs();
             waitMs += Math.max(0, endMs - startMs);
+          }
 
-            const closingText = closing.segments
+          // Optional AI closing (also measured by outbound bytes)
+          if (opts.speakAiClosing && opts.context) {
+            try {
+              const startMs = getOutboundMs();
+
+              const closing = await scriptAgent.generateClosingScript({
+                context: opts.context,
+                runningSummary,
+              });
+
+              await speakScriptPayloadNoClearWithDuration(closing);
+
+              const endMs = getOutboundMs();
+              waitMs += Math.max(0, endMs - startMs);
+
+              const closingText = closing.segments
+                .map((s) => s.text)
+                .join(' ')
+                .trim();
+
+              await ReassuranceCallTurnsRepository.createTurn({
+                id: crypto.randomUUID(),
+                session_id: sessionId!,
+                role: 'assistant',
+                content: closingText,
+                meta: {
+                  callSid,
+                  streamSid,
+                  intent: closing.intent,
+                  phase: 'closing',
+                },
+              } as any);
+            } catch (err) {
+              app.log.warn(
+                { err, callSid, streamSid },
+                '[ReassuranceStream] AI closing failed; continuing'
+              );
+            }
+          }
+
+          // Optional final goodbye line (only if non-empty) — measured by bytes
+          if (opts.goodbyeText && opts.goodbyeText.trim().length) {
+            try {
+              const startMs = getOutboundMs();
+
+              const timing = await speakTextStreamingWithTiming(
+                opts.goodbyeText
+              );
+
+              const endMs = getOutboundMs();
+              waitMs += Math.max(
+                0,
+                endMs - startMs,
+                Math.max(0, timing.end_ms - timing.start_ms)
+              );
+
+              await saveOutboundTranscript({
+                text: opts.goodbyeText,
+                start_ms: timing.start_ms,
+                end_ms: timing.end_ms,
+              });
+            } catch (err) {
+              app.log.warn(
+                { err, callSid, streamSid },
+                '[ReassuranceStream] goodbye TTS failed; continuing hangup'
+              );
+            }
+          }
+
+          const jitterMs = 350;
+          const extraPadMs = 1400; // fixed safety pad for Twilio drain
+          await sleep(Math.min(20000, waitMs + jitterMs + extraPadMs));
+
+          await finalizeAndUpload(opts.status);
+          await endTwilioCall(opts.reason);
+
+          try {
+            socket.close();
+          } catch {}
+        } finally {
+          // keep isEnding = true
+        }
+      }
+      // =====================================================================
+
+      // ---- Deepgram ----
+      const deepgram = new DeepgramLiveTranscriber({
+        apiKey: dgApiKey,
+        model: 'nova-3',
+        language: 'en-US',
+        encoding: 'mulaw',
+        sampleRate: 8000,
+        interimResults: true,
+        smartFormat: true,
+        punctuate: true,
+        endpointingMs: 30,
+      });
+
+      function buildContextBlock(args: {
+        profile: any | null;
+        memSummaryText: string | null;
+        recentTurns: { role: string; content: string }[];
+      }) {
+        const { profile, memSummaryText, recentTurns } = args;
+
+        const profileLite = profile
+          ? {
+              preferred_name: profile.preferred_name,
+              locale: profile.locale,
+              timezone: profile.timezone,
+              goals: profile.goals,
+              preferences: profile.preferences,
+              risk_flags: profile.risk_flags,
+              last_state: profile.last_state,
+            }
+          : null;
+
+        const profileBlock = profileLite
+          ? `CONTACT PROFILE (compact):\n${safeJson(profileLite)}`
+          : `CONTACT PROFILE:\n(none)`;
+
+        const summaryBlock = memSummaryText
+          ? `ROLLING MEMORY SUMMARY (trimmed):\n${clamp(memSummaryText, 1000)}`
+          : `ROLLING MEMORY SUMMARY:\n(none)`;
+
+        const recentTurnsBlock =
+          recentTurns?.length > 0
+            ? `RECENT TURNS (this call):\n${recentTurns
+                .slice(-10)
+                .map((t) => `${t.role}: ${clamp(t.content, 280)}`)
+                .join('\n')}`
+            : `RECENT TURNS (this call):\n(none)`;
+
+        return [profileBlock, summaryBlock, recentTurnsBlock]
+          .filter(Boolean)
+          .join('\n\n');
+      }
+
+      async function saveInboundTranscript(text: string, info: any) {
+        if (!sessionId || !contactId) return;
+
+        transcriptSeq += 1;
+
+        const timing = wordTimesToMs(info?.words) ?? { start_ms: 0, end_ms: 1 };
+
+        await ReassuranceCallTranscriptsRepository.create({
+          session_id: sessionId,
+          recording_id: recordingId,
+          contact_id: contactId,
+          seq: transcriptSeq,
+          speaker: 'user',
+          channel: 'inbound',
+          transcript: text,
+          start_ms: timing.start_ms,
+          end_ms: timing.end_ms,
+          confidence: info?.confidence ?? null,
+          language: 'en-US',
+          words: info?.words ?? null,
+          raw: info?.raw ?? info ?? null,
+        });
+      }
+
+      async function drainPendingFinals() {
+        if (!sessionId || !contactId) return;
+        if (!pendingFinals.length) return;
+
+        const items = pendingFinals.splice(0, pendingFinals.length);
+        for (const item of items) {
+          try {
+            await saveInboundTranscript(item.text, item.info);
+            utteranceBuffer.addFinal(item.text);
+          } catch (err) {
+            app.log.error(
+              { err, sessionId, contactId },
+              '[ReassuranceStream] failed draining pending transcript'
+            );
+          }
+        }
+      }
+
+      // ✅ Streamlined buffer callback (med + appt reminders handled early; max-turn uses endCallFlow)
+      const utteranceBuffer = new FinalUtteranceBuffer(
+        300,
+        async (finalUtterance) => {
+          if (!sessionId || !contactId) return;
+          if (busyGenerating) return;
+          if (isEnding) return;
+          if (finalUtterance.trim().length < 2) return;
+          if (!openingDelivered) return;
+
+          if (isSpeaking) {
+            finalsWhileSpeaking.push(finalUtterance);
+            return;
+          }
+
+          // Log user turn (best-effort)
+          try {
+            await ReassuranceCallTurnsRepository.createTurn({
+              id: crypto.randomUUID(),
+              session_id: sessionId,
+              role: 'user',
+              content: finalUtterance,
+              meta: { callSid, streamSid },
+            } as any);
+          } catch {}
+
+          busyGenerating = true;
+          const tAll = nowMs();
+
+          try {
+            const memSummaryPromise =
+              ReassuranceContactMemorySummaryRepository.getByContactId(
+                contactId
+              );
+
+            const recentTurnsPromise =
+              ReassuranceCallTurnsRepository.listBySessionIdWithLimit(
+                sessionId,
+                15
+              );
+
+            const [memSummary, recentTurnsRaw] = await Promise.all([
+              memSummaryPromise,
+              recentTurnsPromise,
+            ]);
+
+            const recentTurns = recentTurnsRaw.map((t) => ({
+              role: t.role,
+              content: t.content,
+            }));
+
+            const contextBlock = buildContextBlock({
+              profile: contactProfile,
+              memSummaryText: memSummary?.summary_text ?? null,
+              recentTurns,
+            });
+
+            const preferredName =
+              contactProfile?.preferred_name ||
+              contactProfile?.last_state?.preferred_name ||
+              'there';
+
+            const locale = contactProfile?.locale || 'en-US';
+
+            const riskLevel: 'low' | 'medium' | 'high' =
+              contactProfile?.risk_flags?.high_risk === true
+                ? 'high'
+                : contactProfile?.risk_flags?.medium_risk === true
+                  ? 'medium'
+                  : 'low';
+
+            const context: CallContext = {
+              userProfile: {
+                id: contactId,
+                preferredName,
+                locale,
+                ageRange: 'adult',
+                relationshipToCaller: 'reassurance system',
+              },
+              riskLevel,
+              lastCheckInSummary: contextBlock,
+              callMode,
+              companyName: companyName ?? undefined,
+              callbackNumber: callbackNumber ?? undefined,
+            };
+
+            // User wants to end
+            if (shouldEndConversation(finalUtterance)) {
+              await endCallFlow({
+                reason: 'user_end_intent',
+                status: 'completed',
+                context,
+                speakAiClosing: true,
+                goodbyeText:
+                  "Okay — thanks for chatting. I'll let you go now. Goodbye.",
+              });
+              return;
+            }
+
+            // ✅ Medication reminders: SPEAK ONLY via endCallFlow so hangup waits correctly.
+            if (callMode === 'medication_reminder') {
+              const kind = classifyMedAnswer(finalUtterance);
+              const ttsNumber = callbackNumber;
+
+              let reply = '';
+              if (kind === 'took') {
+                reply = `Thank you for letting me know. I'm glad you've taken your medication.`;
+              } else if (kind === 'will_take') {
+                reply = `Thank you for letting me know. Please take your medication when you can.`;
+              } else {
+                reply = `Okay, thanks for telling me. If you need help or have questions, you can call us back.`;
+              }
+
+              const closing = ttsNumber
+                ? `Thank you for your time, ${preferredName}. If you need to reach us, please call ${ttsNumber}. Have a great day!`
+                : `Thank you for your time, ${preferredName}. Have a great day!`;
+
+              // Log assistant text (best-effort)
+              try {
+                await ReassuranceCallTurnsRepository.createTurn({
+                  id: crypto.randomUUID(),
+                  session_id: sessionId,
+                  role: 'assistant',
+                  content: `${reply} ${closing}`.trim(),
+                  meta: {
+                    callSid,
+                    streamSid,
+                    intent: 'medication_reminder_closing',
+                  },
+                } as any);
+              } catch {}
+
+              // IMPORTANT: do not speak here. endCallFlow will speak + measure + wait + hang up.
+              await endCallFlow({
+                reason: 'medication_reminder_done',
+                status: 'completed',
+                context,
+                speakAiClosing: false,
+                sayTextSegments: [reply, closing],
+              });
+              return;
+            }
+
+            // ✅ Appointment reminders: SPEAK ONLY via endCallFlow so hangup waits correctly.
+            if (callMode === 'appointment_reminder') {
+              const kind = classifyAppointmentAnswer(finalUtterance);
+              const ttsNumber = callbackNumber;
+
+              let reply = '';
+              if (kind === 'confirmed') {
+                reply = `Thanks, ${preferredName}. You're all set. We look forward to seeing you.`;
+              } else if (kind === 'reschedule') {
+                reply = `Okay, ${preferredName}. No problem.`;
+              } else if (kind === 'cancel') {
+                reply = `Okay, ${preferredName}. Thanks for letting us know.`;
+              } else {
+                reply = `Thanks, ${preferredName}.`;
+              }
+
+              const closing =
+                kind === 'reschedule' || kind === 'cancel'
+                  ? ttsNumber
+                    ? `To reschedule or make changes, please call ${ttsNumber}. Have a great day!`
+                    : `If you need to reschedule or make changes, please contact our office. Have a great day!`
+                  : ttsNumber
+                    ? `If you need anything, please call ${ttsNumber}. Have a great day!`
+                    : `Have a great day!`;
+
+              // Log assistant text (best-effort)
+              try {
+                await ReassuranceCallTurnsRepository.createTurn({
+                  id: crypto.randomUUID(),
+                  session_id: sessionId,
+                  role: 'assistant',
+                  content: `${reply} ${closing}`.trim(),
+                  meta: {
+                    callSid,
+                    streamSid,
+                    intent: 'appointment_reminder_closing',
+                  },
+                } as any);
+              } catch {}
+
+              await endCallFlow({
+                reason: 'appointment_reminder_done',
+                status: 'completed',
+                context,
+                speakAiClosing: false,
+                sayTextSegments: [reply, closing],
+              });
+              return;
+            }
+
+            // ---- reassurance normal flow ----
+            const tAi = nowMs();
+            const payload = await scriptAgent.generateFollowupScript({
+              context,
+              lastUserUtterance: finalUtterance,
+              runningSummary,
+            });
+            app.log.info(
+              { ms: Math.round(nowMs() - tAi) },
+              '[ReassuranceStream] AI followup generated'
+            );
+
+            const tSpeak = nowMs();
+            await speakScriptPayload(payload);
+            app.log.info(
+              { ms: Math.round(nowMs() - tSpeak) },
+              '[ReassuranceStream] TTS spoken + transcript saved'
+            );
+
+            const assistantText = payload.segments
               .map((s) => s.text)
               .join(' ')
               .trim();
 
             await ReassuranceCallTurnsRepository.createTurn({
               id: crypto.randomUUID(),
-              session_id: sessionId!,
+              session_id: sessionId,
               role: 'assistant',
-              content: closingText,
+              content: assistantText,
               meta: {
                 callSid,
                 streamSid,
-                intent: closing.intent,
-                phase: 'closing',
+                intent: payload.intent,
+                notesForHumanSupervisor: payload.notesForHumanSupervisor,
               },
             } as any);
-          } catch (err) {
-            app.log.warn(
-              { err, callSid, streamSid },
-              '[ReassuranceStream] AI closing failed; continuing'
-            );
-          }
-        }
 
-        // Optional final goodbye line (only if non-empty) — measured by bytes
-        if (opts.goodbyeText && opts.goodbyeText.trim().length) {
-          try {
-            const startMs = getOutboundMs();
+            ReassuranceContactProfilesRepository.mergeLastState(contactId, {
+              last_checkin_at: new Date().toISOString(),
+              last_user_utterance: finalUtterance.slice(0, 500),
+            }).catch(() => {});
 
-            const timing = await speakTextStreamingWithTiming(opts.goodbyeText);
+            runningSummary = (
+              runningSummary +
+              `\nUser: ${finalUtterance}\nAssistant: ${assistantText}`
+            ).trim();
 
-            const endMs = getOutboundMs();
-            waitMs += Math.max(
-              0,
-              endMs - startMs,
-              Math.max(0, timing.end_ms - timing.start_ms)
-            );
+            assistantReplyCount += 1;
 
-            await saveOutboundTranscript({
-              text: opts.goodbyeText,
-              start_ms: timing.start_ms,
-              end_ms: timing.end_ms,
-            });
-          } catch (err) {
-            app.log.warn(
-              { err, callSid, streamSid },
-              '[ReassuranceStream] goodbye TTS failed; continuing hangup'
-            );
-          }
-        }
-
-        const jitterMs = 350;
-        const extraPadMs = 1400; // fixed safety pad for Twilio drain
-        await sleep(Math.min(20000, waitMs + jitterMs + extraPadMs));
-
-        await finalizeAndUpload(opts.status);
-        await endTwilioCall(opts.reason);
-
-        try {
-          socket.close();
-        } catch {}
-      } finally {
-        // keep isEnding = true
-      }
-    }
-    // =====================================================================
-
-    // ---- Deepgram ----
-    const deepgram = new DeepgramLiveTranscriber({
-      apiKey: dgApiKey,
-      model: 'nova-3',
-      language: 'en-US',
-      encoding: 'mulaw',
-      sampleRate: 8000,
-      interimResults: true,
-      smartFormat: true,
-      punctuate: true,
-      endpointingMs: 30,
-    });
-
-    function buildContextBlock(args: {
-      profile: any | null;
-      memSummaryText: string | null;
-      recentTurns: { role: string; content: string }[];
-    }) {
-      const { profile, memSummaryText, recentTurns } = args;
-
-      const profileLite = profile
-        ? {
-            preferred_name: profile.preferred_name,
-            locale: profile.locale,
-            timezone: profile.timezone,
-            goals: profile.goals,
-            preferences: profile.preferences,
-            risk_flags: profile.risk_flags,
-            last_state: profile.last_state,
-          }
-        : null;
-
-      const profileBlock = profileLite
-        ? `CONTACT PROFILE (compact):\n${safeJson(profileLite)}`
-        : `CONTACT PROFILE:\n(none)`;
-
-      const summaryBlock = memSummaryText
-        ? `ROLLING MEMORY SUMMARY (trimmed):\n${clamp(memSummaryText, 1000)}`
-        : `ROLLING MEMORY SUMMARY:\n(none)`;
-
-      const recentTurnsBlock =
-        recentTurns?.length > 0
-          ? `RECENT TURNS (this call):\n${recentTurns
-              .slice(-10)
-              .map((t) => `${t.role}: ${clamp(t.content, 280)}`)
-              .join('\n')}`
-          : `RECENT TURNS (this call):\n(none)`;
-
-      return [profileBlock, summaryBlock, recentTurnsBlock]
-        .filter(Boolean)
-        .join('\n\n');
-    }
-
-    async function saveInboundTranscript(text: string, info: any) {
-      if (!sessionId || !contactId) return;
-
-      transcriptSeq += 1;
-
-      const timing = wordTimesToMs(info?.words) ?? { start_ms: 0, end_ms: 1 };
-
-      await ReassuranceCallTranscriptsRepository.create({
-        session_id: sessionId,
-        recording_id: recordingId,
-        contact_id: contactId,
-        seq: transcriptSeq,
-        speaker: 'user',
-        channel: 'inbound',
-        transcript: text,
-        start_ms: timing.start_ms,
-        end_ms: timing.end_ms,
-        confidence: info?.confidence ?? null,
-        language: 'en-US',
-        words: info?.words ?? null,
-        raw: info?.raw ?? info ?? null,
-      });
-    }
-
-    async function drainPendingFinals() {
-      if (!sessionId || !contactId) return;
-      if (!pendingFinals.length) return;
-
-      const items = pendingFinals.splice(0, pendingFinals.length);
-      for (const item of items) {
-        try {
-          await saveInboundTranscript(item.text, item.info);
-          utteranceBuffer.addFinal(item.text);
-        } catch (err) {
-          app.log.error(
-            { err, sessionId, contactId },
-            '[ReassuranceStream] failed draining pending transcript'
-          );
-        }
-      }
-    }
-
-    // ✅ Streamlined buffer callback (med reminders handled early; max-turn uses endCallFlow)
-    const utteranceBuffer = new FinalUtteranceBuffer(
-      300,
-      async (finalUtterance) => {
-        if (!sessionId || !contactId) return;
-        if (busyGenerating) return;
-        if (isEnding) return;
-        if (finalUtterance.trim().length < 2) return;
-        if (!openingDelivered) return;
-
-        if (isSpeaking) {
-          finalsWhileSpeaking.push(finalUtterance);
-          return;
-        }
-
-        // Log user turn (best-effort)
-        try {
-          await ReassuranceCallTurnsRepository.createTurn({
-            id: crypto.randomUUID(),
-            session_id: sessionId,
-            role: 'user',
-            content: finalUtterance,
-            meta: { callSid, streamSid },
-          } as any);
-        } catch {}
-
-        busyGenerating = true;
-        const tAll = nowMs();
-
-        try {
-          const memSummaryPromise =
-            ReassuranceContactMemorySummaryRepository.getByContactId(contactId);
-
-          const recentTurnsPromise =
-            ReassuranceCallTurnsRepository.listBySessionIdWithLimit(
-              sessionId,
-              15
-            );
-
-          const [memSummary, recentTurnsRaw] = await Promise.all([
-            memSummaryPromise,
-            recentTurnsPromise,
-          ]);
-
-          const recentTurns = recentTurnsRaw.map((t) => ({
-            role: t.role,
-            content: t.content,
-          }));
-
-          const contextBlock = buildContextBlock({
-            profile: contactProfile,
-            memSummaryText: memSummary?.summary_text ?? null,
-            recentTurns,
-          });
-
-          const preferredName =
-            contactProfile?.preferred_name ||
-            contactProfile?.last_state?.preferred_name ||
-            'there';
-
-          const locale = contactProfile?.locale || 'en-US';
-
-          const riskLevel: 'low' | 'medium' | 'high' =
-            contactProfile?.risk_flags?.high_risk === true
-              ? 'high'
-              : contactProfile?.risk_flags?.medium_risk === true
-                ? 'medium'
-                : 'low';
-
-          const context: CallContext = {
-            userProfile: {
-              id: contactId,
-              preferredName,
-              locale,
-              ageRange: 'adult',
-              relationshipToCaller: 'reassurance system',
-            },
-            riskLevel,
-            lastCheckInSummary: contextBlock,
-            callMode,
-            companyName: companyName ?? undefined,
-            callbackNumber: callbackNumber ?? undefined,
-          };
-
-          // User wants to end
-          if (shouldEndConversation(finalUtterance)) {
-            await endCallFlow({
-              reason: 'user_end_intent',
-              status: 'completed',
-              context,
-              speakAiClosing: true,
-              goodbyeText:
-                "Okay — thanks for chatting. I'll let you go now. Goodbye.",
-            });
-            return;
-          }
-
-          // ✅ Medication reminders: SPEAK ONLY via endCallFlow so hangup waits correctly.
-          if (callMode === 'medication_reminder') {
-            const kind = classifyMedAnswer(finalUtterance);
-            const ttsNumber = callbackNumber;
-
-            let reply = '';
-            if (kind === 'took') {
-              reply = `Thank you for letting me know. I'm glad you've taken your medication.`;
-            } else if (kind === 'will_take') {
-              reply = `Thank you for letting me know. Please take your medication when you can.`;
-            } else {
-              reply = `Okay, thanks for telling me. If you need help or have questions, you can call us back.`;
+            // ✅ MAX TURNS: unified end flow (prevents repeats + prevents cutoffs)
+            if (assistantReplyCount >= MAX_ASSISTANT_REPLIES) {
+              await endCallFlow({
+                reason: 'ai_max_turns',
+                status: 'completed',
+                context,
+                speakAiClosing: true,
+                goodbyeText:
+                  "Okay — thanks for chatting. I'll let you go now. Goodbye.",
+              });
+              return;
             }
 
-            const closing = ttsNumber
-              ? `Thank you for your time, ${preferredName}. If you need to reach us, please call ${ttsNumber}. Have a great day!`
-              : `Thank you for your time, ${preferredName}. Have a great day!`;
+            // embeddings + memory insert AFTER speaking (best effort)
+            embedText(openai, finalUtterance)
+              .then((userEmb) =>
+                ReassuranceContactMemoryChunksRepository.insert({
+                  id: crypto.randomUUID(),
+                  contact_id: contactId!,
+                  session_id: sessionId!,
+                  source_type: 'user_utterance',
+                  chunk_text: finalUtterance,
+                  embedding: userEmb,
+                  importance: 1,
+                })
+              )
+              .catch((err) =>
+                app.log.warn(
+                  { err, sessionId, contactId },
+                  '[ReassuranceStream] user embedding/memory insert failed'
+                )
+              );
 
-            // Log assistant text (best-effort)
-            try {
-              await ReassuranceCallTurnsRepository.createTurn({
-                id: crypto.randomUUID(),
-                session_id: sessionId,
-                role: 'assistant',
-                content: `${reply} ${closing}`.trim(),
-                meta: {
-                  callSid,
-                  streamSid,
-                  intent: 'medication_reminder_closing',
-                },
-              } as any);
-            } catch {}
+            embedText(openai, assistantText)
+              .then((assistantEmb) =>
+                ReassuranceContactMemoryChunksRepository.insert({
+                  id: crypto.randomUUID(),
+                  contact_id: contactId!,
+                  session_id: sessionId!,
+                  source_type: 'other',
+                  chunk_text: assistantText,
+                  embedding: assistantEmb,
+                  importance: 1,
+                })
+              )
+              .catch((err) =>
+                app.log.warn(
+                  { err, sessionId, contactId },
+                  '[ReassuranceStream] assistant embedding/memory insert failed'
+                )
+              );
 
-            // IMPORTANT: do not speak here. endCallFlow will speak + measure + wait + hang up.
-            await endCallFlow({
-              reason: 'medication_reminder_done',
-              status: 'completed',
-              context,
-              speakAiClosing: false,
-              sayTextSegments: [reply, closing],
-            });
-            return;
+            app.log.info(
+              { ms: Math.round(nowMs() - tAll) },
+              '[ReassuranceStream] turn total'
+            );
+          } catch (err) {
+            app.log.error(
+              { err, sessionId, contactId },
+              '[ReassuranceStream] followup generation failed'
+            );
+          } finally {
+            busyGenerating = false;
           }
+        }
+      );
 
-          // ---- reassurance normal flow ----
-          const tAi = nowMs();
-          const payload = await scriptAgent.generateFollowupScript({
-            context,
-            lastUserUtterance: finalUtterance,
-            runningSummary,
+      async function bootstrapSessionAndOpening() {
+        if (!scheduleId) throw new Error('Missing scheduleId');
+
+        const schedule = await ReassuranceSchedulesRepository.find(
+          Number(scheduleId)
+        );
+
+        if (!schedule) throw new Error('Schedule not found');
+        if (!numberId) throw new Error('Number ID not found');
+
+        companyId = schedule.company_id;
+        const company = companyId
+          ? await UserCompaniesRepository.findCompanyById(companyId)
+          : null;
+
+        companyName = company?.name ?? null;
+
+        const numberRow = numberId
+          ? await NumbersRepository.findById(numberId)
+          : null;
+        callbackNumber = numberRow?.number ?? null;
+
+        const contactLabel =
+          schedule.name || schedule.phone_number || 'Unknown';
+        const contact = await ContactsRepository.findOrCreate({
+          number: schedule.phone_number,
+          companyId: schedule.company_id,
+          label: contactLabel,
+        });
+
+        contactId = contact.id;
+
+        contactProfile =
+          await ReassuranceContactProfilesRepository.getByContactId(contact.id);
+
+        callMode = resolveCallModeFromScheduleTemplate(
+          (schedule as any)?.template
+        );
+
+        // medication + appointment reminder calls are one-turn
+        MAX_ASSISTANT_REPLIES =
+          callMode === 'medication_reminder' ||
+          callMode === 'appointment_reminder'
+            ? 1
+            : 3;
+
+        if (!contactProfile) {
+          contactProfile = await ReassuranceContactProfilesRepository.upsert({
+            contact_id: contact.id,
+            preferred_name: schedule.name ?? null,
+            locale: 'en-US',
+            timezone: null,
+            goals: 'Reassurance check-ins',
+            preferences: { tone: 'calm', pace: 'slow' },
+            last_state: { created_from: 'reassurance_stream' },
           });
-          app.log.info(
-            { ms: Math.round(nowMs() - tAi) },
-            '[ReassuranceStream] AI followup generated'
+        }
+
+        const memSummary =
+          await ReassuranceContactMemorySummaryRepository.getByContactId(
+            contact.id
           );
 
-          const tSpeak = nowMs();
-          await speakScriptPayload(payload);
-          app.log.info(
-            { ms: Math.round(nowMs() - tSpeak) },
-            '[ReassuranceStream] TTS spoken + transcript saved'
+        const preferredName =
+          contactProfile?.preferred_name ||
+          schedule.name ||
+          contact.label ||
+          undefined;
+
+        const locale = contactProfile?.locale || 'en-US';
+
+        const riskLevel: 'low' | 'medium' | 'high' =
+          contactProfile?.risk_flags?.high_risk === true
+            ? 'high'
+            : contactProfile?.risk_flags?.medium_risk === true
+              ? 'medium'
+              : 'low';
+
+        sessionId = crypto.randomUUID();
+
+        await ReassuranceCallSessionsRepository.createSession({
+          id: sessionId,
+          schedule_id: schedule.id,
+          job_id: jobId ?? null,
+          call_id: callId ?? (crypto.randomUUID() as any),
+          contact_id: contact.id,
+          started_at: new Date(),
+          risk_level: riskLevel,
+          ai_model: 'reassurance-stream-v1',
+        });
+
+        transcriptSeq =
+          await ReassuranceCallTranscriptsRepository.getLastSeqForSession(
+            sessionId
           );
 
-          const assistantText = payload.segments
-            .map((s) => s.text)
-            .join(' ')
-            .trim();
+        await drainPendingFinals();
 
+        let openingPayload: ScriptPayload;
+        const openingContext: CallContext = {
+          userProfile: {
+            id: contact.id,
+            name: contact.label ?? undefined,
+            preferredName,
+            ageRange: 'adult',
+            relationshipToCaller: 'reassurance system',
+            locale,
+          },
+          lastCheckInSummary: memSummary?.summary_text ?? undefined,
+          riskLevel,
+          companyName: companyName ?? undefined,
+          callbackNumber: callbackNumber ?? undefined,
+          callMode,
+        };
+
+        try {
+          openingPayload =
+            await scriptAgent.generateOpeningScript(openingContext);
+        } catch (err) {
+          app.log.error(
+            { err, sessionId, contactId: contact.id },
+            '[ReassuranceStream] Failed to generate opening script; using fallback'
+          );
+          openingPayload = {
+            intent:
+              callMode === 'medication_reminder'
+                ? 'medication_reminder'
+                : callMode === 'appointment_reminder'
+                  ? 'appointment_reminder'
+                  : 'opening',
+            segments: [
+              {
+                id: crypto.randomUUID(),
+                text:
+                  callMode === 'medication_reminder'
+                    ? `Hi ${preferredName || 'there'}, this is ${companyName ?? 'our team'}. This is a quick medication reminder. Have you taken your medication, or can you take it now?`
+                    : callMode === 'appointment_reminder'
+                      ? `Hi ${preferredName || 'there'}, this is ${companyName ?? 'our team'}. This is a quick appointment reminder. Can you confirm you'll be able to make it, or do you need to reschedule?`
+                      : `Hi ${preferredName || 'there'}, this is ${companyName ?? 'our team'}. This is a quick reassurance check-in. How are you feeling today?`,
+                tone: 'reassuring',
+                maxDurationSeconds: 12,
+              },
+            ],
+            notesForHumanSupervisor: null,
+            handoffSignal: {
+              level: 'none',
+              detected: false,
+              reasons: [],
+              userQuotedTriggers: [],
+              recommendedNextStep: 'continue_script',
+            },
+          };
+        }
+
+        // Save assistant "turn" rows (existing behavior)
+        for (const seg of openingPayload.segments) {
           await ReassuranceCallTurnsRepository.createTurn({
             id: crypto.randomUUID(),
             session_id: sessionId,
             role: 'assistant',
-            content: assistantText,
+            content: seg.text,
             meta: {
-              callSid,
-              streamSid,
-              intent: payload.intent,
-              notesForHumanSupervisor: payload.notesForHumanSupervisor,
+              phase: 'opening',
+              intent: openingPayload.intent,
+              tone: seg.tone,
+              maxDurationSeconds: seg.maxDurationSeconds,
+              notesForHumanSupervisor: openingPayload.notesForHumanSupervisor,
             },
           } as any);
+        }
 
-          ReassuranceContactProfilesRepository.mergeLastState(contactId, {
-            last_checkin_at: new Date().toISOString(),
-            last_user_utterance: finalUtterance.slice(0, 500),
-          }).catch(() => {});
+        // Speak + insert assistant transcript rows
+        await speakScriptPayload(openingPayload);
+        openingDelivered = true;
+        runningSummary = `Opening delivered.`;
+      }
 
-          runningSummary = (
-            runningSummary +
-            `\nUser: ${finalUtterance}\nAssistant: ${assistantText}`
-          ).trim();
+      async function finalizeAndUpload(
+        status: 'completed' | 'user_hung_up' | 'failed'
+      ) {
+        if (finalized) return;
+        finalized = true;
 
-          assistantReplyCount += 1;
+        try {
+          try {
+            utteranceBuffer.flushNow();
+          } catch {}
+          try {
+            deepgram.finish();
+          } catch {}
 
-          // ✅ MAX TURNS: unified end flow (prevents repeats + prevents cutoffs)
-          if (assistantReplyCount >= MAX_ASSISTANT_REPLIES) {
-            await endCallFlow({
-              reason: 'ai_max_turns',
-              status: 'completed',
-              context,
-              speakAiClosing: true,
-              goodbyeText:
-                "Okay — thanks for chatting. I'll let you go now. Goodbye.",
-            });
+          await new Promise<void>((resolve) =>
+            inboundStream.end(() => resolve())
+          );
+          await new Promise<void>((resolve) =>
+            outboundStream.end(() => resolve())
+          );
+
+          if (!sessionId || !contactId) {
+            app.log.warn(
+              { sessionId, contactId },
+              '[ReassuranceStream] finalize: missing sessionId/contactId'
+            );
             return;
           }
 
-          // embeddings + memory insert AFTER speaking (best effort)
-          embedText(openai, finalUtterance)
-            .then((userEmb) =>
-              ReassuranceContactMemoryChunksRepository.insert({
-                id: crypto.randomUUID(),
-                contact_id: contactId!,
-                session_id: sessionId!,
-                source_type: 'user_utterance',
-                chunk_text: finalUtterance,
-                embedding: userEmb,
-                importance: 1,
-              })
-            )
-            .catch((err) =>
-              app.log.warn(
-                { err, sessionId, contactId },
-                '[ReassuranceStream] user embedding/memory insert failed'
-              )
+          const inboundMp3Path = tmpFile(`reassurance-in-${sessionId}.mp3`);
+          const outboundMp3Path = tmpFile(`reassurance-out-${sessionId}.mp3`);
+          const mixedMp3Path = tmpFile(`reassurance-mixed-${sessionId}.mp3`);
+
+          let inboundMulawUrl: string | null = null;
+          let outboundMulawUrl: string | null = null;
+          let inboundMp3Url: string | null = null;
+          let outboundMp3Url: string | null = null;
+          let mixedMp3Url: string | null = null;
+
+          try {
+            await mulawToMp3(inboundPath, inboundMp3Path);
+            await mulawToMp3(outboundPath, outboundMp3Path);
+          } catch (e) {
+            app.log.error(
+              { e, sessionId },
+              '[ReassuranceStream] ffmpeg convert failed (in/out mp3 may be missing)'
+            );
+          }
+
+          try {
+            await mixMulawToMp3(inboundPath, outboundPath, mixedMp3Path);
+          } catch (e) {
+            app.log.error(
+              { e, sessionId },
+              '[ReassuranceStream] ffmpeg mix convert failed (mixed mp3 will be missing)'
+            );
+          }
+
+          try {
+            const inMp3Buf = fs.existsSync(inboundMp3Path)
+              ? fs.readFileSync(inboundMp3Path)
+              : null;
+            const outMp3Buf = fs.existsSync(outboundMp3Path)
+              ? fs.readFileSync(outboundMp3Path)
+              : null;
+            const mixedMp3Buf = fs.existsSync(mixedMp3Path)
+              ? fs.readFileSync(mixedMp3Path)
+              : null;
+
+            if (inMp3Buf) {
+              inboundMp3Url = await uploadAttachmentBuffer(
+                inMp3Buf,
+                `reassurance/audio/inbound-${sessionId}.mp3`
+              );
+            }
+            if (outMp3Buf) {
+              outboundMp3Url = await uploadAttachmentBuffer(
+                outMp3Buf,
+                `reassurance/audio/outbound-${sessionId}.mp3`
+              );
+            }
+            if (mixedMp3Buf) {
+              mixedMp3Url = await uploadAttachmentBuffer(
+                mixedMp3Buf,
+                `reassurance/audio/mixed-${sessionId}.mp3`
+              );
+            }
+          } catch (e) {
+            app.log.error(
+              { e, sessionId },
+              '[ReassuranceStream] mp3 upload failed'
+            );
+          }
+
+          try {
+            const inBuf = fs.readFileSync(inboundPath);
+            const outBuf = fs.readFileSync(outboundPath);
+
+            inboundMulawUrl = await uploadAttachmentBuffer(
+              inBuf,
+              `reassurance/audio/inbound-${sessionId}.mulaw`
+            );
+            outboundMulawUrl = await uploadAttachmentBuffer(
+              outBuf,
+              `reassurance/audio/outbound-${sessionId}.mulaw`
+            );
+          } catch (e) {
+            app.log.error(
+              { e, sessionId },
+              '[ReassuranceStream] mulaw upload failed'
+            );
+          }
+
+          const primaryInboundUrl = inboundMp3Url ?? inboundMulawUrl;
+          const primaryOutboundUrl = outboundMp3Url ?? outboundMulawUrl;
+
+          const inBytesMulaw = safeStatBytes(inboundPath);
+          const durationMs =
+            typeof inBytesMulaw === 'number'
+              ? Math.round((inBytesMulaw / 8000) * 1000)
+              : null;
+
+          if (companyId) {
+            try {
+              const hasAnyMp3 = Boolean(
+                inboundMp3Url || outboundMp3Url || mixedMp3Url
+              );
+
+              const rec = await ReassuranceCallRecordingsRepository.create({
+                session_id: sessionId,
+                company_id: companyId,
+                contact_id: contactId,
+                call_sid: callSid,
+                stream_sid: streamSid,
+                inbound_url: primaryInboundUrl,
+                outbound_url: primaryOutboundUrl,
+                codec: hasAnyMp3 ? 'mp3' : 'mulaw',
+                sample_rate: hasAnyMp3 ? 44100 : 8000,
+                channels: 1,
+                inbound_bytes: inboundMp3Url
+                  ? safeStatBytes(inboundMp3Path)
+                  : inBytesMulaw,
+                outbound_bytes: outboundMp3Url
+                  ? safeStatBytes(outboundMp3Path)
+                  : safeStatBytes(outboundPath),
+                duration_ms: durationMs,
+                meta: {
+                  status,
+                  raw_mulaw: {
+                    inbound_url: inboundMulawUrl,
+                    outbound_url: outboundMulawUrl,
+                  },
+                  mp3: {
+                    inbound_url: inboundMp3Url,
+                    outbound_url: outboundMp3Url,
+                    mixed_url: mixedMp3Url,
+                  },
+                },
+              });
+
+              recordingId = rec.id;
+            } catch (e) {
+              app.log.error(
+                { e, sessionId, companyId, contactId },
+                '[ReassuranceStream] failed to create recording row'
+              );
+            }
+          }
+
+          let sessionAiSummary: string | null = null;
+
+          try {
+            const rows =
+              await ReassuranceCallTranscriptsRepository.listBySessionId(
+                sessionId
+              );
+            const transcriptText = clamp(
+              formatTranscriptForSummary(rows),
+              12000
             );
 
-          embedText(openai, assistantText)
-            .then((assistantEmb) =>
-              ReassuranceContactMemoryChunksRepository.insert({
-                id: crypto.randomUUID(),
-                contact_id: contactId!,
-                session_id: sessionId!,
-                source_type: 'other',
-                chunk_text: assistantText,
-                embedding: assistantEmb,
-                importance: 1,
-              })
-            )
-            .catch((err) =>
-              app.log.warn(
-                { err, sessionId, contactId },
-                '[ReassuranceStream] assistant embedding/memory insert failed'
-              )
+            if (transcriptText.trim().length >= 20) {
+              sessionAiSummary = await generateSessionAiSummary({
+                openai,
+                transcriptText,
+                callMode,
+              });
+            }
+          } catch (e) {
+            app.log.warn(
+              { e, sessionId },
+              '[ReassuranceStream] session ai_summary gen failed'
             );
+          }
+
+          try {
+            await ReassuranceCallSessionsRepository.finalizeSession(sessionId, {
+              status,
+              ended_at: new Date(),
+              ai_summary: sessionAiSummary,
+            });
+          } catch (e) {
+            app.log.error(
+              { e, sessionId },
+              '[ReassuranceStream] finalizeSession failed'
+            );
+          }
+
+          try {
+            await ReassuranceContactProfilesRepository.mergeLastState(
+              contactId,
+              {
+                last_session_id: sessionId,
+                last_audio: {
+                  inbound_url: primaryInboundUrl,
+                  outbound_url: primaryOutboundUrl,
+                },
+              }
+            );
+          } catch {}
+
+          // ---- rolling memory summary upsert ----
+          try {
+            const prior =
+              await ReassuranceContactMemorySummaryRepository.getByContactId(
+                contactId
+              );
+
+            const callNotes = clamp(runningSummary || '', 2500);
+            if (callNotes.trim().length >= 10) {
+              const updatedSummary = await generateRollingMemorySummary({
+                openai,
+                priorSummary: prior?.summary_text ?? null,
+                callTranscriptSummary: callNotes,
+                callMode,
+              });
+
+              if (updatedSummary.trim().length) {
+                await ReassuranceContactMemorySummaryRepository.upsertSummary({
+                  contact_id: contactId,
+                  summary_text: updatedSummary,
+                });
+              }
+            }
+          } catch (e) {
+            app.log.warn(
+              { e, sessionId, contactId },
+              '[ReassuranceStream] rolling summary upsert failed'
+            );
+          }
 
           app.log.info(
-            { ms: Math.round(nowMs() - tAll) },
-            '[ReassuranceStream] turn total'
+            {
+              sessionId,
+              status,
+              inboundUrl: primaryInboundUrl,
+              outboundUrl: primaryOutboundUrl,
+              mixedMp3Url,
+            },
+            '[ReassuranceStream] finalized + uploaded'
           );
+
+          try {
+            fs.unlinkSync(inboundMp3Path);
+          } catch {}
+          try {
+            fs.unlinkSync(outboundMp3Path);
+          } catch {}
+          try {
+            fs.unlinkSync(mixedMp3Path);
+          } catch {}
         } catch (err) {
           app.log.error(
-            { err, sessionId, contactId },
-            '[ReassuranceStream] followup generation failed'
+            { err, sessionId },
+            '[ReassuranceStream] finalize failed'
           );
         } finally {
-          busyGenerating = false;
+          try {
+            fs.unlinkSync(inboundPath);
+          } catch {}
+          try {
+            fs.unlinkSync(outboundPath);
+          } catch {}
         }
       }
-    );
 
-    async function bootstrapSessionAndOpening() {
-      if (!scheduleId) throw new Error('Missing scheduleId');
-
-      const schedule = await ReassuranceSchedulesRepository.find(
-        Number(scheduleId)
-      );
-
-      if (!schedule) throw new Error('Schedule not found');
-      if (!numberId) throw new Error('Number ID not found');
-
-      companyId = schedule.company_id;
-      const company = companyId
-        ? await UserCompaniesRepository.findCompanyById(companyId)
-        : null;
-
-      companyName = company?.name ?? null;
-
-      const numberRow = numberId
-        ? await NumbersRepository.findById(numberId)
-        : null;
-      callbackNumber = numberRow?.number ?? null;
-
-      const contactLabel = schedule.name || schedule.phone_number || 'Unknown';
-      const contact = await ContactsRepository.findOrCreate({
-        number: schedule.phone_number,
-        companyId: schedule.company_id,
-        label: contactLabel,
-      });
-
-      contactId = contact.id;
-
-      contactProfile =
-        await ReassuranceContactProfilesRepository.getByContactId(contact.id);
-
-      callMode = resolveCallModeFromScheduleTemplate(
-        (schedule as any)?.template
-      );
-
-      // medication reminder calls are one-turn
-      MAX_ASSISTANT_REPLIES = callMode === 'medication_reminder' ? 1 : 3;
-
-      if (!contactProfile) {
-        contactProfile = await ReassuranceContactProfilesRepository.upsert({
-          contact_id: contact.id,
-          preferred_name: schedule.name ?? null,
-          locale: 'en-US',
-          timezone: null,
-          goals: 'Reassurance check-ins',
-          preferences: { tone: 'calm', pace: 'slow' },
-          last_state: { created_from: 'reassurance_stream' },
-        });
-      }
-
-      const memSummary =
-        await ReassuranceContactMemorySummaryRepository.getByContactId(
-          contact.id
-        );
-
-      const preferredName =
-        contactProfile?.preferred_name ||
-        schedule.name ||
-        contact.label ||
-        undefined;
-
-      const locale = contactProfile?.locale || 'en-US';
-
-      const riskLevel: 'low' | 'medium' | 'high' =
-        contactProfile?.risk_flags?.high_risk === true
-          ? 'high'
-          : contactProfile?.risk_flags?.medium_risk === true
-            ? 'medium'
-            : 'low';
-
-      sessionId = crypto.randomUUID();
-
-      await ReassuranceCallSessionsRepository.createSession({
-        id: sessionId,
-        schedule_id: schedule.id,
-        job_id: jobId ?? null,
-        call_id: callId ?? (crypto.randomUUID() as any),
-        contact_id: contact.id,
-        started_at: new Date(),
-        risk_level: riskLevel,
-        ai_model: 'reassurance-stream-v1',
-      });
-
-      transcriptSeq =
-        await ReassuranceCallTranscriptsRepository.getLastSeqForSession(
-          sessionId
-        );
-
-      await drainPendingFinals();
-
-      let openingPayload: ScriptPayload;
-      const openingContext: CallContext = {
-        userProfile: {
-          id: contact.id,
-          name: contact.label ?? undefined,
-          preferredName,
-          ageRange: 'adult',
-          relationshipToCaller: 'reassurance system',
-          locale,
-        },
-        lastCheckInSummary: memSummary?.summary_text ?? undefined,
-        riskLevel,
-        companyName: companyName ?? undefined,
-        callbackNumber: callbackNumber ?? undefined,
-        callMode,
-      };
-
-      try {
-        openingPayload =
-          await scriptAgent.generateOpeningScript(openingContext);
-      } catch (err) {
-        app.log.error(
-          { err, sessionId, contactId: contact.id },
-          '[ReassuranceStream] Failed to generate opening script; using fallback'
-        );
-        openingPayload = {
-          intent:
-            callMode === 'medication_reminder'
-              ? 'medication_reminder'
-              : 'opening',
-          segments: [
-            {
-              id: crypto.randomUUID(),
-              text:
-                callMode === 'medication_reminder'
-                  ? `Hi ${preferredName || 'there'}, this is ${companyName ?? 'our team'}. This is a quick medication reminder. Have you taken your medication, or can you take it now?`
-                  : `Hi ${preferredName || 'there'}, this is ${companyName ?? 'our team'}. This is a quick reassurance check-in. How are you feeling today?`,
-              tone: 'reassuring',
-              maxDurationSeconds: 12,
-            },
-          ],
-          notesForHumanSupervisor: null,
-          handoffSignal: {
-            level: 'none',
-            detected: false,
-            reasons: [],
-            userQuotedTriggers: [],
-            recommendedNextStep: 'continue_script',
-          },
-        };
-      }
-
-      // Save assistant "turn" rows (existing behavior)
-      for (const seg of openingPayload.segments) {
-        await ReassuranceCallTurnsRepository.createTurn({
-          id: crypto.randomUUID(),
-          session_id: sessionId,
-          role: 'assistant',
-          content: seg.text,
-          meta: {
-            phase: 'opening',
-            intent: openingPayload.intent,
-            tone: seg.tone,
-            maxDurationSeconds: seg.maxDurationSeconds,
-            notesForHumanSupervisor: openingPayload.notesForHumanSupervisor,
-          },
-        } as any);
-      }
-
-      // Speak + insert assistant transcript rows
-      await speakScriptPayload(openingPayload);
-      openingDelivered = true;
-      runningSummary = `Opening delivered.`;
-    }
-
-    async function finalizeAndUpload(
-      status: 'completed' | 'user_hung_up' | 'failed'
-    ) {
-      if (finalized) return;
-      finalized = true;
-
-      try {
+      socket.on('message', async (raw) => {
+        let msg: any;
         try {
-          utteranceBuffer.flushNow();
-        } catch {}
-        try {
-          deepgram.finish();
-        } catch {}
-
-        await new Promise<void>((resolve) =>
-          inboundStream.end(() => resolve())
-        );
-        await new Promise<void>((resolve) =>
-          outboundStream.end(() => resolve())
-        );
-
-        if (!sessionId || !contactId) {
+          msg = JSON.parse(raw.toString());
+        } catch {
           app.log.warn(
-            { sessionId, contactId },
-            '[ReassuranceStream] finalize: missing sessionId/contactId'
+            { raw: raw.toString() },
+            '[ReassuranceStream] Non-JSON message'
           );
           return;
         }
 
-        const inboundMp3Path = tmpFile(`reassurance-in-${sessionId}.mp3`);
-        const outboundMp3Path = tmpFile(`reassurance-out-${sessionId}.mp3`);
-        const mixedMp3Path = tmpFile(`reassurance-mixed-${sessionId}.mp3`);
+        switch (msg.event) {
+          case 'start': {
+            streamSid = msg.start?.streamSid ?? null;
+            callSid = msg.start?.callSid ?? null;
 
-        let inboundMulawUrl: string | null = null;
-        let outboundMulawUrl: string | null = null;
-        let inboundMp3Url: string | null = null;
-        let outboundMp3Url: string | null = null;
-        let mixedMp3Url: string | null = null;
+            const cp = (msg.start?.customParameters ?? {}) as Record<
+              string,
+              string
+            >;
+            const q = (req.query ?? {}) as Record<string, any>;
 
-        try {
-          await mulawToMp3(inboundPath, inboundMp3Path);
-          await mulawToMp3(outboundPath, outboundMp3Path);
-        } catch (e) {
-          app.log.error(
-            { e, sessionId },
-            '[ReassuranceStream] ffmpeg convert failed (in/out mp3 may be missing)'
-          );
-        }
+            scheduleId = cp.scheduleId ?? q.scheduleId ?? null;
+            jobId = cp.jobId ?? q.jobId ?? null;
+            callId = cp.callId ?? q.callId ?? callSid ?? null;
+            numberId = cp.numberId ?? q.numberId ?? null;
 
-        try {
-          await mixMulawToMp3(inboundPath, outboundPath, mixedMp3Path);
-        } catch (e) {
-          app.log.error(
-            { e, sessionId },
-            '[ReassuranceStream] ffmpeg mix convert failed (mixed mp3 will be missing)'
-          );
-        }
-
-        try {
-          const inMp3Buf = fs.existsSync(inboundMp3Path)
-            ? fs.readFileSync(inboundMp3Path)
-            : null;
-          const outMp3Buf = fs.existsSync(outboundMp3Path)
-            ? fs.readFileSync(outboundMp3Path)
-            : null;
-          const mixedMp3Buf = fs.existsSync(mixedMp3Path)
-            ? fs.readFileSync(mixedMp3Path)
-            : null;
-
-          if (inMp3Buf) {
-            inboundMp3Url = await uploadAttachmentBuffer(
-              inMp3Buf,
-              `reassurance/audio/inbound-${sessionId}.mp3`
-            );
-          }
-          if (outMp3Buf) {
-            outboundMp3Url = await uploadAttachmentBuffer(
-              outMp3Buf,
-              `reassurance/audio/outbound-${sessionId}.mp3`
-            );
-          }
-          if (mixedMp3Buf) {
-            mixedMp3Url = await uploadAttachmentBuffer(
-              mixedMp3Buf,
-              `reassurance/audio/mixed-${sessionId}.mp3`
-            );
-          }
-        } catch (e) {
-          app.log.error(
-            { e, sessionId },
-            '[ReassuranceStream] mp3 upload failed'
-          );
-        }
-
-        try {
-          const inBuf = fs.readFileSync(inboundPath);
-          const outBuf = fs.readFileSync(outboundPath);
-
-          inboundMulawUrl = await uploadAttachmentBuffer(
-            inBuf,
-            `reassurance/audio/inbound-${sessionId}.mulaw`
-          );
-          outboundMulawUrl = await uploadAttachmentBuffer(
-            outBuf,
-            `reassurance/audio/outbound-${sessionId}.mulaw`
-          );
-        } catch (e) {
-          app.log.error(
-            { e, sessionId },
-            '[ReassuranceStream] mulaw upload failed'
-          );
-        }
-
-        const primaryInboundUrl = inboundMp3Url ?? inboundMulawUrl;
-        const primaryOutboundUrl = outboundMp3Url ?? outboundMulawUrl;
-
-        const inBytesMulaw = safeStatBytes(inboundPath);
-        const durationMs =
-          typeof inBytesMulaw === 'number'
-            ? Math.round((inBytesMulaw / 8000) * 1000)
-            : null;
-
-        if (companyId) {
-          try {
-            const hasAnyMp3 = Boolean(
-              inboundMp3Url || outboundMp3Url || mixedMp3Url
-            );
-
-            const rec = await ReassuranceCallRecordingsRepository.create({
-              session_id: sessionId,
-              company_id: companyId,
-              contact_id: contactId,
-              call_sid: callSid,
-              stream_sid: streamSid,
-              inbound_url: primaryInboundUrl,
-              outbound_url: primaryOutboundUrl,
-              codec: hasAnyMp3 ? 'mp3' : 'mulaw',
-              sample_rate: hasAnyMp3 ? 44100 : 8000,
-              channels: 1,
-              inbound_bytes: inboundMp3Url
-                ? safeStatBytes(inboundMp3Path)
-                : inBytesMulaw,
-              outbound_bytes: outboundMp3Url
-                ? safeStatBytes(outboundMp3Path)
-                : safeStatBytes(outboundPath),
-              duration_ms: durationMs,
-              meta: {
-                status,
-                raw_mulaw: {
-                  inbound_url: inboundMulawUrl,
-                  outbound_url: outboundMulawUrl,
-                },
-                mp3: {
-                  inbound_url: inboundMp3Url,
-                  outbound_url: outboundMp3Url,
-                  mixed_url: mixedMp3Url,
-                },
-              },
-            });
-
-            recordingId = rec.id;
-          } catch (e) {
-            app.log.error(
-              { e, sessionId, companyId, contactId },
-              '[ReassuranceStream] failed to create recording row'
-            );
-          }
-        }
-
-        let sessionAiSummary: string | null = null;
-
-        try {
-          const rows =
-            await ReassuranceCallTranscriptsRepository.listBySessionId(
-              sessionId
-            );
-          const transcriptText = clamp(formatTranscriptForSummary(rows), 12000);
-
-          if (transcriptText.trim().length >= 20) {
-            sessionAiSummary = await generateSessionAiSummary({
-              openai,
-              transcriptText,
-              callMode,
-            });
-          }
-        } catch (e) {
-          app.log.warn(
-            { e, sessionId },
-            '[ReassuranceStream] session ai_summary gen failed'
-          );
-        }
-
-        try {
-          await ReassuranceCallSessionsRepository.finalizeSession(sessionId, {
-            status,
-            ended_at: new Date(),
-            ai_summary: sessionAiSummary,
-          });
-        } catch (e) {
-          app.log.error(
-            { e, sessionId },
-            '[ReassuranceStream] finalizeSession failed'
-          );
-        }
-
-        try {
-          await ReassuranceContactProfilesRepository.mergeLastState(contactId, {
-            last_session_id: sessionId,
-            last_audio: {
-              inbound_url: primaryInboundUrl,
-              outbound_url: primaryOutboundUrl,
-            },
-          });
-        } catch {}
-
-        // ---- rolling memory summary upsert ----
-        try {
-          const prior =
-            await ReassuranceContactMemorySummaryRepository.getByContactId(
-              contactId
-            );
-
-          const callNotes = clamp(runningSummary || '', 2500);
-          if (callNotes.trim().length >= 10) {
-            const updatedSummary = await generateRollingMemorySummary({
-              openai,
-              priorSummary: prior?.summary_text ?? null,
-              callTranscriptSummary: callNotes,
-              callMode,
-            });
-
-            if (updatedSummary.trim().length) {
-              await ReassuranceContactMemorySummaryRepository.upsertSummary({
-                contact_id: contactId,
-                summary_text: updatedSummary,
-              });
-            }
-          }
-        } catch (e) {
-          app.log.warn(
-            { e, sessionId, contactId },
-            '[ReassuranceStream] rolling summary upsert failed'
-          );
-        }
-
-        app.log.info(
-          {
-            sessionId,
-            status,
-            inboundUrl: primaryInboundUrl,
-            outboundUrl: primaryOutboundUrl,
-            mixedMp3Url,
-          },
-          '[ReassuranceStream] finalized + uploaded'
-        );
-
-        try {
-          fs.unlinkSync(inboundMp3Path);
-        } catch {}
-        try {
-          fs.unlinkSync(outboundMp3Path);
-        } catch {}
-        try {
-          fs.unlinkSync(mixedMp3Path);
-        } catch {}
-      } catch (err) {
-        app.log.error(
-          { err, sessionId },
-          '[ReassuranceStream] finalize failed'
-        );
-      } finally {
-        try {
-          fs.unlinkSync(inboundPath);
-        } catch {}
-        try {
-          fs.unlinkSync(outboundPath);
-        } catch {}
-      }
-    }
-
-    socket.on('message', async (raw) => {
-      let msg: any;
-      try {
-        msg = JSON.parse(raw.toString());
-      } catch {
-        app.log.warn(
-          { raw: raw.toString() },
-          '[ReassuranceStream] Non-JSON message'
-        );
-        return;
-      }
-
-      switch (msg.event) {
-        case 'start': {
-          streamSid = msg.start?.streamSid ?? null;
-          callSid = msg.start?.callSid ?? null;
-
-          const cp = (msg.start?.customParameters ?? {}) as Record<
-            string,
-            string
-          >;
-          const q = (req.query ?? {}) as Record<string, any>;
-
-          scheduleId = cp.scheduleId ?? q.scheduleId ?? null;
-          jobId = cp.jobId ?? q.jobId ?? null;
-          callId = cp.callId ?? q.callId ?? callSid ?? null;
-          numberId = cp.numberId ?? q.numberId ?? null;
-
-          app.log.info(
-            {
-              scheduleId,
-              jobId,
-              callId,
-              callSid,
-              streamSid,
-              customParameters: cp,
-              query: q,
-            },
-            '[ReassuranceStream] start received / params resolved'
-          );
-
-          deepgram.connect(async (text, info) => {
-            if (isEnding) return;
-            if (!info?.isFinal) return;
-
-            if (!sessionId || !contactId) {
-              pendingFinals.push({ text, info });
-              return;
-            }
-
-            try {
-              await saveInboundTranscript(text, info);
-            } catch (err) {
-              app.log.error(
-                { err, sessionId, contactId },
-                '[ReassuranceStream] transcript insert failed'
-              );
-            }
-
-            if (isEnding) return;
-            utteranceBuffer.addFinal(text);
-          });
-
-          try {
-            await bootstrapSessionAndOpening();
-          } catch (err) {
-            app.log.error(
+            app.log.info(
               {
-                message: (err as any)?.message,
-                stack: (err as any)?.stack,
                 scheduleId,
                 jobId,
                 callId,
                 callSid,
                 streamSid,
+                customParameters: cp,
+                query: q,
               },
-              '[ReassuranceStream] bootstrap failed'
+              '[ReassuranceStream] start received / params resolved'
             );
-            socket.close();
+
+            deepgram.connect(async (text, info) => {
+              if (isEnding) return;
+              if (!info?.isFinal) return;
+
+              if (!sessionId || !contactId) {
+                pendingFinals.push({ text, info });
+                return;
+              }
+
+              try {
+                await saveInboundTranscript(text, info);
+              } catch (err) {
+                app.log.error(
+                  { err, sessionId, contactId },
+                  '[ReassuranceStream] transcript insert failed'
+                );
+              }
+
+              if (isEnding) return;
+              utteranceBuffer.addFinal(text);
+            });
+
+            try {
+              await bootstrapSessionAndOpening();
+            } catch (err) {
+              app.log.error(
+                {
+                  message: (err as any)?.message,
+                  stack: (err as any)?.stack,
+                  scheduleId,
+                  jobId,
+                  callId,
+                  callSid,
+                  streamSid,
+                },
+                '[ReassuranceStream] bootstrap failed'
+              );
+              socket.close();
+            }
+            break;
           }
-          break;
+
+          case 'media': {
+            const b64 = msg.media?.payload;
+            if (!b64) return;
+
+            const audio = Buffer.from(b64, 'base64');
+            inboundStream.write(audio);
+            deepgram.sendAudio(audio);
+            break;
+          }
+
+          case 'stop':
+            await finalizeAndUpload('user_hung_up');
+            socket.close();
+            break;
+
+          default:
+            break;
         }
+      });
 
-        case 'media': {
-          const b64 = msg.media?.payload;
-          if (!b64) return;
+      socket.on('close', async () => {
+        await finalizeAndUpload('user_hung_up');
+      });
 
-          const audio = Buffer.from(b64, 'base64');
-          inboundStream.write(audio);
-          deepgram.sendAudio(audio);
-          break;
-        }
-
-        case 'stop':
-          await finalizeAndUpload('user_hung_up');
-          socket.close();
-          break;
-
-        default:
-          break;
-      }
+      socket.on('error', async (err) => {
+        app.log.error(
+          { err, sessionId, callSid },
+          '[ReassuranceStream] WS error'
+        );
+        await finalizeAndUpload('failed');
+      });
     });
+  }
 
-    socket.on('close', async () => {
-      await finalizeAndUpload('user_hung_up');
-    });
-
-    socket.on('error', async (err) => {
-      app.log.error(
-        { err, sessionId, callSid },
-        '[ReassuranceStream] WS error'
-      );
-      await finalizeAndUpload('failed');
-    });
-  });
+  // Existing route
+  registerStreamRoute('/reassurance/stream');
+  // ✅ New appointment reminder route path (shares the same implementation)
+  registerStreamRoute('/appointment/stream');
 }

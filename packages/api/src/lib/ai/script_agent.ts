@@ -5,9 +5,13 @@ export type ScriptIntent =
   | 'opening'
   | 'followup'
   | 'closing'
-  | 'medication_reminder';
+  | 'medication_reminder'
+  | 'appointment_reminder';
 
-export type CallMode = 'reassurance' | 'medication_reminder';
+export type CallMode =
+  | 'reassurance'
+  | 'medication_reminder'
+  | 'appointment_reminder';
 
 export interface ScriptSegment {
   id: string;
@@ -54,7 +58,7 @@ export interface CallContext {
   // ✅ single switch
   callMode: CallMode;
 
-  // ✅ NEW: brand + callback
+  // ✅ brand + callback
   companyName?: string; // e.g. "Acme Health"
   callbackNumber?: string; // e.g. "+1 (415) 555-1212"
 }
@@ -70,7 +74,13 @@ const scriptPayloadSchema = {
     properties: {
       intent: {
         type: 'string',
-        enum: ['opening', 'followup', 'closing', 'medication_reminder'],
+        enum: [
+          'opening',
+          'followup',
+          'closing',
+          'medication_reminder',
+          'appointment_reminder',
+        ],
       },
       segments: {
         type: 'array',
@@ -155,7 +165,11 @@ export class ScriptGeneratorAgent {
     const companyName = context.companyName ?? 'our team';
 
     const expectedIntent: ScriptIntent =
-      callMode === 'medication_reminder' ? 'medication_reminder' : 'opening';
+      callMode === 'medication_reminder'
+        ? 'medication_reminder'
+        : callMode === 'appointment_reminder'
+          ? 'appointment_reminder'
+          : 'opening';
 
     const input: SimpleMessage[] = [
       { role: 'system', content: this.systemInstructions },
@@ -178,6 +192,12 @@ export class ScriptGeneratorAgent {
           `- Remind the person to take their medication.`,
           `- Ask if they have taken it or will take it now.`,
           `- Do NOT give dosing instructions.`,
+          ``,
+          `If callMode="appointment_reminder":`,
+          `- Purpose must be "a quick appointment reminder".`,
+          `- Mention they have an upcoming appointment.`,
+          `- Ask them to confirm if they can make it, or if they need to reschedule.`,
+          `- Do NOT include sensitive details unless provided in context.`,
           ``,
           `If callMode="reassurance":`,
           `- Purpose must be "a quick reassurance check-in".`,
@@ -217,7 +237,11 @@ export class ScriptGeneratorAgent {
     const { callMode, riskLevel = 'low' } = context;
 
     const expectedIntent: ScriptIntent =
-      callMode === 'medication_reminder' ? 'medication_reminder' : 'followup';
+      callMode === 'medication_reminder'
+        ? 'medication_reminder'
+        : callMode === 'appointment_reminder'
+          ? 'appointment_reminder'
+          : 'followup';
 
     const input: SimpleMessage[] = [
       { role: 'system', content: this.systemInstructions },
@@ -236,6 +260,11 @@ export class ScriptGeneratorAgent {
           `- If the user already confirmed they took it, thank them and do NOT ask again.`,
           `- If they have not taken it, gently remind once, then prepare to end the call.`,
           `- Do NOT give medical advice.`,
+          ``,
+          `If callMode="appointment_reminder":`,
+          `- If the user confirms, thank them and prepare to end the call.`,
+          `- If they need to reschedule/cancel, acknowledge and give callback instructions (if available).`,
+          `- Keep it brief; do NOT ask many questions.`,
           ``,
           `If callMode="reassurance":`,
           `- Ask a short, supportive follow-up question.`,
@@ -274,7 +303,11 @@ export class ScriptGeneratorAgent {
     const { userProfile, callMode, riskLevel = 'low' } = context;
 
     const expectedIntent: ScriptIntent =
-      callMode === 'medication_reminder' ? 'medication_reminder' : 'closing';
+      callMode === 'medication_reminder'
+        ? 'medication_reminder'
+        : callMode === 'appointment_reminder'
+          ? 'appointment_reminder'
+          : 'closing';
 
     const companyName = context.companyName ?? 'our team';
     const callbackNumber = context.callbackNumber ?? '';
@@ -340,6 +373,12 @@ Medication reminder rules:
 - Do NOT give dosing instructions.
 - Do NOT give medical advice.
 - Ask for confirmation in simple terms.
+
+Appointment reminder rules:
+- Remind the person about an upcoming appointment (without sensitive details unless given).
+- Ask if they can confirm attendance or need to reschedule.
+- If rescheduling is needed, direct them to call back (if callbackNumber exists).
+- Keep it short and end the call after a single exchange.
 
 Safety:
 - Always return a handoffSignal.

@@ -16,6 +16,84 @@ const twilioClient = new TwilioClient(
 );
 const SERVER_DOMAIN = process.env.SERVER_DOMAIN!;
 
+/**
+ * Ensures there is exactly one active (pending/processing) job per schedule,
+ * and that its run_at matches the currently computed nextRunAt.
+ *
+ * - If none exists -> create pending job at nextRunAt
+ * - If one exists and is pending but run_at differs -> reschedule it to nextRunAt
+ * - If one exists and is processing -> leave it alone (avoid moving an in-flight job)
+ *
+ * This prevents "stale pending jobs" from old schedule times causing unexpected runs.
+ */
+async function ensureNextJobForSchedule(
+  app: FastifyInstance,
+  scheduleId: number,
+  nextRunAt: Date
+) {
+  const existing =
+    await ReassuranceCallJobsRepository.findActiveForSchedule(scheduleId);
+
+  // No active job => create one
+  if (!existing) {
+    await ReassuranceCallJobsRepository.include({
+      id: crypto.randomUUID(),
+      schedule_id: scheduleId,
+      run_at: nextRunAt,
+      attempt: 1,
+      status: 'pending',
+    });
+
+    app.log.info(
+      { scheduleId, nextRunAt },
+      'Seeded upcoming reassurance job (created new)'
+    );
+    return;
+  }
+
+  const existingRunAt = new Date(existing.run_at as any);
+  const diffMs = Math.abs(existingRunAt.getTime() - nextRunAt.getTime());
+
+  // If it's already effectively the same time, do nothing
+  if (diffMs < 1000) {
+    app.log.debug(
+      { scheduleId, existingJobId: existing.id, runAt: existingRunAt },
+      'Upcoming reassurance job already matches nextRunAt'
+    );
+    return;
+  }
+
+  // If it's pending, we can safely reschedule to the correct nextRunAt
+  if (existing.status === 'pending') {
+    await ReassuranceCallJobsRepository.reschedule(existing.id, {
+      run_at: nextRunAt,
+    });
+
+    app.log.info(
+      {
+        scheduleId,
+        jobId: existing.id,
+        fromRunAt: existingRunAt,
+        toRunAt: nextRunAt,
+      },
+      'Rescheduled existing pending reassurance job to match nextRunAt'
+    );
+    return;
+  }
+
+  // If processing, leave it as-is (in-flight); cron will seed again next minute
+  app.log.warn(
+    {
+      scheduleId,
+      jobId: existing.id,
+      status: existing.status,
+      existingRunAt,
+      desiredNextRunAt: nextRunAt,
+    },
+    'Active reassurance job is in-flight; not rescheduling'
+  );
+}
+
 async function seedUpcomingJobs(app: FastifyInstance) {
   // Batch through active schedules and ensure each has an upcoming job
   const limit = 500;
@@ -35,30 +113,12 @@ async function seedUpcomingJobs(app: FastifyInstance) {
 
         const nextRunAt = getNextRunAtForSchedule(schedule);
 
-        const hasUpcoming =
-          await ReassuranceCallJobsRepository.existsUpcomingForSchedule(
-            schedule.id,
-            nextRunAt
-          );
-
-        if (hasUpcoming) continue;
-
-        await ReassuranceCallJobsRepository.include({
-          id: crypto.randomUUID(),
-          schedule_id: schedule.id,
-          run_at: nextRunAt,
-          attempt: 1,
-          status: 'pending',
-        });
-
-        app.log.info(
-          { scheduleId: schedule.id, nextRunAt },
-          'Seeded upcoming reassurance job'
-        );
+        // FIX: enforce one active job per schedule; reschedule stale pending jobs
+        await ensureNextJobForSchedule(app, schedule.id, nextRunAt);
       } catch (err: any) {
         app.log.error(
           { err, scheduleId: schedule.id },
-          'Failed seeding upcoming reassurance job'
+          'Failed seeding/upserting upcoming reassurance job'
         );
       }
     }
@@ -106,14 +166,21 @@ export async function registerReassuranceCron(app: FastifyInstance) {
       );
 
       try {
-        // If you added claimPending(), prefer it over markProcessing() to avoid double-processing:
-        // const claimed = await ReassuranceCallJobsRepository.claimPending(job.id);
-        // if (!claimed) continue;
+        // FIX: atomically claim the job to avoid double-processing across workers
+        const claimed = await ReassuranceCallJobsRepository.claimPending(
+          job.id
+        );
+        if (!claimed) {
+          app.log.debug(
+            { jobId: job.id },
+            'Skipped job; already claimed by another worker'
+          );
+          continue;
+        }
 
-        await ReassuranceCallJobsRepository.markProcessing(job.id);
         app.log.debug(
           { jobId: job.id },
-          'Marked reassurance job as processing'
+          'Claimed reassurance job (marked processing)'
         );
 
         const schedule = await ReassuranceSchedulesRepository.find(
@@ -295,7 +362,7 @@ export async function registerReassuranceCron(app: FastifyInstance) {
             scheduleNickname: schedule.name,
           };
 
-          const callRecord = await CallsRepository.create({
+          await CallsRepository.create({
             id: callId,
             number_id: schedule.number_id,
             contact_id: contact.id,
@@ -308,7 +375,7 @@ export async function registerReassuranceCron(app: FastifyInstance) {
           app.log.info(
             {
               jobId: job.id,
-              callId: callRecord.id,
+              callId,
               callSid: twilioCall.sid,
               contactId: contact.id,
               numberId: schedule.number_id,
@@ -335,35 +402,21 @@ export async function registerReassuranceCron(app: FastifyInstance) {
         // Mark job completed (call has been successfully triggered)
         await ReassuranceCallJobsRepository.markCompleted(job.id);
 
-        // Seed the next run for this schedule (idempotent via existsUpcoming check)
+        // Seed the next run for this schedule:
+        // FIX: enforce one active job per schedule; reschedule stale pending jobs
         try {
           const nextRunAt = getNextRunAtForSchedule(schedule);
+          await ensureNextJobForSchedule(app, schedule.id, nextRunAt);
 
-          const hasUpcoming =
-            await ReassuranceCallJobsRepository.existsUpcomingForSchedule(
-              schedule.id,
-              nextRunAt
-            );
-
-          if (!hasUpcoming) {
-            await ReassuranceCallJobsRepository.include({
-              id: crypto.randomUUID(),
-              schedule_id: schedule.id,
-              run_at: nextRunAt,
-              attempt: 1,
-              status: 'pending',
-            });
-
-            app.log.info(
-              { scheduleId: schedule.id, nextRunAt, completedJobId: job.id },
-              'Seeded next reassurance job after completion'
-            );
-          }
+          app.log.info(
+            { scheduleId: schedule.id, nextRunAt, completedJobId: job.id },
+            'Ensured next reassurance job after completion'
+          );
         } catch (err: any) {
           // Don't fail the completed job if seeding next run fails; cron will retry next minute
           app.log.error(
             { err, scheduleId: schedule.id, completedJobId: job.id },
-            'Failed to seed next reassurance job after completion'
+            'Failed to ensure next reassurance job after completion'
           );
         }
       } catch (err: any) {
