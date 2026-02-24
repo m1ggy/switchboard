@@ -653,7 +653,7 @@ export const reassuranceContactProfilesRouter = t.router({
         // 1) Delete any jobs for this schedule first (avoid FK issues)
         // NOTE: adjust table name/column if yours differs
         await client.query(
-          `DELETE FROM reassurance_calls_jobs WHERE schedule_id = $1`,
+          `DELETE FROM reassurance_call_jobs WHERE schedule_id = $1`,
           [input.id]
         );
 
@@ -661,7 +661,7 @@ export const reassuranceContactProfilesRouter = t.router({
         // Prefer repository if you have one; otherwise use SQL
         // If you already have ReassuranceSchedulesRepository.delete(id, client), use that instead.
         const res = await client.query(
-          `DELETE FROM reassurance_schedules WHERE id = $1 RETURNING id`,
+          `DELETE FROM reassurance_call_schedules WHERE id = $1 RETURNING id`,
           [input.id]
         );
 

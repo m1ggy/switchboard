@@ -21,6 +21,18 @@ export const ReassuranceCallJobsRepository = {
 
     return res.rows[0] || null;
   },
+  async findByScheduleId(scheduleId: string): Promise<ReassuranceCallJob[]> {
+    const res = await pool.query<ReassuranceCallJob[]>(
+      `
+      SELECT * 
+      FROM reassurance_call_jobs
+      WHERE schedule_id = $1
+      `,
+      [scheduleId]
+    );
+
+    return (res.rows[0] || []) as ReassuranceCallJob[];
+  },
 
   /**
    * Create a new job (include)
