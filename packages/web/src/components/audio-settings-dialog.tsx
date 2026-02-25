@@ -50,7 +50,6 @@ function MicWaveform({
     }
 
     if (audioCtxRef.current) {
-      // close can throw if already closed
       audioCtxRef.current.close().catch(() => {});
       audioCtxRef.current = null;
     }
@@ -62,7 +61,6 @@ function MicWaveform({
   const start = useCallback(async () => {
     if (!enabled || !deviceId) return;
 
-    // Always stop previous pipeline first
     stop();
 
     try {
@@ -89,7 +87,6 @@ function MicWaveform({
       const analyser = ctx.createAnalyser();
       analyserRef.current = analyser;
 
-      // Good defaults for “voice” metering
       analyser.fftSize = 2048;
       analyser.smoothingTimeConstant = 0.8;
 
@@ -111,16 +108,14 @@ function MicWaveform({
 
         const { width, height } = canvas;
 
-        // background
         ctx2d.clearRect(0, 0, width, height);
 
-        // waveform
         ctx2d.lineWidth = 2;
         ctx2d.beginPath();
 
         let sumSq = 0;
         for (let i = 0; i < data.length; i++) {
-          const v = (data[i] - 128) / 128; // [-1..1]
+          const v = (data[i] - 128) / 128;
           sumSq += v * v;
 
           const x = (i / (data.length - 1)) * width;
@@ -132,7 +127,6 @@ function MicWaveform({
 
         ctx2d.stroke();
 
-        // RMS (0..1) for a simple “level” indicator
         const nextRms = Math.min(1, Math.sqrt(sumSq / data.length) * 2.2);
         setRms(nextRms);
 
@@ -156,12 +150,7 @@ function MicWaveform({
       <div className="text-xs font-medium">Mic level</div>
 
       <div className="rounded-md border p-2">
-        <canvas
-          ref={canvasRef}
-          height={height}
-          // Use CSS width; canvas will scale its drawing buffer via JS below
-          className="h-12 w-full"
-        />
+        <canvas ref={canvasRef} height={height} className="h-12 w-full" />
         <div className="mt-2 h-2 w-full rounded bg-muted">
           <div
             className="h-2 rounded bg-foreground transition-[width]"
@@ -173,7 +162,6 @@ function MicWaveform({
         </div>
       </div>
 
-      {/* Resize canvas drawing buffer to match CSS width for crisp lines */}
       <ResizeCanvasToParent canvasRef={canvasRef} />
     </div>
   );
@@ -195,9 +183,8 @@ function ResizeCanvasToParent({
       const rect = parent.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
 
-      // Match the canvas internal buffer to the rendered size
       const targetWidth = Math.max(1, Math.floor(rect.width * dpr));
-      const targetHeight = Math.max(1, Math.floor(canvas.height * dpr)); // keep requested height
+      const targetHeight = Math.max(1, Math.floor(canvas.height * dpr));
 
       if (canvas.width !== targetWidth) canvas.width = targetWidth;
       if (canvas.height !== targetHeight) canvas.height = targetHeight;
@@ -233,14 +220,6 @@ function AudioSettingsHoverCard() {
     [audio]
   );
 
-  const ensureMicPermission = useCallback(async () => {
-    try {
-      await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) {
-      console.error('Microphone permission denied or error:', err);
-    }
-  }, []);
-
   const readTwilioAudioState = useCallback(() => {
     if (!audio) return;
 
@@ -275,15 +254,12 @@ function AudioSettingsHoverCard() {
     const audio = clientRef.current?.device?.audio;
     if (!audio) return;
 
-    // 1) Make sure labels exist
     try {
       await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
       console.error('Microphone permission denied or error:', err);
-      // still continue; device ids may exist even if labels don’t
     }
 
-    // 2) Build options from Twilio first
     const inputsFromTwilio: DeviceOption[] = [];
     audio.availableInputDevices?.forEach((device, id) => {
       inputsFromTwilio.push({
@@ -297,7 +273,6 @@ function AudioSettingsHoverCard() {
       outputsFromTwilio.push({ id, label: device.label || 'Unknown Speaker' });
     });
 
-    // 3) If Twilio list is empty, fall back to browser enumerateDevices
     let inputs = inputsFromTwilio;
     let outputs = outputsFromTwilio;
 
@@ -330,11 +305,9 @@ function AudioSettingsHoverCard() {
     setInputOptions(inputs);
     setOutputOptions(outputs);
 
-    // 4) Bootstrap Twilio input device if it’s not set yet
     const twilioInputId = audio.inputDevice?.deviceId;
 
     if (!twilioInputId) {
-      // prefer "default" if it exists in our list; else first device
       const preferred =
         inputs.find((d) => d.id === 'default')?.id ?? inputs[0]?.id ?? '';
 
@@ -347,7 +320,6 @@ function AudioSettingsHoverCard() {
       }
     }
 
-    // 5) Now sync selected ids from Twilio (source of truth)
     const currentInput = audio.inputDevice?.deviceId;
     if (currentInput) setActiveInputId(currentInput);
 
@@ -381,13 +353,7 @@ function AudioSettingsHoverCard() {
       navigator.mediaDevices?.removeEventListener?.('devicechange', handler);
   }, [bootstrapAndSync]);
 
-  useEffect(() => {
-    const handler = () => readTwilioAudioState();
-    navigator.mediaDevices?.addEventListener?.('devicechange', handler);
-    return () => {
-      navigator.mediaDevices?.removeEventListener?.('devicechange', handler);
-    };
-  }, [readTwilioAudioState]);
+  // ✅ removed duplicate devicechange listener (bootstrapAndSync already covers it)
 
   const setInputDevice = useCallback(
     async (deviceId: string) => {
@@ -409,8 +375,6 @@ function AudioSettingsHoverCard() {
 
       try {
         await audio.speakerDevices.set([deviceId]);
-        // Optional: keep ringtone on the same output device
-        // await audio.ringtoneDevices.set([deviceId]);
         readTwilioAudioState();
       } catch (err) {
         console.error('Failed to set output device:', err);
@@ -427,29 +391,40 @@ function AudioSettingsHoverCard() {
         </Button>
       </PopoverTrigger>
 
-      <PopoverContent className="flex w-auto min-w-[420px] flex-col gap-4">
+      <PopoverContent
+        // ✅ max width so long device labels don't blow it out
+        // ✅ right padding so it doesn't feel flush to screen edge when near right side
+        // ✅ overflow hidden so internal content won't stretch beyond
+        className="flex w-[420px] max-w-[calc(100vw-24px)] flex-col gap-4 overflow-hidden mr-3"
+        align="end"
+        sideOffset={12}
+        avoidCollisions
+      >
         <span className="font-bold">Audio Settings</span>
 
-        {/* Waveform / Level meter */}
         <MicWaveform
           deviceId={activeInputId}
           enabled={ready && Boolean(activeInputId)}
         />
 
-        {/* Input */}
         <div className="flex flex-col gap-2">
           <span className="text-sm font-semibold">Input Device</span>
           <Select onValueChange={setInputDevice} value={activeInputId}>
-            <SelectTrigger className="w-fit">
+            <SelectTrigger className="w-full">
               <SelectValue placeholder="Select mic input" />
             </SelectTrigger>
 
-            <SelectContent className="w-auto">
+            <SelectContent className="w-[420px] max-w-[calc(100vw-24px)]">
               <SelectGroup>
                 <SelectLabel>Devices</SelectLabel>
                 {inputOptions.map((d) => (
-                  <SelectItem key={d.id} value={d.id}>
-                    {d.label}
+                  <SelectItem
+                    key={d.id}
+                    value={d.id}
+                    // ✅ prevent super long labels from forcing width
+                    className="max-w-full"
+                  >
+                    <span className="block max-w-full truncate">{d.label}</span>
                   </SelectItem>
                 ))}
               </SelectGroup>
@@ -457,7 +432,6 @@ function AudioSettingsHoverCard() {
           </Select>
         </div>
 
-        {/* Output */}
         <div className="flex flex-col gap-2">
           <span className="text-sm font-semibold">Output Device</span>
 
@@ -467,16 +441,18 @@ function AudioSettingsHoverCard() {
             </span>
           ) : (
             <Select onValueChange={setOutputDevice} value={activeOutputId}>
-              <SelectTrigger className="w-fit">
+              <SelectTrigger className="w-full">
                 <SelectValue placeholder="Select speaker output" />
               </SelectTrigger>
 
-              <SelectContent className="w-auto">
+              <SelectContent className="w-[420px] max-w-[calc(100vw-24px)]">
                 <SelectGroup>
                   <SelectLabel>Devices</SelectLabel>
                   {outputOptions.map((d) => (
-                    <SelectItem key={d.id} value={d.id}>
-                      {d.label}
+                    <SelectItem key={d.id} value={d.id} className="max-w-full">
+                      <span className="block max-w-full truncate">
+                        {d.label}
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectGroup>
