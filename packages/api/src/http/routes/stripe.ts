@@ -24,8 +24,23 @@ function isPreferredStatus(status: Stripe.Subscription.Status) {
   return status === 'active' || status === 'trialing';
 }
 
-function newer(first?: number | null, second?: number | null) {
-  return (first ?? 0) > (second ?? 0);
+function bestEndISO(sub: Stripe.Subscription) {
+  // Prefer ended_at if present, else current_period_end, else null
+  return toISO(sub.ended_at) ?? toISO(sub.current_period_end) ?? null;
+}
+
+/**
+ * A "freshness" score for comparing two subscriptions.
+ * created is not enough; end/cancel timestamps matter when determining which update is newer.
+ */
+function subFreshness(sub: Stripe.Subscription) {
+  return (
+    sub.ended_at ??
+    sub.canceled_at ??
+    sub.current_period_end ??
+    sub.created ??
+    0
+  );
 }
 
 /**
@@ -44,38 +59,48 @@ function pickBestSubscription(
 /**
  * Write the user row from a subscription, but DO NOT let an older/other subscription
  * clobber the current one.
+ *
+ * Key improvement:
+ * - still blocks noisy events
+ * - but allows a newer "ended/canceled" update to override
  */
 async function saveFromSubscription(sub: Stripe.Subscription) {
   const customerId = sub.customer as string;
   const user = await UsersRepository.findByStripeCustomerId(customerId);
   const currentId = user?.stripe_subscription_id ?? null;
 
-  // If we have a different current subscription, only switch when the incoming one
-  // is newer and has a preferred status. Otherwise ignore the event.
   if (currentId && currentId !== sub.id) {
     try {
       const current = await stripe.subscriptions.retrieve(currentId);
-      const incomingIsNewerAndGood =
-        newer(sub.created, current.created) && isPreferredStatus(sub.status);
 
-      if (!incomingIsNewerAndGood) {
+      // Incoming is "better" if it's preferred AND at least as fresh as current
+      const incomingBetter =
+        isPreferredStatus(sub.status) &&
+        subFreshness(sub) >= subFreshness(current);
+
+      // Incoming should also be allowed if it's an END/CANCEL and it's newer by freshness
+      const incomingEndedNewer =
+        (sub.status === 'canceled' || !!sub.ended_at) &&
+        subFreshness(sub) >= subFreshness(current);
+
+      if (!incomingBetter && !incomingEndedNewer) {
         // Ignore noisy/older events from other subs
         return;
       }
-      // Optional: enforce single-sub invariant by canceling the old one here.
-      // await stripe.subscriptions.cancel(currentId);
-    } catch (e) {
-      // If the current sub no longer exists (404), proceed with the new one.
+    } catch {
+      // If the current sub no longer exists (404) or can't be retrieved, accept incoming.
     }
   }
 
+  const endISO = bestEndISO(sub);
+  const isCanceled = sub.status === 'canceled';
+
   await UsersRepository.updateByStripeCustomerId(customerId, {
-    stripe_subscription_id: sub.id,
+    stripe_subscription_id: isCanceled ? null : sub.id,
     subscription_status: sub.status,
     plan_started_at: toISO(sub.start_date) ?? undefined,
-    plan_ends_at: toISO(sub.current_period_end) ?? undefined,
+    plan_ends_at: endISO ?? undefined,
     cancel_at_period_end: sub.cancel_at_period_end,
-    // selected_plan / last_price_id if you maintain them
   });
 }
 
@@ -94,10 +119,10 @@ async function saveBestSubscriptionForCustomer(customerId: string) {
 
 async function stripeWebhookRoutes(app: FastifyInstance) {
   await app.register(fastifyRawBody, {
-    field: 'rawBody', // the property on req
-    global: false, // only when we opt-in per route
-    encoding: false, // false => give me a Buffer
-    runFirst: true, // get raw body before any other parser
+    field: 'rawBody',
+    global: false,
+    encoding: false,
+    runFirst: true,
   });
 
   app.post('/webhook', { config: { rawBody: true } }, async (req, reply) => {
@@ -105,7 +130,6 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
     const raw = (req as any).rawBody as Buffer | undefined;
 
     if (!sig || !raw) {
-      // This is what Stripe was complaining about
       return reply
         .status(400)
         .send('Webhook Error: No webhook payload was provided.');
@@ -124,7 +148,6 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
     }
 
     switch (event.type) {
-      // Reactivation / new purchase via Checkout
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session;
         const customerId = session.customer as string | null;
@@ -142,35 +165,25 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
       }
 
       case 'customer.subscription.created':
-      case 'customer.subscription.updated': {
-        const subscription = event.data.object as Stripe.Subscription;
-        await saveFromSubscription(subscription);
-        break;
-      }
-
+      case 'customer.subscription.updated':
       case 'customer.subscription.deleted': {
-        const subscription = event.data.object as Stripe.Subscription;
-        const customerId = subscription.customer as string;
+        const sub = event.data.object as Stripe.Subscription;
 
-        // Only clear the user if the deleted sub matches what we currently store.
-        const user = await UsersRepository.findByStripeCustomerId(customerId);
-        if (user?.stripe_subscription_id === subscription.id) {
-          const currentPeriodEndISO =
-            toISO(subscription.current_period_end) ?? new Date().toISOString();
-          await UsersRepository.updateByStripeCustomerId(customerId, {
-            stripe_subscription_id: undefined,
-            subscription_status: 'canceled',
-            plan_ends_at: currentPeriodEndISO,
-            cancel_at_period_end: false,
-          });
+        // Helpful debug (keep or remove)
+        console.log('[subscription event]', event.type, {
+          id: sub.id,
+          status: sub.status,
+          cancel_at_period_end: sub.cancel_at_period_end,
+          current_period_end: sub.current_period_end,
+          ended_at: sub.ended_at,
+          canceled_at: sub.canceled_at,
+          customer: sub.customer,
+        });
 
-          // Optional: if there are other active subs, re-persist the best one.
-          await saveBestSubscriptionForCustomer(customerId);
-        }
+        await saveFromSubscription(sub);
         break;
       }
 
-      // Paid → usually means the sub is active; prefer saving the sub state
       case 'invoice.paid':
       case 'invoice.payment_succeeded': {
         const invoice = event.data.object as Stripe.Invoice;
@@ -193,8 +206,8 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
 
         if (subId) {
           const sub = await stripe.subscriptions.retrieve(subId);
-          // Only downgrade if this event pertains to the stored subscription
           const user = await UsersRepository.findByStripeCustomerId(customerId);
+
           if (
             !user?.stripe_subscription_id ||
             user.stripe_subscription_id === sub.id
@@ -204,7 +217,6 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
             });
           }
         } else {
-          // No sub on invoice — keep it minimal
           await UsersRepository.updateByStripeCustomerId(customerId, {
             subscription_status: 'past_due',
           });
@@ -260,19 +272,18 @@ async function stripeWebhookRoutes(app: FastifyInstance) {
           return reply.status(200).send({ received: true });
         }
 
-        // Idempotency: skip if we already added items for this period
         const pending = await stripe.invoiceItems.list({
           customer: customerId,
           pending: true,
           limit: 100,
         });
+
         const already = new Set(
           pending.data
             .filter((li) => li.metadata?.overage_for_period === periodKey)
             .map((li) => li.metadata?.overage_type)
         );
 
-        // Map: plan name + metric -> Stripe price id
         let OVERAGE_PRICE_IDS: Record<
           string,
           Record<'sms' | 'minutes' | 'fax', string | undefined>
