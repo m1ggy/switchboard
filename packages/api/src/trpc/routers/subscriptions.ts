@@ -20,14 +20,36 @@ export const subscriptionRouter = t.router({
 
   getUsageStatistics: protectedProcedure.query(async ({ ctx }) => {
     const user = await UsersRepository.findByFirebaseUid(ctx.user.uid);
-    if (!user?.stripe_customer_id) {
-      // no stripe context; fall back (or return zeros)
-      return await UsageRepository.getCalendarMonthTotalsByUser(ctx.user.uid);
+
+    // Decide which id you actually store in usage.user_id (pick ONE and stay consistent)
+    const usageUserId = user?.user_id
+      ? String(user.user_id)
+      : String(ctx.user.uid);
+
+    // If no user or no Stripe customer id, just return month totals (or zeros)
+    const customerId = user?.stripe_customer_id
+      ? String(user.stripe_customer_id)
+      : null;
+
+    // Only call Stripe if it looks like a Stripe customer id
+    const looksLikeStripeCustomer =
+      !!customerId && /^cus_[A-Za-z0-9]+$/.test(customerId);
+
+    if (!looksLikeStripeCustomer) {
+      // Optional: log once so you can fix the bad DB value
+      console.warn(
+        '[getUsageStatistics] invalid stripe_customer_id:',
+        customerId
+      );
+
+      // Fallback behavior:
+      return await UsageRepository.getCalendarMonthTotalsByUser(usageUserId);
+      // or: return { sms: '0', call: '0', fax: '0' };
     }
 
-    // Resolve best subscription (same selection strategy you already use elsewhere)
+    // Resolve subscription and billing period from Stripe
     const all = await stripe.subscriptions.list({
-      customer: user.stripe_customer_id,
+      customer: customerId,
       status: 'all',
       limit: 100,
     });
@@ -61,21 +83,16 @@ export const subscriptionRouter = t.router({
 
     const sub = subs[0] ?? null;
 
-    // If we can't resolve a usable subscription, fall back to calendar month
+    // If no usable sub or no period, fall back
     if (!sub?.current_period_start || !sub?.current_period_end) {
-      return await UsageRepository.getCalendarMonthTotalsByUser(ctx.user.uid);
+      return await UsageRepository.getCalendarMonthTotalsByUser(usageUserId);
     }
 
     const periodStart = new Date(sub.current_period_start * 1000);
     const periodEnd = new Date(sub.current_period_end * 1000);
 
-    // IMPORTANT: use the same user_id you store in usage.user_id.
-    // If usage.user_id is firebase uid, keep ctx.user.uid.
-    // If usage.user_id is your internal user id, use user.user_id instead.
-    const usageUserId = user.user_id ?? ctx.user.uid;
-
     return await UsageRepository.getTotalsByUserForPeriod(
-      String(usageUserId),
+      usageUserId,
       periodStart,
       periodEnd
     );
