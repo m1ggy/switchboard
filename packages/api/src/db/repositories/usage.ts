@@ -1,6 +1,12 @@
 import pool from '@/lib/pg';
 import { Usage } from '@/types/db';
 
+export type UsageTotals = {
+  sms: string; // NUMERIC comes back as string
+  call: string;
+  fax: string;
+};
+
 export const UsageRepository = {
   /**
    * Create a new usage record
@@ -93,5 +99,52 @@ export const UsageRepository = {
    */
   async delete(id: string): Promise<void> {
     await pool.query(`DELETE FROM usage WHERE id = $1`, [id]);
+  },
+  /**
+   * Totals for a user within an explicit period.
+   * Period is [start, end) to match Stripe semantics.
+   */
+  async getTotalsByUserForPeriod(
+    userId: string,
+    periodStart: Date,
+    periodEnd: Date
+  ): Promise<UsageTotals> {
+    const res = await pool.query<UsageTotals>(
+      `
+      SELECT
+        COALESCE(SUM(CASE WHEN type = 'sms' THEN amount ELSE 0 END), 0)::text AS sms,
+        COALESCE(SUM(CASE WHEN type = 'call' THEN amount ELSE 0 END), 0)::text AS call,
+        COALESCE(SUM(CASE WHEN type = 'fax' THEN amount ELSE 0 END), 0)::text AS fax
+      FROM usage
+      WHERE user_id = $1
+        AND created_at >= $2
+        AND created_at <  $3
+      `,
+      [userId, periodStart.toISOString(), periodEnd.toISOString()]
+    );
+
+    return res.rows[0] ?? { sms: '0', call: '0', fax: '0' };
+  },
+
+  /**
+   * Fallback: calendar-month totals (UTC month boundary).
+   * Only use this if you can't resolve Stripe period.
+   */
+  async getCalendarMonthTotalsByUser(userId: string): Promise<UsageTotals> {
+    const res = await pool.query<UsageTotals>(
+      `
+      SELECT
+        COALESCE(SUM(CASE WHEN type = 'sms' THEN amount ELSE 0 END), 0)::text AS sms,
+        COALESCE(SUM(CASE WHEN type = 'call' THEN amount ELSE 0 END), 0)::text AS call,
+        COALESCE(SUM(CASE WHEN type = 'fax' THEN amount ELSE 0 END), 0)::text AS fax
+      FROM usage
+      WHERE user_id = $1
+        AND created_at >= date_trunc('month', now())
+        AND created_at <  (date_trunc('month', now()) + interval '1 month')
+      `,
+      [userId]
+    );
+
+    return res.rows[0] ?? { sms: '0', call: '0', fax: '0' };
   },
 };

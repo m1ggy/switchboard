@@ -19,7 +19,66 @@ export const subscriptionRouter = t.router({
   }),
 
   getUsageStatistics: protectedProcedure.query(async ({ ctx }) => {
-    return await UsageRepository.getCurrentMonthTotalsByUser(ctx.user.uid);
+    const user = await UsersRepository.findByFirebaseUid(ctx.user.uid);
+    if (!user?.stripe_customer_id) {
+      // no stripe context; fall back (or return zeros)
+      return await UsageRepository.getCalendarMonthTotalsByUser(ctx.user.uid);
+    }
+
+    // Resolve best subscription (same selection strategy you already use elsewhere)
+    const all = await stripe.subscriptions.list({
+      customer: user.stripe_customer_id,
+      status: 'all',
+      limit: 100,
+    });
+
+    const subs = all.data.filter(
+      (s) => s.status !== 'incomplete' && s.status !== 'incomplete_expired'
+    );
+
+    const scoreStatus = (s: Stripe.Subscription['status']) => {
+      switch (s) {
+        case 'active':
+          return 100;
+        case 'trialing':
+          return 90;
+        case 'past_due':
+          return 80;
+        case 'unpaid':
+          return 70;
+        case 'canceled':
+          return 10;
+        default:
+          return 0;
+      }
+    };
+
+    subs.sort((a, b) => {
+      const sb = scoreStatus(b.status) - scoreStatus(a.status);
+      if (sb !== 0) return sb;
+      return (b.created ?? 0) - (a.created ?? 0);
+    });
+
+    const sub = subs[0] ?? null;
+
+    // If we can't resolve a usable subscription, fall back to calendar month
+    if (!sub?.current_period_start || !sub?.current_period_end) {
+      return await UsageRepository.getCalendarMonthTotalsByUser(ctx.user.uid);
+    }
+
+    const periodStart = new Date(sub.current_period_start * 1000);
+    const periodEnd = new Date(sub.current_period_end * 1000);
+
+    // IMPORTANT: use the same user_id you store in usage.user_id.
+    // If usage.user_id is firebase uid, keep ctx.user.uid.
+    // If usage.user_id is your internal user id, use user.user_id instead.
+    const usageUserId = user.user_id ?? ctx.user.uid;
+
+    return await UsageRepository.getTotalsByUserForPeriod(
+      String(usageUserId),
+      periodStart,
+      periodEnd
+    );
   }),
 
   getPlanUsageLimits: protectedProcedure.query(async ({ ctx }) => {
