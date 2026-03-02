@@ -10,6 +10,15 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
   });
 }
 
+const params = new URLSearchParams(window.location.search);
+const enableEruda = params.get('eruda') === 'true';
+
+if (enableEruda) {
+  import('eruda').then((eruda) => {
+    eruda.default.init();
+  });
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
