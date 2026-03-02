@@ -21,6 +21,46 @@ import {
 
 type DeviceOption = { id: string; label: string };
 
+function safeLabel(raw: string | undefined | null, fallback: string) {
+  const s = (raw ?? '').trim();
+  return s.length ? s : fallback;
+}
+
+function normalizeDeviceOptions(
+  devices: Array<{ id: string; label: string }>,
+  fallbackPrefix: string
+): DeviceOption[] {
+  // Ensure:
+  // - no empty ids
+  // - no empty labels
+  // - stable + readable labels
+  // - de-dupe by id
+  const seen = new Set<string>();
+  const out: DeviceOption[] = [];
+
+  for (const d of devices) {
+    const id = (d.id ?? '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+
+    out.push({
+      id,
+      label: safeLabel(d.label, `${fallbackPrefix}`),
+    });
+  }
+
+  // If multiple devices share the same label, append a short suffix for clarity
+  const counts = out.reduce<Record<string, number>>((acc, d) => {
+    acc[d.label] = (acc[d.label] ?? 0) + 1;
+    return acc;
+  }, {});
+  return out.map((d) => {
+    if ((counts[d.label] ?? 0) <= 1) return d;
+    const suffix = d.id.length >= 6 ? d.id.slice(-6) : d.id;
+    return { ...d, label: `${d.label} (${suffix})` };
+  });
+}
+
 function MicWaveform({
   deviceId,
   enabled,
@@ -66,6 +106,7 @@ function MicWaveform({
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
+          // NOTE: on some mobile browsers, exact can fail; consider ideal if you hit issues
           deviceId: { exact: deviceId },
           echoCancellation: true,
           noiseSuppression: true,
@@ -212,43 +253,14 @@ function AudioSettingsHoverCard() {
   const [inputOptions, setInputOptions] = useState<DeviceOption[]>([]);
   const [outputOptions, setOutputOptions] = useState<DeviceOption[]>([]);
 
-  const [activeInputId, setActiveInputId] = useState<string>('');
-  const [activeOutputId, setActiveOutputId] = useState<string>('');
+  // IMPORTANT: use null instead of '' so we never feed Radix Select an empty string
+  const [activeInputId, setActiveInputId] = useState<string | null>(null);
+  const [activeOutputId, setActiveOutputId] = useState<string | null>(null);
 
   const outputSupported = useMemo(
     () => Boolean(audio?.isOutputSelectionSupported),
     [audio]
   );
-
-  const readTwilioAudioState = useCallback(() => {
-    if (!audio) return;
-
-    const inputs: DeviceOption[] = [];
-    audio.availableInputDevices?.forEach((device, id) => {
-      inputs.push({ id, label: device.label || 'Unknown Microphone' });
-    });
-
-    const outputs: DeviceOption[] = [];
-    audio.availableOutputDevices?.forEach((device, id) => {
-      outputs.push({ id, label: device.label || 'Unknown Speaker' });
-    });
-
-    setInputOptions(inputs);
-    setOutputOptions(outputs);
-
-    const currentInput = audio.inputDevice;
-    if (currentInput?.deviceId) setActiveInputId(currentInput.deviceId);
-
-    const currentSpeakers = audio.speakerDevices?.get?.();
-    if (currentSpeakers && currentSpeakers.size) {
-      const speakersArr = Array.from(currentSpeakers);
-      const preferred =
-        speakersArr.find((d) => d.deviceId && d.deviceId !== 'default') ??
-        speakersArr[0];
-
-      if (preferred?.deviceId) setActiveOutputId(preferred.deviceId);
-    }
-  }, [audio]);
 
   const bootstrapAndSync = useCallback(async () => {
     const audio = clientRef.current?.device?.audio;
@@ -260,42 +272,53 @@ function AudioSettingsHoverCard() {
       console.error('Microphone permission denied or error:', err);
     }
 
-    const inputsFromTwilio: DeviceOption[] = [];
+    // --- Gather devices from Twilio ---
+    const twilioInputsRaw: DeviceOption[] = [];
     audio.availableInputDevices?.forEach((device, id) => {
-      inputsFromTwilio.push({
+      twilioInputsRaw.push({
         id,
-        label: device.label || 'Unknown Microphone',
+        label: safeLabel(device.label, 'Microphone'),
       });
     });
 
-    const outputsFromTwilio: DeviceOption[] = [];
+    const twilioOutputsRaw: DeviceOption[] = [];
     audio.availableOutputDevices?.forEach((device, id) => {
-      outputsFromTwilio.push({ id, label: device.label || 'Unknown Speaker' });
+      twilioOutputsRaw.push({
+        id,
+        label: safeLabel(device.label, 'Speaker'),
+      });
     });
 
-    let inputs = inputsFromTwilio;
-    let outputs = outputsFromTwilio;
+    let inputs = normalizeDeviceOptions(twilioInputsRaw, 'Microphone');
+    let outputs = normalizeDeviceOptions(twilioOutputsRaw, 'Speaker');
 
+    // --- Fallback to enumerateDevices if Twilio didn’t give us lists ---
     if (!inputs.length || !outputs.length) {
       try {
         const mediaDevices = await navigator.mediaDevices.enumerateDevices();
 
         if (!inputs.length) {
-          inputs = mediaDevices
-            .filter((d) => d.kind === 'audioinput')
-            .map((d) => ({
-              id: d.deviceId,
-              label: d.label || 'Unknown Microphone',
-            }));
+          inputs = normalizeDeviceOptions(
+            mediaDevices
+              .filter((d) => d.kind === 'audioinput')
+              .map((d) => ({
+                id: d.deviceId,
+                label: safeLabel(d.label, 'Microphone'),
+              })),
+            'Microphone'
+          );
         }
 
         if (!outputs.length) {
-          outputs = mediaDevices
-            .filter((d) => d.kind === 'audiooutput')
-            .map((d) => ({
-              id: d.deviceId,
-              label: d.label || 'Unknown Speaker',
-            }));
+          outputs = normalizeDeviceOptions(
+            mediaDevices
+              .filter((d) => d.kind === 'audiooutput')
+              .map((d) => ({
+                id: d.deviceId,
+                label: safeLabel(d.label, 'Speaker'),
+              })),
+            'Speaker'
+          );
         }
       } catch (err) {
         console.error('enumerateDevices error:', err);
@@ -305,29 +328,43 @@ function AudioSettingsHoverCard() {
     setInputOptions(inputs);
     setOutputOptions(outputs);
 
-    const twilioInputId = audio.inputDevice?.deviceId;
+    // --- Ensure current input is valid; otherwise pick a sane default ---
+    const currentTwilioInput = (audio.inputDevice?.deviceId ?? '').trim();
+    const currentInputValid =
+      !!currentTwilioInput && inputs.some((d) => d.id === currentTwilioInput);
 
-    if (!twilioInputId) {
+    if (!currentInputValid) {
       const preferred =
-        inputs.find((d) => d.id === 'default')?.id ?? inputs[0]?.id ?? '';
+        inputs.find((d) => d.id === 'default')?.id ?? inputs[0]?.id ?? null;
 
       if (preferred) {
         try {
           await audio.setInputDevice(preferred);
+          setActiveInputId(preferred);
         } catch (err) {
           console.error('Failed to bootstrap Twilio input device:', err);
+          setActiveInputId(null);
         }
+      } else {
+        setActiveInputId(null);
       }
+    } else {
+      setActiveInputId(currentTwilioInput);
     }
 
-    const currentInput = audio.inputDevice?.deviceId;
-    if (currentInput) setActiveInputId(currentInput);
+    // --- Output device: validate and store (only if supported) ---
+    if (audio.isOutputSelectionSupported) {
+      const currentSpeakers = audio.speakerDevices?.get?.();
+      const currentArr = currentSpeakers ? Array.from(currentSpeakers) : [];
+      const first = currentArr.find((d) => (d.deviceId ?? '').trim())?.deviceId;
 
-    const currentSpeakers = audio.speakerDevices?.get?.();
-    if (currentSpeakers && currentSpeakers.size) {
-      const arr = Array.from(currentSpeakers);
-      const first = arr.find((d) => d.deviceId)?.deviceId;
-      if (first) setActiveOutputId(first);
+      const normalizedFirst = (first ?? '').trim();
+      const outputValid =
+        !!normalizedFirst && outputs.some((d) => d.id === normalizedFirst);
+
+      setActiveOutputId(outputValid ? normalizedFirst : null);
+    } else {
+      setActiveOutputId(null);
     }
   }, [clientRef]);
 
@@ -353,19 +390,20 @@ function AudioSettingsHoverCard() {
       navigator.mediaDevices?.removeEventListener?.('devicechange', handler);
   }, [bootstrapAndSync]);
 
-  // ✅ removed duplicate devicechange listener (bootstrapAndSync already covers it)
-
   const setInputDevice = useCallback(
     async (deviceId: string) => {
       if (!audio) return;
+      const id = (deviceId ?? '').trim();
+      if (!id) return;
+
       try {
-        await audio.setInputDevice(deviceId);
-        readTwilioAudioState();
+        await audio.setInputDevice(id);
+        setActiveInputId(id);
       } catch (err) {
         console.error('Failed to set input device:', err);
       }
     },
-    [audio, readTwilioAudioState]
+    [audio]
   );
 
   const setOutputDevice = useCallback(
@@ -373,15 +411,21 @@ function AudioSettingsHoverCard() {
       if (!audio) return;
       if (!audio.isOutputSelectionSupported) return;
 
+      const id = (deviceId ?? '').trim();
+      if (!id) return;
+
       try {
-        await audio.speakerDevices.set([deviceId]);
-        readTwilioAudioState();
+        await audio.speakerDevices.set([id]);
+        setActiveOutputId(id);
       } catch (err) {
         console.error('Failed to set output device:', err);
       }
     },
-    [audio, readTwilioAudioState]
+    [audio]
   );
+
+  const inputSelectValue = activeInputId ?? undefined; // ✅ never ''
+  const outputSelectValue = activeOutputId ?? undefined; // ✅ never ''
 
   return (
     <Popover>
@@ -392,9 +436,6 @@ function AudioSettingsHoverCard() {
       </PopoverTrigger>
 
       <PopoverContent
-        // ✅ max width so long device labels don't blow it out
-        // ✅ right padding so it doesn't feel flush to screen edge when near right side
-        // ✅ overflow hidden so internal content won't stretch beyond
         className="flex w-[420px] max-w-[calc(100vw-24px)] flex-col gap-4 overflow-hidden mr-3"
         align="end"
         sideOffset={12}
@@ -403,13 +444,13 @@ function AudioSettingsHoverCard() {
         <span className="font-bold">Audio Settings</span>
 
         <MicWaveform
-          deviceId={activeInputId}
+          deviceId={activeInputId ?? ''}
           enabled={ready && Boolean(activeInputId)}
         />
 
         <div className="flex flex-col gap-2">
           <span className="text-sm font-semibold">Input Device</span>
-          <Select onValueChange={setInputDevice} value={activeInputId}>
+          <Select onValueChange={setInputDevice} value={inputSelectValue}>
             <SelectTrigger className="w-full">
               <SelectValue placeholder="Select mic input" />
             </SelectTrigger>
@@ -418,12 +459,7 @@ function AudioSettingsHoverCard() {
               <SelectGroup>
                 <SelectLabel>Devices</SelectLabel>
                 {inputOptions.map((d) => (
-                  <SelectItem
-                    key={d.id}
-                    value={d.id}
-                    // ✅ prevent super long labels from forcing width
-                    className="max-w-full"
-                  >
+                  <SelectItem key={d.id} value={d.id} className="max-w-full">
                     <span className="block max-w-full truncate">{d.label}</span>
                   </SelectItem>
                 ))}
@@ -440,7 +476,7 @@ function AudioSettingsHoverCard() {
               Output selection isn’t supported in this browser.
             </span>
           ) : (
-            <Select onValueChange={setOutputDevice} value={activeOutputId}>
+            <Select onValueChange={setOutputDevice} value={outputSelectValue}>
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Select speaker output" />
               </SelectTrigger>
