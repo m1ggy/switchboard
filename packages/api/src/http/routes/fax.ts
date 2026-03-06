@@ -261,6 +261,11 @@ async function routes(app: FastifyInstance) {
       });
     }
 
+    await InboxesRepository.findOrCreate({
+      contactId: contact.id,
+      numberId: number.id,
+    });
+
     try {
       const telnyxRes = await axios.post(
         'https://api.telnyx.com/v2/faxes',
