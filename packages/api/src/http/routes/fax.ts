@@ -14,6 +14,11 @@ import { uploadAttachmentBuffer } from '@/lib/google/storage';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { authMiddleware } from '../middlewares/auth';
 
+const normalizePhone = (value?: string | null) => {
+  if (!value) return '';
+  return value.replace(/[^\d+]/g, '');
+};
+
 async function routes(app: FastifyInstance) {
   /**
    * 📥 Inbound fax handler (Telnyx webhook)
@@ -35,19 +40,23 @@ async function routes(app: FastifyInstance) {
 
     // --- ✅ INBOUND FAX RECEIVED ---
     if (eventType === 'fax.received' && payload.status === 'received') {
-      const { from, to, media_url, pages } = payload;
+      const from = normalizePhone(payload.from);
+      const to = normalizePhone(payload.to);
+      const { media_url, pages } = payload;
 
       console.log(`📠 Fax received from ${from} to Telnyx number ${to}`);
 
       const recentLogs = await FaxForwardLogRepository.listRecent(50);
-      const lastLog = recentLogs.find((log) => log.from_number === from);
+      const lastLog = recentLogs.find(
+        (log) => normalizePhone(log.from_number) === from
+      );
 
       if (!lastLog) {
         console.warn(`⚠️ No fax forward log found for sender: ${from}`);
         return reply.status(200).send('No matching forward log');
       }
 
-      const twilioNumber = lastLog.to_number;
+      const twilioNumber = normalizePhone(lastLog.to_number);
       const number = await NumbersRepository.findByNumber(twilioNumber);
       if (!number) {
         return reply.status(200).send('No matching number');
@@ -57,6 +66,7 @@ async function routes(app: FastifyInstance) {
         from,
         number.company_id
       );
+
       if (!contact) {
         contact = await ContactsRepository.create({
           id: randomUUID(),
@@ -149,129 +159,162 @@ async function routes(app: FastifyInstance) {
    * 📤 Outbound fax sender
    */
   app.post('/send', { preHandler: authMiddleware }, async (request, reply) => {
-    const files = await request.saveRequestFiles();
-    const body = request.body as Record<string, Record<string, string>>;
-
-    console.log('BODY: ', body);
-
-    if (!body) return reply.status(500).send('internal server error');
-
-    const rawCover = JSON.parse(body.cover.value);
-
-    if (typeof rawCover !== 'object')
-      return reply.status(400).send('Cover should be an object');
-    const to = rawCover.to;
-    const connection_id = process.env.TELNYX_FAX_APP_ID;
-
-    console.log({ to, connection_id, rawCover });
-
-    if (!to || !connection_id || !rawCover) {
-      return reply
-        .status(400)
-        .send('Missing `to`, `connection_id`, or `cover`');
-    }
-
-    if (files.length === 0) {
-      return reply.status(400).send('No file uploaded');
-    }
-
-    let coverData: Record<string, string>;
-
     try {
-      coverData = rawCover;
-    } catch {
-      return reply.status(400).send('Invalid JSON in `cover` field');
-    }
+      const files = await request.saveRequestFiles();
+      const body = request.body as Record<string, Record<string, string>>;
 
-    const file = files[0];
-    const uploadedBuffer = await file.toBuffer();
+      console.log('BODY: ', body);
 
-    // 📄 Load user PDF to count pages
-    const userPdf = await PDFDocument.load(uploadedBuffer);
-    const userPageCount = userPdf.getPageCount();
-    const totalPages = 1 + userPageCount;
+      if (!body) {
+        return reply.status(500).send('internal server error');
+      }
 
-    // 📄 Generate cover page PDF
-    const coverPdf = await PDFDocument.create();
-    const page = coverPdf.addPage();
-    const font = await coverPdf.embedFont(StandardFonts.Courier);
-    const { height } = page.getSize();
-    let y = height - 50;
+      const companyId = body.companyId?.value;
+      const numberId = body.numberId?.value;
 
-    const line = (text: string = '') => {
-      page.drawText(text, { x: 50, y, size: 12, font });
-      y -= 20;
-    };
+      if (!companyId) {
+        return reply.status(400).send('Missing `companyId`');
+      }
 
-    const today = new Date().toLocaleDateString();
+      if (!numberId) {
+        return reply.status(400).send('Missing `numberId`');
+      }
 
-    line('----------------------------------------');
-    line('               FAX COVER                ');
-    line('----------------------------------------');
-    line('');
-    line(`Date:        ${today}`);
-    line(`Pages:       ${totalPages} (including this cover)`);
-    line('');
-    line(`From:        ${coverData.fromName}`);
-    line(`Fax:         ${coverData.fromFax}`);
-    line('');
-    line(`To:          ${coverData.toName}`);
-    line('');
-    line(`Subject:     ${coverData.subject}`);
-    line('');
-    line('----------------------------------------');
-    line('CONFIDENTIALITY NOTICE:');
-    line('This fax may contain confidential information');
-    line('intended only for the recipient. If you are not');
-    line('the intended recipient, please notify the sender');
-    line('and destroy this document.');
-    line('----------------------------------------');
+      const rawCover = JSON.parse(body.cover.value);
 
-    // 📎 Merge cover + uploaded PDF
-    const mergedPdf = await PDFDocument.create();
-    const coverPages = await mergedPdf.copyPages(coverPdf, [0]);
-    const userPages = await mergedPdf.copyPages(
-      userPdf,
-      userPdf.getPageIndices()
-    );
+      if (typeof rawCover !== 'object' || rawCover === null) {
+        return reply.status(400).send('Cover should be an object');
+      }
 
-    mergedPdf.addPage(coverPages[0]);
-    userPages.forEach((p) => mergedPdf.addPage(p));
+      const coverData = rawCover as Record<string, string>;
+      const to = coverData.to;
+      const connection_id = process.env.TELNYX_FAX_APP_ID;
+      const telnyxSendingNumber = process.env.TELNYX_FAX_NUMBER;
 
-    const mergedBuffer = await mergedPdf.save();
+      if (!to || !connection_id || !telnyxSendingNumber) {
+        return reply
+          .status(400)
+          .send('Missing `to`, `connection_id`, or sending fax number');
+      }
 
-    // ☁️ Upload to GCS
-    const mediaUrl = await uploadAttachmentBuffer(
-      Buffer.from(mergedBuffer),
-      `fax-${randomUUID()}.pdf`
-    );
+      if (files.length === 0) {
+        return reply.status(400).send('No file uploaded');
+      }
 
-    // 📦 Continue with sending via Telnyx (same as before)
-    const fromFax = coverData.fromFax;
-    const number = await NumbersRepository.findByNumber(fromFax);
-    if (!number) return reply.status(404).send('Sender number not found');
+      const authUser = request.user as { uid: string };
 
-    let contact = await ContactsRepository.findByNumber(to, number.company_id);
-    if (!contact) {
-      contact = await ContactsRepository.create({
-        id: randomUUID(),
-        number: to,
-        company_id: number.company_id,
-        label: to,
+      const user = await UsersRepository.findByFirebaseUid(authUser.uid);
+      if (!user) {
+        return reply.status(404).send('Authenticated user not found');
+      }
+
+      // Verify user has access to the selected company
+      const userCompanies = await UserCompaniesRepository.findCompaniesByUserId(
+        user.user_id
+      );
+
+      const hasAccess = userCompanies.some((c) => c.id === companyId);
+      if (!hasAccess) {
+        return reply.status(403).send('You do not have access to this company');
+      }
+
+      // Use the exact number selected by the client
+      const number = await NumbersRepository.findById(numberId);
+      if (!number) {
+        return reply.status(404).send('Selected number not found');
+      }
+
+      // Make sure the selected number belongs to the selected company
+      if (number.company_id !== companyId) {
+        return reply
+          .status(403)
+          .send('Selected number does not belong to this company');
+      }
+
+      let contact = await ContactsRepository.findByNumber(to, companyId);
+      if (!contact) {
+        contact = await ContactsRepository.create({
+          id: randomUUID(),
+          number: to,
+          company_id: companyId,
+          label: coverData.toName || to,
+        });
+      }
+
+      await InboxesRepository.findOrCreate({
+        contactId: contact.id,
+        numberId: number.id,
       });
-    }
 
-    await InboxesRepository.findOrCreate({
-      contactId: contact.id,
-      numberId: number.id,
-    });
+      const file = files[0];
+      const uploadedBuffer = await file.toBuffer();
 
-    try {
+      // Load uploaded PDF to count pages
+      const userPdf = await PDFDocument.load(uploadedBuffer);
+      const userPageCount = userPdf.getPageCount();
+      const totalPages = 1 + userPageCount;
+
+      // Generate cover page PDF
+      const coverPdf = await PDFDocument.create();
+      const page = coverPdf.addPage();
+      const font = await coverPdf.embedFont(StandardFonts.Courier);
+      const { height } = page.getSize();
+      let y = height - 50;
+
+      const line = (text: string = '') => {
+        page.drawText(text, { x: 50, y, size: 12, font });
+        y -= 20;
+      };
+
+      const today = new Date().toLocaleDateString();
+
+      line('----------------------------------------');
+      line('               FAX COVER                ');
+      line('----------------------------------------');
+      line('');
+      line(`Date:        ${today}`);
+      line(`Pages:       ${totalPages} (including this cover)`);
+      line('');
+      line(`From:        ${coverData.fromName || ''}`);
+      line(`Fax:         ${coverData.fromFax || number.number || ''}`);
+      line('');
+      line(`To:          ${coverData.toName || to}`);
+      line('');
+      line(`Subject:     ${coverData.subject || ''}`);
+      line('');
+      line('----------------------------------------');
+      line('CONFIDENTIALITY NOTICE:');
+      line('This fax may contain confidential information');
+      line('intended only for the recipient. If you are not');
+      line('the intended recipient, please notify the sender');
+      line('and destroy this document.');
+      line('----------------------------------------');
+
+      // Merge cover + uploaded PDF
+      const mergedPdf = await PDFDocument.create();
+      const coverPages = await mergedPdf.copyPages(coverPdf, [0]);
+      const userPages = await mergedPdf.copyPages(
+        userPdf,
+        userPdf.getPageIndices()
+      );
+
+      mergedPdf.addPage(coverPages[0]);
+      userPages.forEach((p) => mergedPdf.addPage(p));
+
+      const mergedBuffer = await mergedPdf.save();
+
+      // Upload merged PDF
+      const mediaUrl = await uploadAttachmentBuffer(
+        Buffer.from(mergedBuffer),
+        `fax-${randomUUID()}.pdf`
+      );
+
+      // Send through shared Telnyx fax number
       const telnyxRes = await axios.post(
         'https://api.telnyx.com/v2/faxes',
         {
           to,
-          from: process.env.TELNYX_FAX_NUMBER,
+          from: telnyxSendingNumber,
           connection_id,
           media_url: mediaUrl,
         },
@@ -298,31 +341,28 @@ async function routes(app: FastifyInstance) {
         meta: {
           telnyx_response: faxData,
           to,
-          from: fromFax,
+          from: telnyxSendingNumber,
+          company_id: companyId,
+          selected_number_id: number.id,
+          cover_from_fax: coverData.fromFax || null,
         },
       });
 
       console.log(`📤 Outbound fax sent and logged. ID: ${faxData.id}`);
 
-      const userCompany = await UserCompaniesRepository.findUserIdById(
-        number.company_id
-      );
-
-      const user = await UsersRepository.findByFirebaseUid(
-        userCompany?.user_id as string
-      );
       await UsageRepository.create({
         id: randomUUID(),
         subscription_id: user?.stripe_subscription_id as string,
-        user_id: user?.user_id as string,
+        user_id: authUser.uid,
         amount: 1,
         type: 'fax',
       });
+
       return reply.send({ success: true, fax: faxData });
-    } catch (error) {
+    } catch (error: any) {
       console.error(
         '❌ Fax send failed:',
-        error?.response?.data || error.message
+        error?.response?.data || error?.message || error
       );
       return reply.status(500).send('Failed to send fax');
     }
