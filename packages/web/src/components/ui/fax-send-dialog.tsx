@@ -168,6 +168,8 @@ export default function FaxSendDialog({
       const formData = new FormData();
       if (attachedFile) formData.append('file', attachedFile.file);
       formData.append('to', to);
+      formData.append('companyId', activeCompany?.id as string);
+      formData.append('numberId', activeNumber?.id as string);
 
       formData.append(
         'cover',

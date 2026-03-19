@@ -22,7 +22,6 @@ const SocketContext = createContext<SocketContextValue | null>(null);
 
 export function useSocket() {
   const context = useContext(SocketContext);
-
   return context;
 }
 
@@ -63,6 +62,7 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
   );
 
   const client = getQueryClient();
+
   useEffect(() => {
     if (!user || !socket) return;
 
@@ -71,7 +71,7 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
     const handler = async (notif: Notification) => {
       let title = 'New Notification';
 
-      if (notif.meta.companyId) {
+      if (notif.meta?.companyId) {
         const notifCompany = companies?.find(
           (company) => company.id === notif.meta.companyId
         );
@@ -81,9 +81,9 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
       }
 
       if (
-        notif.meta.event &&
+        notif.meta?.event &&
         notif.meta.event === 'refresh' &&
-        notif.meta.target
+        notif.meta?.target
       ) {
         const targets = notif.meta.target as Record<string, string>;
         if (targets['contactId']) {
@@ -95,17 +95,50 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
         }
       }
 
-      toast.info(title, { description: notif.message });
+      const metaType = notif.meta?.type;
+      const faxStatus = notif.meta?.status;
+      const faxToastId = notif.meta?.telnyxFaxId
+        ? `fax-${String(notif.meta.telnyxFaxId)}`
+        : notif.id;
+
+      if (metaType === 'fax') {
+        if (faxStatus === 'delivered') {
+          toast.success(title, {
+            id: faxToastId,
+            description: notif.message,
+          });
+        } else if (faxStatus === 'failed') {
+          const failureReason =
+            typeof notif.meta?.failureReason === 'string'
+              ? notif.meta.failureReason
+              : null;
+
+          toast.error(title, {
+            id: faxToastId,
+            description: failureReason
+              ? `${notif.message} (${failureReason})`
+              : notif.message,
+          });
+        } else {
+          toast.info(title, {
+            id: faxToastId,
+            description: notif.message,
+          });
+        }
+      } else {
+        toast.info(title, { description: notif.message });
+      }
 
       await client.invalidateQueries({
         queryKey: trpc.inboxes.getNumberInboxes.queryKey({
-          numberId: activeNumber?.number as string,
+          numberId: activeNumber?.id as string,
         }),
       });
 
       await client.invalidateQueries({
         queryKey: trpc.notifications.getNotifications.queryKey({ page: 1 }),
       });
+
       showSystemNotification(title, { body: notif.message });
 
       await refetchNotifications();
@@ -113,7 +146,6 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
       await refetchInboxes();
       await refetchInboxesUnreadCount();
 
-      // scroll to bottom
       window.dispatchEvent(new Event('new-message-scroll'));
     };
 
@@ -122,7 +154,19 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
     return () => {
       socket.off(channel, handler);
     };
-  }, [user, socket, refetchCount, refetchNotifications, companies, client]);
+  }, [
+    user,
+    socket,
+    refetchCount,
+    refetchNotifications,
+    refetchInboxes,
+    refetchInboxesUnreadCount,
+    companies,
+    client,
+    activeNumber?.id,
+    trpc,
+    showSystemNotification,
+  ]);
 
   useEffect(() => {
     if (cleanupRef.current) {
