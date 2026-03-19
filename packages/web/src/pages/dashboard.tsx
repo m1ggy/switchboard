@@ -360,9 +360,14 @@ function Dashboard() {
                   </TooltipStandalone>
                 </div>
                 <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                  <Progress value={pct(smsUsage, maxSMS?.included_quantity)} />
+                  <Progress
+                    value={pct(
+                      parseInt(smsUsage.toString()),
+                      maxSMS?.included_quantity
+                    )}
+                  />
                   <Badge className="w-fit">
-                    {nf.format(smsUsage)} /{' '}
+                    {nf.format(parseInt(smsUsage.toString()))} /{' '}
                     {nf.format(maxSMS?.included_quantity ?? 0)}
                   </Badge>
                 </div>
@@ -380,7 +385,7 @@ function Dashboard() {
                 <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                   <Progress
                     value={pct(
-                      voiceCallsUsage,
+                      parseInt(voiceCallsUsage.toString()),
                       maxVoiceMinutes?.included_quantity
                     )}
                   />
