@@ -59,8 +59,6 @@ function CustomChartTooltip({
 function Dashboard() {
   const trpc = useTRPC();
 
-  const { data: userInfo } = useQuery(trpc.users.getUser.queryOptions());
-
   const { data: usage, isLoading: usageLoading } = useQuery(
     trpc.subscription.getUsageStatistics.queryOptions()
   );
@@ -387,10 +385,8 @@ function Dashboard() {
                     )}
                   />
                   <Badge className="w-fit">
-                    {nf.format(
-                      Number.isFinite(voiceCallsUsage) ? voiceCallsUsage : 0
-                    )}{' '}
-                    / {nf.format(maxVoiceMinutes?.included_quantity ?? 0)}
+                    {nf.format(parseInt(voiceCallsUsage.toString()) ?? 0)} /{' '}
+                    {nf.format(maxVoiceMinutes?.included_quantity ?? 0)}
                   </Badge>
                 </div>
               </div>
@@ -407,10 +403,13 @@ function Dashboard() {
                   </div>
                   <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                     <Progress
-                      value={pct(faxUsage, maxFax?.included_quantity)}
+                      value={pct(
+                        parseInt(`${faxUsage}`),
+                        maxFax?.included_quantity
+                      )}
                     />
                     <Badge className="w-fit">
-                      {nf.format(faxUsage)} /{' '}
+                      {nf.format(parseInt(`${faxUsage}`))} /{' '}
                       {nf.format(maxFax?.included_quantity ?? 0)}
                     </Badge>
                   </div>
