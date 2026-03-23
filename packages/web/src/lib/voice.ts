@@ -1,121 +1,180 @@
 import { Call, Device } from '@twilio/voice-sdk';
-import { getAuth } from 'firebase/auth';
-import { app } from './firebase';
 
-type TwilioConnection = ReturnType<Device['connect']>;
+type TwilioConnection = Awaited<ReturnType<Device['connect']>>;
 
 interface TwilioVoiceOptions {
   token: string;
   onIncomingCall?: (connection: Call) => void;
   onDisconnect?: () => void;
   onError?: (error: Error) => void;
+  onTokenWillExpire?: () => void | Promise<void>;
   identity: string | null;
 }
 
 export class TwilioVoiceClient {
   device: Device | null = null;
+  connection: TwilioConnection | null = null;
+  identity: string | null = null;
+
   private token: string;
   private onIncomingCall?: (connection: Call) => void;
   private onDisconnect?: () => void;
   private onError?: (error: Error) => void;
-  connection: TwilioConnection | null = null;
-  identity: string | null = null;
+  private onTokenWillExpire?: () => void | Promise<void>;
 
   constructor(options: TwilioVoiceOptions) {
     this.token = options.token;
     this.onIncomingCall = options.onIncomingCall;
     this.onDisconnect = options.onDisconnect;
     this.onError = options.onError;
+    this.onTokenWillExpire = options.onTokenWillExpire;
     this.identity = options.identity;
   }
 
   async initialize(): Promise<void> {
     try {
-      this.device = new Device(this.token, {
+      if (this.device) {
+        this.removeEventListeners();
+        this.device.destroy();
+        this.device = null;
+      }
+
+      const device = new Device(this.token, {
         closeProtection: true,
-        tokenRefreshMs: 60000,
+        tokenRefreshMs: 60_000,
       });
 
-      this.registerEvents();
+      this.device = device;
+      this.registerEvents(device);
 
-      await this.device.register();
+      await device.register();
     } catch (error) {
-      this.onError?.(error as Error);
+      this.onError?.(this.toError(error));
+      throw error;
     }
   }
 
-  private registerEvents() {
+  private registerEvents(device: Device) {
+    device.on('incoming', this.handleIncoming);
+    device.on('disconnect', this.handleDisconnect);
+    device.on('error', this.handleError);
+    device.on('cancel', this.handleCancel);
+    device.on('tokenWillExpire', this.handleTokenWillExpire);
+  }
+
+  private removeEventListeners() {
     if (!this.device) return;
 
-    this.device.on('incoming', (connection: Call) => {
-      this.onIncomingCall?.(connection);
-    });
-
-    this.device.on('disconnect', () => {
-      this.onDisconnect?.();
-    });
-
-    this.device.on('error', (error) => {
-      this.onError?.(error);
-    });
-    this.device.on('cancel', () => {
-      this.onDisconnect?.();
-    });
-
-    this.device.on('tokenWillExpire', async () => {
-      const user = getAuth(app).currentUser;
-
-      if (!user)
-        throw new Error(
-          'cannot refetch voice token as there is no user logged in'
-        );
-
-      // return early if there is an active connection
-      //@ts-ignore
-      if (this.device?.activeConnection()) return;
-
-      if (!this.identity) return;
-
-      const token = await user.getIdToken(true);
-
-      const response = await fetch(
-        `${import.meta.env.VITE_WEBSOCKET_URL}/twilio/token`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}` as string,
-          },
-          method: 'GET',
-          body: JSON.stringify({ identity: this.identity }),
-        }
-      );
-
-      const json = (await response.json()) as { token: string };
-
-      this.device?.updateToken(json.token);
-    });
+    this.device.off('incoming', this.handleIncoming);
+    this.device.off('disconnect', this.handleDisconnect);
+    this.device.off('error', this.handleError);
+    this.device.off('cancel', this.handleCancel);
+    this.device.off('tokenWillExpire', this.handleTokenWillExpire);
   }
+
+  private handleIncoming = (call: Call) => {
+    this.connection = call;
+    this.onIncomingCall?.(call);
+  };
+
+  private handleDisconnect = () => {
+    this.connection = null;
+    this.onDisconnect?.();
+  };
+
+  private handleCancel = () => {
+    this.connection = null;
+    this.onDisconnect?.();
+  };
+
+  private handleError = (error: unknown) => {
+    this.onError?.(this.toError(error));
+  };
+
+  private handleTokenWillExpire = async () => {
+    try {
+      await this.onTokenWillExpire?.();
+    } catch (error) {
+      this.onError?.(this.toError(error));
+    }
+  };
 
   async connect(
     params: Record<string, string> = {}
   ): Promise<TwilioConnection | null> {
     if (!this.device) return null;
-    return this.device.connect({ params });
+
+    try {
+      const connection = await this.device.connect({ params });
+      this.connection = connection;
+
+      connection.on('disconnect', () => {
+        if (this.connection === connection) this.connection = null;
+      });
+
+      connection.on('cancel', () => {
+        if (this.connection === connection) this.connection = null;
+      });
+
+      connection.on('error', () => {
+        if (this.connection === connection) this.connection = null;
+      });
+
+      return connection;
+    } catch (error) {
+      this.onError?.(this.toError(error));
+      throw error;
+    }
   }
 
   disconnect() {
-    this.device?.disconnectAll();
+    try {
+      this.connection = null;
+      this.device?.disconnectAll();
+    } catch (error) {
+      this.onError?.(this.toError(error));
+    }
   }
 
   destroy() {
-    this.device?.destroy();
+    try {
+      this.connection = null;
+      this.removeEventListeners();
+      this.device?.destroy();
+      this.device = null;
+    } catch (error) {
+      this.onError?.(this.toError(error));
+    }
   }
 
-  updateToken(newToken: string) {
+  async updateToken(newToken: string): Promise<void> {
     this.token = newToken;
-    this.device?.updateToken(newToken);
+    if (!this.device) return;
+    await this.device.updateToken(newToken);
   }
 
-  isInitialized(): boolean {
-    return !!this.device;
+  async reRegister(): Promise<void> {
+    if (!this.device) {
+      await this.initialize();
+      return;
+    }
+
+    const state = this.device.state;
+
+    if (state === 'destroyed') {
+      await this.initialize();
+      return;
+    }
+
+    if (state === 'unregistered') {
+      await this.device.register();
+      return;
+    }
+
+    // already registering or registered — do nothing
+  }
+
+  getState(): 'unregistered' | 'registering' | 'registered' | 'destroyed' {
+    return this.device?.state ?? 'destroyed';
   }
 }

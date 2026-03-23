@@ -1,12 +1,6 @@
 import { useTwilioVoice } from '@/hooks/twilio-provider';
 import { AudioLines } from 'lucide-react';
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from './ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import {
@@ -30,11 +24,6 @@ function normalizeDeviceOptions(
   devices: Array<{ id: string; label: string }>,
   fallbackPrefix: string
 ): DeviceOption[] {
-  // Ensure:
-  // - no empty ids
-  // - no empty labels
-  // - stable + readable labels
-  // - de-dupe by id
   const seen = new Set<string>();
   const out: DeviceOption[] = [];
 
@@ -45,15 +34,15 @@ function normalizeDeviceOptions(
 
     out.push({
       id,
-      label: safeLabel(d.label, `${fallbackPrefix}`),
+      label: safeLabel(d.label, fallbackPrefix),
     });
   }
 
-  // If multiple devices share the same label, append a short suffix for clarity
   const counts = out.reduce<Record<string, number>>((acc, d) => {
     acc[d.label] = (acc[d.label] ?? 0) + 1;
     return acc;
   }, {});
+
   return out.map((d) => {
     if ((counts[d.label] ?? 0) <= 1) return d;
     const suffix = d.id.length >= 6 ? d.id.slice(-6) : d.id;
@@ -72,12 +61,10 @@ function MicWaveform({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef<number | null>(null);
-
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const dataRef = useRef<Uint8Array | null>(null);
-
   const [rms, setRms] = useState(0);
 
   const stop = useCallback(() => {
@@ -96,6 +83,7 @@ function MicWaveform({
 
     analyserRef.current = null;
     dataRef.current = null;
+    setRms(0);
   }, []);
 
   const start = useCallback(async () => {
@@ -106,8 +94,7 @@ function MicWaveform({
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          // NOTE: on some mobile browsers, exact can fail; consider ideal if you hit issues
-          deviceId: { exact: deviceId },
+          deviceId: { ideal: deviceId },
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
@@ -148,9 +135,7 @@ function MicWaveform({
         a.getByteTimeDomainData(data);
 
         const { width, height } = canvas;
-
         ctx2d.clearRect(0, 0, width, height);
-
         ctx2d.lineWidth = 2;
         ctx2d.beginPath();
 
@@ -202,60 +187,34 @@ function MicWaveform({
           {Math.round(rms * 100)}%
         </div>
       </div>
-
-      <ResizeCanvasToParent canvasRef={canvasRef} />
     </div>
   );
 }
 
-function ResizeCanvasToParent({
-  canvasRef,
-}: {
-  canvasRef: React.RefObject<HTMLCanvasElement | null>;
-}) {
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const resize = () => {
-      const parent = canvas.parentElement;
-      if (!parent) return;
-
-      const rect = parent.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-
-      const targetWidth = Math.max(1, Math.floor(rect.width * dpr));
-      const targetHeight = Math.max(1, Math.floor(canvas.height * dpr));
-
-      if (canvas.width !== targetWidth) canvas.width = targetWidth;
-      if (canvas.height !== targetHeight) canvas.height = targetHeight;
-    };
-
-    resize();
-
-    const ro = new ResizeObserver(resize);
-    ro.observe(canvas.parentElement!);
-
-    window.addEventListener('resize', resize);
-    return () => {
-      window.removeEventListener('resize', resize);
-      ro.disconnect();
-    };
-  }, [canvasRef]);
-
-  return null;
-}
-
 function AudioSettingsHoverCard() {
-  const { clientRef, ready } = useTwilioVoice();
+  const {
+    clientRef,
+    ready,
+    activeCall,
+    incomingCall,
+    callState,
+    audioPrimed,
+    ensureAudioPrimed,
+  } = useTwilioVoice();
   const audio = clientRef.current?.device?.audio;
 
+  const [open, setOpen] = useState(false);
   const [inputOptions, setInputOptions] = useState<DeviceOption[]>([]);
   const [outputOptions, setOutputOptions] = useState<DeviceOption[]>([]);
-
-  // IMPORTANT: use null instead of '' so we never feed Radix Select an empty string
   const [activeInputId, setActiveInputId] = useState<string | null>(null);
   const [activeOutputId, setActiveOutputId] = useState<string | null>(null);
+
+  const syncInFlightRef = useRef(false);
+  const lastSyncAtRef = useRef(0);
+
+  const hasLiveCall = Boolean(
+    activeCall || incomingCall || callState === 'connected'
+  );
 
   const outputSupported = useMemo(
     () => Boolean(audio?.isOutputSelectionSupported),
@@ -266,125 +225,157 @@ function AudioSettingsHoverCard() {
     const audio = clientRef.current?.device?.audio;
     if (!audio) return;
 
+    const now = Date.now();
+    if (syncInFlightRef.current) return;
+    if (now - lastSyncAtRef.current < 1000) return;
+
+    syncInFlightRef.current = true;
+    lastSyncAtRef.current = now;
+
     try {
-      await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) {
-      console.error('Microphone permission denied or error:', err);
-    }
+      let inputs = normalizeDeviceOptions(
+        Array.from(audio.availableInputDevices?.entries?.() ?? []).map(
+          ([id, device]) => ({
+            id,
+            label: safeLabel(device.label, 'Microphone'),
+          })
+        ),
+        'Microphone'
+      );
 
-    // --- Gather devices from Twilio ---
-    const twilioInputsRaw: DeviceOption[] = [];
-    audio.availableInputDevices?.forEach((device, id) => {
-      twilioInputsRaw.push({
-        id,
-        label: safeLabel(device.label, 'Microphone'),
-      });
-    });
+      let outputs = normalizeDeviceOptions(
+        Array.from(audio.availableOutputDevices?.entries?.() ?? []).map(
+          ([id, device]) => ({
+            id,
+            label: safeLabel(device.label, 'Speaker'),
+          })
+        ),
+        'Speaker'
+      );
 
-    const twilioOutputsRaw: DeviceOption[] = [];
-    audio.availableOutputDevices?.forEach((device, id) => {
-      twilioOutputsRaw.push({
-        id,
-        label: safeLabel(device.label, 'Speaker'),
-      });
-    });
-
-    let inputs = normalizeDeviceOptions(twilioInputsRaw, 'Microphone');
-    let outputs = normalizeDeviceOptions(twilioOutputsRaw, 'Speaker');
-
-    // --- Fallback to enumerateDevices if Twilio didn’t give us lists ---
-    if (!inputs.length || !outputs.length) {
-      try {
-        const mediaDevices = await navigator.mediaDevices.enumerateDevices();
-
-        if (!inputs.length) {
-          inputs = normalizeDeviceOptions(
-            mediaDevices
-              .filter((d) => d.kind === 'audioinput')
-              .map((d) => ({
-                id: d.deviceId,
-                label: safeLabel(d.label, 'Microphone'),
-              })),
-            'Microphone'
-          );
-        }
-
-        if (!outputs.length) {
-          outputs = normalizeDeviceOptions(
-            mediaDevices
-              .filter((d) => d.kind === 'audiooutput')
-              .map((d) => ({
-                id: d.deviceId,
-                label: safeLabel(d.label, 'Speaker'),
-              })),
-            'Speaker'
-          );
-        }
-      } catch (err) {
-        console.error('enumerateDevices error:', err);
-      }
-    }
-
-    setInputOptions(inputs);
-    setOutputOptions(outputs);
-
-    // --- Ensure current input is valid; otherwise pick a sane default ---
-    const currentTwilioInput = (audio.inputDevice?.deviceId ?? '').trim();
-    const currentInputValid =
-      !!currentTwilioInput && inputs.some((d) => d.id === currentTwilioInput);
-
-    if (!currentInputValid) {
-      const preferred =
-        inputs.find((d) => d.id === 'default')?.id ?? inputs[0]?.id ?? null;
-
-      if (preferred) {
+      if (!inputs.length || !outputs.length) {
         try {
-          await audio.setInputDevice(preferred);
-          setActiveInputId(preferred);
+          const mediaDevices = await navigator.mediaDevices.enumerateDevices();
+
+          if (!inputs.length) {
+            inputs = normalizeDeviceOptions(
+              mediaDevices
+                .filter((d) => d.kind === 'audioinput')
+                .map((d) => ({
+                  id: d.deviceId,
+                  label: safeLabel(d.label, 'Microphone'),
+                })),
+              'Microphone'
+            );
+          }
+
+          if (!outputs.length) {
+            outputs = normalizeDeviceOptions(
+              mediaDevices
+                .filter((d) => d.kind === 'audiooutput')
+                .map((d) => ({
+                  id: d.deviceId,
+                  label: safeLabel(d.label, 'Speaker'),
+                })),
+              'Speaker'
+            );
+          }
         } catch (err) {
-          console.error('Failed to bootstrap Twilio input device:', err);
+          console.error('enumerateDevices error:', err);
+        }
+      }
+
+      setInputOptions(inputs);
+      setOutputOptions(outputs);
+
+      const currentTwilioInput = (audio.inputDevice?.deviceId ?? '').trim();
+      const currentInputValid =
+        !!currentTwilioInput && inputs.some((d) => d.id === currentTwilioInput);
+
+      if (currentInputValid) {
+        setActiveInputId(currentTwilioInput);
+      } else {
+        const preferredInput =
+          inputs.find((d) => d.id === 'default')?.id ?? inputs[0]?.id ?? null;
+
+        if (preferredInput) {
+          try {
+            await audio.setInputDevice(preferredInput);
+            setActiveInputId(preferredInput);
+          } catch (err) {
+            console.error('Failed to bootstrap input device:', err);
+            setActiveInputId(null);
+          }
+        } else {
           setActiveInputId(null);
         }
-      } else {
-        setActiveInputId(null);
       }
-    } else {
-      setActiveInputId(currentTwilioInput);
-    }
 
-    // --- Output device: validate and store (only if supported) ---
-    if (audio.isOutputSelectionSupported) {
-      const currentSpeakers = audio.speakerDevices?.get?.();
-      const currentArr = currentSpeakers ? Array.from(currentSpeakers) : [];
-      const first = currentArr.find((d) => (d.deviceId ?? '').trim())?.deviceId;
+      if (audio.isOutputSelectionSupported) {
+        const currentSpeakers = audio.speakerDevices?.get?.();
+        const currentArr = currentSpeakers ? Array.from(currentSpeakers) : [];
+        const currentSpeakerId =
+          currentArr.find((d) => (d.deviceId ?? '').trim())?.deviceId ?? '';
 
-      const normalizedFirst = (first ?? '').trim();
-      const outputValid =
-        !!normalizedFirst && outputs.some((d) => d.id === normalizedFirst);
+        const normalizedCurrentSpeakerId = currentSpeakerId.trim();
+        const outputValid =
+          !!normalizedCurrentSpeakerId &&
+          outputs.some((d) => d.id === normalizedCurrentSpeakerId);
 
-      setActiveOutputId(outputValid ? normalizedFirst : null);
-    } else {
-      setActiveOutputId(null);
+        const preferredOutput = outputValid
+          ? normalizedCurrentSpeakerId
+          : (outputs.find((d) => d.id === 'default')?.id ??
+            outputs[0]?.id ??
+            null);
+
+        if (preferredOutput) {
+          try {
+            // Important: always force-bind speaker output
+            await audio.speakerDevices.set([preferredOutput]);
+            setActiveOutputId(preferredOutput);
+          } catch (err) {
+            console.error('Failed to bootstrap output device:', err);
+            setActiveOutputId(null);
+          }
+        } else {
+          setActiveOutputId(null);
+        }
+      } else {
+        setActiveOutputId(null);
+      }
+    } finally {
+      syncInFlightRef.current = false;
     }
   }, [clientRef]);
 
   useEffect(() => {
-    if (!ready) return;
-    bootstrapAndSync();
-  }, [ready, bootstrapAndSync]);
+    if (!ready || !audioPrimed) return;
+    void bootstrapAndSync();
+  }, [ready, audioPrimed, bootstrapAndSync]);
+
+  useEffect(() => {
+    if (!ready || !audioPrimed) return;
+    // Re-bind speaker state around call transitions, especially after hangup
+    void bootstrapAndSync();
+  }, [callState, ready, audioPrimed, bootstrapAndSync]);
 
   useEffect(() => {
     const audio = clientRef.current?.device?.audio;
     if (!audio) return;
 
-    const handler = () => bootstrapAndSync();
-    audio.on?.('deviceChange', handler);
+    const handler = () => {
+      void bootstrapAndSync();
+    };
 
+    audio.on?.('deviceChange', handler);
     return () => audio.off?.('deviceChange', handler);
   }, [clientRef, bootstrapAndSync]);
 
   useEffect(() => {
-    const handler = () => bootstrapAndSync();
+    const handler = () => {
+      void bootstrapAndSync();
+    };
+
     navigator.mediaDevices?.addEventListener?.('devicechange', handler);
     return () =>
       navigator.mediaDevices?.removeEventListener?.('devicechange', handler);
@@ -424,11 +415,19 @@ function AudioSettingsHoverCard() {
     [audio]
   );
 
-  const inputSelectValue = activeInputId ?? undefined; // ✅ never ''
-  const outputSelectValue = activeOutputId ?? undefined; // ✅ never ''
+  const inputSelectValue = activeInputId ?? undefined;
+  const outputSelectValue = activeOutputId ?? undefined;
 
   return (
-    <Popover>
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (nextOpen && !audioPrimed) {
+          void ensureAudioPrimed().then(() => bootstrapAndSync());
+        }
+      }}
+    >
       <PopoverTrigger asChild>
         <Button size="icon" variant="outline" disabled={!ready}>
           <AudioLines />
@@ -436,17 +435,35 @@ function AudioSettingsHoverCard() {
       </PopoverTrigger>
 
       <PopoverContent
-        className="flex w-[420px] max-w-[calc(100vw-24px)] flex-col gap-4 overflow-hidden mr-3"
+        className="mr-3 flex w-[420px] max-w-[calc(100vw-24px)] flex-col gap-4 overflow-hidden"
         align="end"
         sideOffset={12}
         avoidCollisions
       >
         <span className="font-bold">Audio Settings</span>
 
+        {!audioPrimed && (
+          <Button
+            variant="outline"
+            onClick={async () => {
+              await ensureAudioPrimed();
+              await bootstrapAndSync();
+            }}
+          >
+            Enable audio devices
+          </Button>
+        )}
+
         <MicWaveform
           deviceId={activeInputId ?? ''}
-          enabled={ready && Boolean(activeInputId)}
+          enabled={ready && Boolean(activeInputId) && !hasLiveCall}
         />
+
+        {hasLiveCall && (
+          <span className="text-xs text-muted-foreground">
+            Mic preview is paused during live calls.
+          </span>
+        )}
 
         <div className="flex flex-col gap-2">
           <span className="text-sm font-semibold">Input Device</span>
@@ -454,7 +471,6 @@ function AudioSettingsHoverCard() {
             <SelectTrigger className="w-full">
               <SelectValue placeholder="Select mic input" />
             </SelectTrigger>
-
             <SelectContent className="w-[420px] max-w-[calc(100vw-24px)]">
               <SelectGroup>
                 <SelectLabel>Devices</SelectLabel>
