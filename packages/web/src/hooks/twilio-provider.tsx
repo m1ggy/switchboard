@@ -1,3 +1,4 @@
+import { primeBrowserAudio } from '@/lib/prime-browser-audio';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
 import { TwilioVoiceClient } from '@/lib/voice';
@@ -22,13 +23,15 @@ interface TwilioVoiceContextValue {
   callState: CallState;
   ready: boolean;
   incomingCall: Call | null;
-  acceptIncoming: () => void;
+  acceptIncoming: () => Promise<void>;
   rejectIncoming: () => void;
   activeCall: Call | null;
   setActiveCall: (call: Call | null) => void;
   clientRef: { current: TwilioVoiceClient | null };
   destroyClient: () => void;
   setTokenOverride: (token: string | null) => void;
+  ensureAudioPrimed: () => Promise<void>;
+  audioPrimed: boolean;
 }
 
 const TwilioVoiceContext = createContext<TwilioVoiceContextValue | null>(null);
@@ -49,12 +52,14 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
   const currentIdentityRef = useRef<string | undefined>(undefined);
   const refreshPromiseRef = useRef<Promise<string | null> | null>(null);
   const lastVisibilityRefreshRef = useRef<number>(0);
+  const primePromiseRef = useRef<Promise<void> | null>(null);
 
   const [ready, setReady] = useState(false);
   const [callState, setCallState] = useState<CallState>('idle');
   const [incomingCall, setIncomingCall] = useState<Call | null>(null);
   const [activeCall, setActiveCall] = useState<Call | null>(null);
   const [tokenOverride, setTokenOverride] = useState<string | null>(null);
+  const [audioPrimed, setAudioPrimed] = useState(false);
 
   const identity = useMemo(
     () => (activeNumber?.number ? activeNumber.number : undefined),
@@ -93,6 +98,25 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
       resetState();
     }
   }, [resetState]);
+
+  const ensureAudioPrimed = useCallback(async () => {
+    if (audioPrimed) return;
+
+    if (primePromiseRef.current) {
+      return primePromiseRef.current;
+    }
+
+    primePromiseRef.current = (async () => {
+      try {
+        await primeBrowserAudio();
+        setAudioPrimed(true);
+      } finally {
+        primePromiseRef.current = null;
+      }
+    })();
+
+    return primePromiseRef.current;
+  }, [audioPrimed]);
 
   const attachCallListeners = useCallback(
     (call: Call, mode: 'incoming' | 'outgoing') => {
@@ -161,6 +185,7 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
 
   useEffect(() => {
     setTokenOverride(null);
+    setAudioPrimed(false);
   }, [identity]);
 
   useEffect(() => {
@@ -175,34 +200,40 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
 
     destroyClient();
 
-    const client = new TwilioVoiceClient({
-      token,
-      identity,
-      onIncomingCall: (conn) => {
-        const call = conn as Call;
-        console.log('📞 Incoming call', call);
-        attachCallListeners(call, 'incoming');
-        setIncomingCall(call);
-        setCallState('incoming');
-      },
-      onDisconnect: () => {
-        console.log('📴 Device disconnected');
-        setIncomingCall(null);
-        setActiveCall(null);
-        setCallState('disconnected');
-      },
-      onError: (err) => {
-        console.error('❌ Twilio device error', err);
-        setCallState('error');
-      },
-      onTokenWillExpire: async () => {
-        await refreshTwilioToken();
-      },
-    });
+    const init = async () => {
+      try {
+        // Important: prime browser audio before Twilio Device init
+        await ensureAudioPrimed();
 
-    client
-      .initialize()
-      .then(() => {
+        if (cancelled) return;
+
+        const client = new TwilioVoiceClient({
+          token,
+          identity,
+          onIncomingCall: (conn) => {
+            const call = conn as Call;
+            console.log('📞 Incoming call', call);
+            attachCallListeners(call, 'incoming');
+            setIncomingCall(call);
+            setCallState('incoming');
+          },
+          onDisconnect: () => {
+            console.log('📴 Device disconnected');
+            setIncomingCall(null);
+            setActiveCall(null);
+            setCallState('disconnected');
+          },
+          onError: (err) => {
+            console.error('❌ Twilio device error', err);
+            setCallState('error');
+          },
+          onTokenWillExpire: async () => {
+            await refreshTwilioToken();
+          },
+        });
+
+        await client.initialize();
+
         if (cancelled) {
           try {
             client.destroy();
@@ -215,8 +246,7 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
         setReady(true);
         setCallState('idle');
         console.log('✅ Twilio client initialized');
-      })
-      .catch((err) => {
+      } catch (err) {
         console.error('❌ Failed to initialize Twilio client:', err);
         if (!cancelled) {
           clientRef.current = null;
@@ -224,15 +254,25 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
           setReady(false);
           setCallState('error');
         }
-      });
+      }
+    };
+
+    void init();
 
     return () => {
       cancelled = true;
       try {
-        client.destroy();
+        clientRef.current?.destroy();
       } catch {}
     };
-  }, [identity, token, destroyClient, attachCallListeners, refreshTwilioToken]);
+  }, [
+    identity,
+    token,
+    destroyClient,
+    attachCallListeners,
+    refreshTwilioToken,
+    ensureAudioPrimed,
+  ]);
 
   useEffect(() => {
     if (!token || !clientRef.current) return;
@@ -251,7 +291,7 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
       }
     };
 
-    applyTokenUpdate();
+    void applyTokenUpdate();
 
     return () => {
       cancelled = true;
@@ -264,8 +304,6 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
       if (!clientRef.current) return;
 
       const now = Date.now();
-
-      // prevent repeated refreshes on rapid visibility changes
       if (now - lastVisibilityRefreshRef.current < 30_000) {
         return;
       }
@@ -303,6 +341,9 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
       }
 
       try {
+        // Fallback: ensure first call is always primed
+        await ensureAudioPrimed();
+
         const call = (await clientRef.current.connect(params)) as Call | null;
 
         if (!call) {
@@ -322,7 +363,7 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
         setCallState('error');
       }
     },
-    [attachCallListeners, setDialerModalShown]
+    [attachCallListeners, setDialerModalShown, ensureAudioPrimed]
   );
 
   const hangUp = useCallback(() => {
@@ -338,10 +379,13 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
     }
   }, [activeCall]);
 
-  const acceptIncoming = useCallback(() => {
+  const acceptIncoming = useCallback(async () => {
     if (!incomingCall) return;
 
     try {
+      // Fallback for first answered incoming call
+      await ensureAudioPrimed();
+
       incomingCall.accept();
       setActiveCall(incomingCall);
       setIncomingCall(null);
@@ -350,7 +394,7 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
       console.error('❌ Failed to accept incoming call:', err);
       setCallState('error');
     }
-  }, [incomingCall]);
+  }, [incomingCall, ensureAudioPrimed]);
 
   const rejectIncoming = useCallback(() => {
     try {
@@ -379,6 +423,8 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
         clientRef,
         destroyClient,
         setTokenOverride,
+        ensureAudioPrimed,
+        audioPrimed,
       }}
     >
       {children}
