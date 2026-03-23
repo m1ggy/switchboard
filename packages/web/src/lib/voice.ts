@@ -1,6 +1,4 @@
 import { Call, Device } from '@twilio/voice-sdk';
-import { getAuth } from 'firebase/auth';
-import { app } from './firebase';
 
 type TwilioConnection = Awaited<ReturnType<Device['connect']>>;
 
@@ -9,6 +7,7 @@ interface TwilioVoiceOptions {
   onIncomingCall?: (connection: Call) => void;
   onDisconnect?: () => void;
   onError?: (error: Error) => void;
+  onTokenWillExpire?: () => void | Promise<void>;
   identity: string | null;
 }
 
@@ -21,12 +20,14 @@ export class TwilioVoiceClient {
   private onIncomingCall?: (connection: Call) => void;
   private onDisconnect?: () => void;
   private onError?: (error: Error) => void;
+  private onTokenWillExpire?: () => void | Promise<void>;
 
   constructor(options: TwilioVoiceOptions) {
     this.token = options.token;
     this.onIncomingCall = options.onIncomingCall;
     this.onDisconnect = options.onDisconnect;
     this.onError = options.onError;
+    this.onTokenWillExpire = options.onTokenWillExpire;
     this.identity = options.identity;
   }
 
@@ -92,43 +93,7 @@ export class TwilioVoiceClient {
 
   private handleTokenWillExpire = async () => {
     try {
-      // Do not interrupt an active call just to refresh here.
-      // Your React hook already refreshes proactively too.
-      if (this.connection) return;
-      if (!this.identity) return;
-
-      const user = getAuth(app).currentUser;
-      if (!user) {
-        console.warn('Cannot refresh Twilio token: no logged-in user');
-        return;
-      }
-
-      const firebaseToken = await user.getIdToken(true);
-
-      const response = await fetch(
-        `${import.meta.env.VITE_WEBSOCKET_URL}/twilio/token?identity=${encodeURIComponent(this.identity)}`,
-        {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${firebaseToken}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`Failed to refresh Twilio token: ${response.status}`);
-      }
-
-      const json = (await response.json()) as { token?: string };
-
-      if (!json.token) {
-        throw new Error(
-          'Twilio token refresh response did not include a token'
-        );
-      }
-
-      await this.updateToken(json.token);
+      await this.onTokenWillExpire?.();
     } catch (error) {
       this.onError?.(this.toError(error));
     }
@@ -144,21 +109,15 @@ export class TwilioVoiceClient {
       this.connection = connection;
 
       connection.on('disconnect', () => {
-        if (this.connection === connection) {
-          this.connection = null;
-        }
+        if (this.connection === connection) this.connection = null;
       });
 
       connection.on('cancel', () => {
-        if (this.connection === connection) {
-          this.connection = null;
-        }
+        if (this.connection === connection) this.connection = null;
       });
 
       connection.on('error', () => {
-        if (this.connection === connection) {
-          this.connection = null;
-        }
+        if (this.connection === connection) this.connection = null;
       });
 
       return connection;
@@ -190,15 +149,8 @@ export class TwilioVoiceClient {
 
   async updateToken(newToken: string): Promise<void> {
     this.token = newToken;
-
     if (!this.device) return;
-
-    try {
-      await this.device.updateToken(newToken);
-    } catch (error) {
-      this.onError?.(this.toError(error));
-      throw error;
-    }
+    await this.device.updateToken(newToken);
   }
 
   async reRegister(): Promise<void> {
@@ -207,12 +159,7 @@ export class TwilioVoiceClient {
       return;
     }
 
-    try {
-      await this.device.register();
-    } catch (error) {
-      this.onError?.(this.toError(error));
-      throw error;
-    }
+    await this.device.register();
   }
 
   isInitialized(): boolean {

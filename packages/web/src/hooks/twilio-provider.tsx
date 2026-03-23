@@ -47,6 +47,8 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
 
   const clientRef = useRef<TwilioVoiceClient | null>(null);
   const currentIdentityRef = useRef<string | undefined>(undefined);
+  const refreshPromiseRef = useRef<Promise<string | null> | null>(null);
+  const lastVisibilityRefreshRef = useRef<number>(0);
 
   const [ready, setReady] = useState(false);
   const [callState, setCallState] = useState<CallState>('idle');
@@ -61,11 +63,13 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
 
   const { data: tokenFromQuery, refetch: refetchToken } = useQuery({
     ...trpc.twilio.token.queryOptions({ identity }),
-    refetchInterval: 10 * 60 * 1000, // 10 minutes
-    refetchOnMount: false,
-    refetchOnReconnect: true,
-    refetchOnWindowFocus: false,
     enabled: Boolean(identity),
+    refetchInterval: false,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
+    staleTime: Infinity,
+    gcTime: 30 * 60 * 1000,
   });
 
   const token = tokenOverride ?? tokenFromQuery;
@@ -123,17 +127,47 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
     []
   );
 
+  const refreshTwilioToken = useCallback(async (): Promise<string | null> => {
+    if (!identity) return null;
+
+    if (refreshPromiseRef.current) {
+      return refreshPromiseRef.current;
+    }
+
+    refreshPromiseRef.current = (async () => {
+      try {
+        const result = await refetchToken();
+        const newToken = result.data ?? null;
+
+        if (newToken) {
+          setTokenOverride(newToken);
+
+          if (clientRef.current) {
+            await clientRef.current.updateToken(newToken);
+          }
+        }
+
+        return newToken;
+      } catch (err) {
+        console.error('❌ Failed to refresh Twilio token:', err);
+        throw err;
+      } finally {
+        refreshPromiseRef.current = null;
+      }
+    })();
+
+    return refreshPromiseRef.current;
+  }, [identity, refetchToken]);
+
   useEffect(() => {
     setTokenOverride(null);
   }, [identity]);
 
-  // Create client only when identity changes
   useEffect(() => {
     if (!identity || !token) return;
 
     let cancelled = false;
 
-    // only rebuild if identity changed or no client exists
     const identityChanged = currentIdentityRef.current !== identity;
     const needsNewClient = !clientRef.current || identityChanged;
 
@@ -145,39 +179,24 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
       token,
       identity,
       onIncomingCall: (conn) => {
-        console.log('📞 Incoming call', conn);
-        attachCallListeners(conn as Call, 'incoming');
-        setIncomingCall(conn as Call);
+        const call = conn as Call;
+        console.log('📞 Incoming call', call);
+        attachCallListeners(call, 'incoming');
+        setIncomingCall(call);
         setCallState('incoming');
       },
-
       onDisconnect: () => {
         console.log('📴 Device disconnected');
         setIncomingCall(null);
         setActiveCall(null);
         setCallState('disconnected');
       },
-
-      onError: async (err) => {
+      onError: (err) => {
         console.error('❌ Twilio device error', err);
         setCallState('error');
-        setIncomingCall(null);
-        setActiveCall(null);
-
-        try {
-          const result = await refetchToken();
-          const newToken = result.data;
-          if (newToken && clientRef.current?.updateToken) {
-            await clientRef.current.updateToken(newToken);
-            console.log('🔄 Token refreshed after device error');
-            setCallState('idle');
-          }
-        } catch (refreshErr) {
-          console.error(
-            '❌ Failed to refresh token after device error:',
-            refreshErr
-          );
-        }
+      },
+      onTokenWillExpire: async () => {
+        await refreshTwilioToken();
       },
     });
 
@@ -186,7 +205,7 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
       .then(() => {
         if (cancelled) {
           try {
-            client.destroy?.();
+            client.destroy();
           } catch {}
           return;
         }
@@ -210,22 +229,20 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
     return () => {
       cancelled = true;
       try {
-        client.destroy?.();
+        client.destroy();
       } catch {}
     };
-  }, [identity, token, destroyClient, attachCallListeners, refetchToken]);
+  }, [identity, token, destroyClient, attachCallListeners, refreshTwilioToken]);
 
-  // Update token in-place instead of rebuilding client
   useEffect(() => {
     if (!token || !clientRef.current) return;
     if (currentIdentityRef.current !== identity) return;
-    if (!clientRef.current.updateToken) return;
 
     let cancelled = false;
 
     const applyTokenUpdate = async () => {
       try {
-        await clientRef.current?.updateToken?.(token);
+        await clientRef.current?.updateToken(token);
         if (!cancelled) {
           console.log('🔄 Twilio token updated in-place');
         }
@@ -241,26 +258,22 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
     };
   }, [token, identity]);
 
-  // Recover when returning to the page on mobile
   useEffect(() => {
     const handleVisibilityChange = async () => {
       if (document.visibilityState !== 'visible') return;
       if (!clientRef.current) return;
 
+      const now = Date.now();
+
+      // prevent repeated refreshes on rapid visibility changes
+      if (now - lastVisibilityRefreshRef.current < 30_000) {
+        return;
+      }
+
+      lastVisibilityRefreshRef.current = now;
+
       try {
-        const result = await refetchToken();
-        const newToken = result.data;
-
-        if (newToken && clientRef.current.updateToken) {
-          await clientRef.current.updateToken(newToken);
-          console.log('🔄 Token refreshed on visibility change');
-        }
-
-        // optional re-register/reinitialize if your wrapper supports it
-        if (clientRef.current.initialize) {
-          await clientRef.current.initialize();
-          console.log('♻️ Twilio client re-initialized on visibility change');
-        }
+        await clientRef.current.reRegister();
 
         setReady(true);
         if (!activeCall && !incomingCall) {
@@ -280,7 +293,7 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [refetchToken, activeCall, incomingCall]);
+  }, [activeCall, incomingCall]);
 
   const makeCall = useCallback(
     async (params: Record<string, string>) => {
@@ -290,11 +303,13 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
       }
 
       try {
-        setCallState('idle');
+        const call = (await clientRef.current.connect(params)) as Call | null;
 
-        const call = (await clientRef.current.connect(params)) as Call;
+        if (!call) {
+          throw new Error('Twilio connect returned null');
+        }
+
         attachCallListeners(call, 'outgoing');
-
         setActiveCall(call);
         setIncomingCall(null);
         setCallState('connected');
@@ -327,7 +342,6 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
     if (!incomingCall) return;
 
     try {
-      attachCallListeners(incomingCall, 'incoming');
       incomingCall.accept();
       setActiveCall(incomingCall);
       setIncomingCall(null);
@@ -336,7 +350,7 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
       console.error('❌ Failed to accept incoming call:', err);
       setCallState('error');
     }
-  }, [incomingCall, attachCallListeners]);
+  }, [incomingCall]);
 
   const rejectIncoming = useCallback(() => {
     try {
