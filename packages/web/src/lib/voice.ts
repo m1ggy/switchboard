@@ -159,17 +159,22 @@ export class TwilioVoiceClient {
       return;
     }
 
-    await this.device.register();
+    const state = this.device.state;
+
+    if (state === 'destroyed') {
+      await this.initialize();
+      return;
+    }
+
+    if (state === 'unregistered') {
+      await this.device.register();
+      return;
+    }
+
+    // already registering or registered — do nothing
   }
 
-  isInitialized(): boolean {
-    return !!this.device;
-  }
-
-  private toError(error: unknown): Error {
-    if (error instanceof Error) return error;
-    return new Error(
-      typeof error === 'string' ? error : 'Unknown Twilio error'
-    );
+  getState(): 'unregistered' | 'registering' | 'registered' | 'destroyed' {
+    return this.device?.state ?? 'destroyed';
   }
 }

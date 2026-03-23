@@ -301,17 +301,26 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
   useEffect(() => {
     const handleVisibilityChange = async () => {
       if (document.visibilityState !== 'visible') return;
-      if (!clientRef.current) return;
+
+      const client = clientRef.current;
+      if (!client) return;
 
       const now = Date.now();
       if (now - lastVisibilityRefreshRef.current < 30_000) {
         return;
       }
 
+      const state = client.getState();
+
+      // nothing to do if device is already registered
+      if (state === 'registered' || state === 'registering') {
+        return;
+      }
+
       lastVisibilityRefreshRef.current = now;
 
       try {
-        await clientRef.current.reRegister();
+        await client.reRegister();
 
         setReady(true);
         if (!activeCall && !incomingCall) {
