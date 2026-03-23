@@ -1,12 +1,6 @@
 import { useTwilioVoice } from '@/hooks/twilio-provider';
 import { AudioLines } from 'lucide-react';
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from './ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import {
@@ -193,54 +187,23 @@ function MicWaveform({
           {Math.round(rms * 100)}%
         </div>
       </div>
-
-      <ResizeCanvasToParent canvasRef={canvasRef} />
     </div>
   );
 }
 
-function ResizeCanvasToParent({
-  canvasRef,
-}: {
-  canvasRef: React.RefObject<HTMLCanvasElement | null>;
-}) {
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const resize = () => {
-      const parent = canvas.parentElement;
-      if (!parent) return;
-
-      const rect = parent.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-
-      const targetWidth = Math.max(1, Math.floor(rect.width * dpr));
-      const targetHeight = Math.max(1, Math.floor(canvas.height * dpr));
-
-      if (canvas.width !== targetWidth) canvas.width = targetWidth;
-      if (canvas.height !== targetHeight) canvas.height = targetHeight;
-    };
-
-    resize();
-
-    const ro = new ResizeObserver(resize);
-    ro.observe(canvas.parentElement!);
-
-    window.addEventListener('resize', resize);
-    return () => {
-      window.removeEventListener('resize', resize);
-      ro.disconnect();
-    };
-  }, [canvasRef]);
-
-  return null;
-}
-
 function AudioSettingsHoverCard() {
-  const { clientRef, ready, activeCall, incomingCall } = useTwilioVoice();
+  const {
+    clientRef,
+    ready,
+    activeCall,
+    incomingCall,
+    callState,
+    audioPrimed,
+    ensureAudioPrimed,
+  } = useTwilioVoice();
   const audio = clientRef.current?.device?.audio;
 
+  const [open, setOpen] = useState(false);
   const [inputOptions, setInputOptions] = useState<DeviceOption[]>([]);
   const [outputOptions, setOutputOptions] = useState<DeviceOption[]>([]);
   const [activeInputId, setActiveInputId] = useState<string | null>(null);
@@ -249,7 +212,9 @@ function AudioSettingsHoverCard() {
   const syncInFlightRef = useRef(false);
   const lastSyncAtRef = useRef(0);
 
-  const hasLiveCall = Boolean(activeCall || incomingCall);
+  const hasLiveCall = Boolean(
+    activeCall || incomingCall || callState === 'connected'
+  );
 
   const outputSupported = useMemo(
     () => Boolean(audio?.isOutputSelectionSupported),
@@ -262,30 +227,31 @@ function AudioSettingsHoverCard() {
 
     const now = Date.now();
     if (syncInFlightRef.current) return;
-    if (now - lastSyncAtRef.current < 1500) return;
+    if (now - lastSyncAtRef.current < 1000) return;
 
     syncInFlightRef.current = true;
     lastSyncAtRef.current = now;
 
     try {
-      const twilioInputsRaw: DeviceOption[] = [];
-      audio.availableInputDevices?.forEach((device, id) => {
-        twilioInputsRaw.push({
-          id,
-          label: safeLabel(device.label, 'Microphone'),
-        });
-      });
+      let inputs = normalizeDeviceOptions(
+        Array.from(audio.availableInputDevices?.entries?.() ?? []).map(
+          ([id, device]) => ({
+            id,
+            label: safeLabel(device.label, 'Microphone'),
+          })
+        ),
+        'Microphone'
+      );
 
-      const twilioOutputsRaw: DeviceOption[] = [];
-      audio.availableOutputDevices?.forEach((device, id) => {
-        twilioOutputsRaw.push({
-          id,
-          label: safeLabel(device.label, 'Speaker'),
-        });
-      });
-
-      let inputs = normalizeDeviceOptions(twilioInputsRaw, 'Microphone');
-      let outputs = normalizeDeviceOptions(twilioOutputsRaw, 'Speaker');
+      let outputs = normalizeDeviceOptions(
+        Array.from(audio.availableOutputDevices?.entries?.() ?? []).map(
+          ([id, device]) => ({
+            id,
+            label: safeLabel(device.label, 'Speaker'),
+          })
+        ),
+        'Speaker'
+      );
 
       if (!inputs.length || !outputs.length) {
         try {
@@ -326,7 +292,9 @@ function AudioSettingsHoverCard() {
       const currentInputValid =
         !!currentTwilioInput && inputs.some((d) => d.id === currentTwilioInput);
 
-      if (!currentInputValid) {
+      if (currentInputValid) {
+        setActiveInputId(currentTwilioInput);
+      } else {
         const preferredInput =
           inputs.find((d) => d.id === 'default')?.id ?? inputs[0]?.id ?? null;
 
@@ -335,14 +303,12 @@ function AudioSettingsHoverCard() {
             await audio.setInputDevice(preferredInput);
             setActiveInputId(preferredInput);
           } catch (err) {
-            console.error('Failed to bootstrap Twilio input device:', err);
+            console.error('Failed to bootstrap input device:', err);
             setActiveInputId(null);
           }
         } else {
           setActiveInputId(null);
         }
-      } else {
-        setActiveInputId(currentTwilioInput);
       }
 
       if (audio.isOutputSelectionSupported) {
@@ -356,25 +322,23 @@ function AudioSettingsHoverCard() {
           !!normalizedCurrentSpeakerId &&
           outputs.some((d) => d.id === normalizedCurrentSpeakerId);
 
-        if (outputValid) {
-          setActiveOutputId(normalizedCurrentSpeakerId);
-        } else {
-          const preferredOutput =
-            outputs.find((d) => d.id === 'default')?.id ??
+        const preferredOutput = outputValid
+          ? normalizedCurrentSpeakerId
+          : (outputs.find((d) => d.id === 'default')?.id ??
             outputs[0]?.id ??
-            null;
+            null);
 
-          if (preferredOutput) {
-            try {
-              await audio.speakerDevices.set([preferredOutput]);
-              setActiveOutputId(preferredOutput);
-            } catch (err) {
-              console.error('Failed to bootstrap output device:', err);
-              setActiveOutputId(null);
-            }
-          } else {
+        if (preferredOutput) {
+          try {
+            // Important: always force-bind speaker output
+            await audio.speakerDevices.set([preferredOutput]);
+            setActiveOutputId(preferredOutput);
+          } catch (err) {
+            console.error('Failed to bootstrap output device:', err);
             setActiveOutputId(null);
           }
+        } else {
+          setActiveOutputId(null);
         }
       } else {
         setActiveOutputId(null);
@@ -385,9 +349,15 @@ function AudioSettingsHoverCard() {
   }, [clientRef]);
 
   useEffect(() => {
-    if (!ready) return;
-    bootstrapAndSync();
-  }, [ready, bootstrapAndSync]);
+    if (!ready || !audioPrimed) return;
+    void bootstrapAndSync();
+  }, [ready, audioPrimed, bootstrapAndSync]);
+
+  useEffect(() => {
+    if (!ready || !audioPrimed) return;
+    // Re-bind speaker state around call transitions, especially after hangup
+    void bootstrapAndSync();
+  }, [callState, ready, audioPrimed, bootstrapAndSync]);
 
   useEffect(() => {
     const audio = clientRef.current?.device?.audio;
@@ -449,7 +419,15 @@ function AudioSettingsHoverCard() {
   const outputSelectValue = activeOutputId ?? undefined;
 
   return (
-    <Popover>
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (nextOpen && !audioPrimed) {
+          void ensureAudioPrimed().then(() => bootstrapAndSync());
+        }
+      }}
+    >
       <PopoverTrigger asChild>
         <Button size="icon" variant="outline" disabled={!ready}>
           <AudioLines />
@@ -464,6 +442,18 @@ function AudioSettingsHoverCard() {
       >
         <span className="font-bold">Audio Settings</span>
 
+        {!audioPrimed && (
+          <Button
+            variant="outline"
+            onClick={async () => {
+              await ensureAudioPrimed();
+              await bootstrapAndSync();
+            }}
+          >
+            Enable audio devices
+          </Button>
+        )}
+
         <MicWaveform
           deviceId={activeInputId ?? ''}
           enabled={ready && Boolean(activeInputId) && !hasLiveCall}
@@ -471,8 +461,7 @@ function AudioSettingsHoverCard() {
 
         {hasLiveCall && (
           <span className="text-xs text-muted-foreground">
-            Mic preview is paused during live calls to avoid interfering with
-            call audio.
+            Mic preview is paused during live calls.
           </span>
         )}
 
@@ -482,7 +471,6 @@ function AudioSettingsHoverCard() {
             <SelectTrigger className="w-full">
               <SelectValue placeholder="Select mic input" />
             </SelectTrigger>
-
             <SelectContent className="w-[420px] max-w-[calc(100vw-24px)]">
               <SelectGroup>
                 <SelectLabel>Devices</SelectLabel>
