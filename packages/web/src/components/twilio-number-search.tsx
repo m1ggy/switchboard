@@ -89,7 +89,7 @@ const US_STATES = [
   { code: 'DC', name: 'District of Columbia' },
 ];
 
-// State -> area code prefixes (NANP). Keep updated as overlays change.
+// State -> area code prefixes (same data as your current file)
 const STATE_PREFIXES: Record<string, string[]> = {
   AL: ['205', '251', '256', '334', '938'],
   AK: ['907'],
@@ -329,7 +329,6 @@ export function TwilioNumberSearch({
     'area-code' | 'city' | 'state'
   >('area-code');
 
-  // NEW: state & prefix selections
   const [selectedState, setSelectedState] = React.useState<string>('');
   const [selectedPrefixes, setSelectedPrefixes] = React.useState<string[]>([]);
 
@@ -339,22 +338,25 @@ export function TwilioNumberSearch({
 
   const trpc = useTRPC();
 
-  // Build query params for the default (non-batched) path
   const queryParams = React.useMemo(() => {
     const base: any = { country: 'US' };
+
     if (searchType === 'area-code' && searchQuery.trim()) {
       base.areaCode = searchQuery.trim();
     }
+
     if (searchType === 'state' && selectedState) {
-      base.region = selectedState; // map to Twilio's inRegion/region on the server
+      base.region = selectedState;
+
       if (selectedPrefixes.length === 1) {
         base.areaCode = selectedPrefixes[0];
       }
     }
+
     return base;
   }, [searchType, searchQuery, selectedState, selectedPrefixes]);
 
-  const { data, refetch, isFetching } = useQuery(
+  const { refetch, isFetching } = useQuery(
     trpc.onboarding.searchAvailableNumbers.queryOptions(queryParams)
   );
 
@@ -376,14 +378,9 @@ export function TwilioNumberSearch({
         selectedState &&
         selectedPrefixes.length > 1
       ) {
-        // Batch multiple area-code searches in parallel.
-        // Works if your tRPC client exposes `.fetch` on query routes.
-        // If not, move this batching server-side (recommended).
         const fetchFn =
           (trpc as any)?.onboarding?.searchAvailableNumbers?.fetch ??
           (async (q: any) => {
-            // Fallback: if no .fetch, reuse refetch by temporarily instantiating a direct call
-            // NOTE: Replace this with a proper server-side batch if needed.
             const res = await (
               trpc as any
             ).onboarding.searchAvailableNumbers.query?.(q);
@@ -399,6 +396,7 @@ export function TwilioNumberSearch({
             })
           )
         );
+
         allResults = batches.flat();
       } else {
         const { data: fresh = [] } = await refetch();
@@ -434,246 +432,249 @@ export function TwilioNumberSearch({
       case 'mobile':
         return 'bg-purple-100 text-purple-800';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-muted text-muted-foreground';
     }
   };
 
   return (
-    <div className="space-y-6 px-5">
-      <Card className="border-2 border-dashed border-muted-foreground/25">
-        <CardContent className="p-6 space-y-4">
-          <div className="flex items-center gap-2 mb-4">
-            <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center">
-              <Phone className="w-4 h-4 text-primary" />
-            </div>
-            <span className="font-medium">Choose Your Phone Number</span>
-          </div>
-          <p className="text-sm text-muted-foreground mb-4">
-            Search and select a phone number for your call center.
-          </p>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Search by */}
-            <div className="space-y-2">
-              <Label>Search by</Label>
-              <Select
-                value={searchType}
-                onValueChange={(val) =>
-                  setSearchType(val as 'area-code' | 'city' | 'state')
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="area-code">Area Code</SelectItem>
-                  <SelectItem value="state">State + Prefix</SelectItem>
-                  <SelectItem value="city" disabled>
-                    City
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Area-code/City input OR State select */}
-            {searchType !== 'state' ? (
-              <div className="space-y-2">
-                <Label htmlFor="search">
-                  {searchType === 'area-code' ? 'Area Code' : 'City Name'}
-                </Label>
-                <Input
-                  id="search"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={
-                    searchType === 'area-code'
-                      ? 'e.g., 857'
-                      : 'e.g., Dorchester'
-                  }
-                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                />
+    <div className="flex max-h-[calc(100vh-10rem)] min-h-0 flex-col overflow-hidden px-5">
+      <div className="flex-1 overflow-y-auto pr-1">
+        <div className="space-y-6">
+          <Card className="border-2 border-dashed border-muted-foreground/25">
+            <CardContent className="space-y-4 p-6">
+              <div className="mb-4 flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+                  <Phone className="h-4 w-4 text-primary" />
+                </div>
+                <span className="font-medium">Choose Your Phone Number</span>
               </div>
-            ) : (
-              <div className="space-y-2">
-                <Label htmlFor="state">State</Label>
-                <Select
-                  value={selectedState}
-                  onValueChange={(v) => {
-                    setSelectedState(v);
-                    setSelectedPrefixes([]); // reset prefixes on state change
-                  }}
-                >
-                  <SelectTrigger id="state">
-                    <SelectValue placeholder="Select a state" />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-72">
-                    {US_STATES.map((s) => (
-                      <SelectItem key={s.code} value={s.code}>
-                        {s.name} ({s.code})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
 
-            {/* Prefix multi-select for state mode */}
-            {searchType === 'state' ? (
-              <div className="space-y-2">
-                <Label>Prefixes (Area Codes)</Label>
-                <PrefixMultiSelect
-                  stateCode={selectedState}
-                  selected={selectedPrefixes}
-                  onChange={setSelectedPrefixes}
-                />
-              </div>
-            ) : (
-              <div />
-            )}
-
-            {/* Search button */}
-            <div className="flex items-end">
-              <Button
-                onClick={handleSearch}
-                disabled={
-                  isSearching || (searchType === 'state' && !selectedState)
-                }
-                className="w-full"
-              >
-                {isSearching || isFetching ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Searching...
-                  </>
-                ) : (
-                  <>
-                    <Search className="w-4 h-4 mr-2" />
-                    Search
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {hasSearched && (
-        <div className="space-y-4 mx-4">
-          <div className="flex items-center justify-between">
-            <h4 className="font-medium">
-              Available Numbers ({searchResults.length})
-            </h4>
-            {searchResults.length > 0 && (
-              <p className="text-sm text-muted-foreground">
-                Click a number to select it
+              <p className="mb-4 text-sm text-muted-foreground">
+                Search and select a phone number for your call center.
               </p>
-            )}
-          </div>
 
-          {isSearching ? (
-            <Card>
-              <CardContent className="text-center py-8">
-                <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
-                <p className="text-muted-foreground">
-                  Searching for available numbers...
-                </p>
-              </CardContent>
-            </Card>
-          ) : searchResults.length === 0 ? (
-            <Card>
-              <CardContent className="text-center py-8">
-                <Phone className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-                <p className="text-muted-foreground">
-                  No numbers found for your search. Try a different area code,
-                  state, or city.
-                </p>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="grid gap-3 max-h-80 overflow-y-auto px-5 py-2">
-              {searchResults.map((number, index) => (
-                <Card
-                  key={index}
-                  className={`cursor-pointer transition-all hover:shadow-md ${
-                    selectedNumber === number.phoneNumber
-                      ? 'ring-2 ring-primary bg-primary/5'
-                      : ''
-                  }`}
-                  onClick={() => onNumberSelect(number)}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
-                          <Phone className="w-5 h-5 text-primary" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-lg">
-                              {number.friendlyName}
-                            </span>
-                            <Badge className={getTypeColor(number.type)}>
-                              {number.type}
-                            </Badge>
-                          </div>
-                          <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                            <div className="flex items-center gap-1">
-                              <MapPin className="w-3 h-3" />
-                              {number.locality && `${number.locality}, `}{' '}
-                              {number.region}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="flex gap-1 mb-1">
-                          {number.capabilities.map((cap) => (
-                            <Badge
-                              key={cap}
-                              variant="outline"
-                              className="text-xs"
-                            >
-                              {cap}
-                            </Badge>
-                          ))}
-                        </div>
-                        {selectedNumber === number.phoneNumber && (
-                          <Badge className="bg-green-100 text-green-800">
-                            Selected
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>Search by</Label>
+                  <Select
+                    value={searchType}
+                    onValueChange={(val) =>
+                      setSearchType(val as 'area-code' | 'city' | 'state')
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="area-code">Area Code</SelectItem>
+                      <SelectItem value="state">State + Prefix</SelectItem>
+                      <SelectItem value="city" disabled>
+                        City
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {searchType !== 'state' ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="search">
+                      {searchType === 'area-code' ? 'Area Code' : 'City Name'}
+                    </Label>
+                    <Input
+                      id="search"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder={
+                        searchType === 'area-code'
+                          ? 'e.g., 857'
+                          : 'e.g., Dorchester'
+                      }
+                      onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                    />
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Label htmlFor="state">State</Label>
+                    <Select
+                      value={selectedState}
+                      onValueChange={(v) => {
+                        setSelectedState(v);
+                        setSelectedPrefixes([]);
+                      }}
+                    >
+                      <SelectTrigger id="state">
+                        <SelectValue placeholder="Select a state" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-72">
+                        {US_STATES.map((s) => (
+                          <SelectItem key={s.code} value={s.code}>
+                            {s.name} ({s.code})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                {searchType === 'state' ? (
+                  <div className="space-y-2">
+                    <Label>Prefixes (Area Codes)</Label>
+                    <PrefixMultiSelect
+                      stateCode={selectedState}
+                      selected={selectedPrefixes}
+                      onChange={setSelectedPrefixes}
+                    />
+                  </div>
+                ) : (
+                  <div />
+                )}
+
+                <div className="flex items-end md:col-span-3">
+                  <Button
+                    onClick={handleSearch}
+                    disabled={
+                      isSearching || (searchType === 'state' && !selectedState)
+                    }
+                    className="w-full md:w-auto"
+                  >
+                    {isSearching || isFetching ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Searching...
+                      </>
+                    ) : (
+                      <>
+                        <Search className="mr-2 h-4 w-4" />
+                        Search
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {hasSearched && (
+            <div className="space-y-4 px-1 pb-2">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="font-medium">
+                  Available Numbers ({searchResults.length})
+                </h4>
+                {searchResults.length > 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    Click a number to select it
+                  </p>
+                )}
+              </div>
+
+              {isSearching ? (
+                <Card>
+                  <CardContent className="py-8 text-center">
+                    <Loader2 className="mx-auto mb-4 h-8 w-8 animate-spin" />
+                    <p className="text-muted-foreground">
+                      Searching for available numbers...
+                    </p>
                   </CardContent>
                 </Card>
-              ))}
+              ) : searchResults.length === 0 ? (
+                <Card>
+                  <CardContent className="py-8 text-center">
+                    <Phone className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
+                    <p className="text-muted-foreground">
+                      No numbers found for your search. Try a different area
+                      code, state, or city.
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="grid gap-3">
+                  {searchResults.map((number, index) => (
+                    <Card
+                      key={index}
+                      className={`cursor-pointer transition-all hover:shadow-md ${
+                        selectedNumber === number.phoneNumber
+                          ? 'ring-2 ring-primary bg-primary/5'
+                          : ''
+                      }`}
+                      onClick={() => onNumberSelect(number)}
+                    >
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 items-start gap-4">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                              <Phone className="h-5 w-5 text-primary" />
+                            </div>
+
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="break-all text-lg font-semibold">
+                                  {number.friendlyName}
+                                </span>
+                                <Badge className={getTypeColor(number.type)}>
+                                  {number.type}
+                                </Badge>
+                              </div>
+
+                              <div className="mt-1 flex items-center gap-4 text-sm text-muted-foreground">
+                                <div className="flex min-w-0 items-center gap-1">
+                                  <MapPin className="h-3 w-3 shrink-0" />
+                                  <span className="truncate">
+                                    {number.locality && `${number.locality}, `}
+                                    {number.region}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="shrink-0 text-right">
+                            <div className="mb-1 flex flex-wrap justify-end gap-1">
+                              {number.capabilities.map((cap) => (
+                                <Badge
+                                  key={cap}
+                                  variant="outline"
+                                  className="text-xs"
+                                >
+                                  {cap}
+                                </Badge>
+                              ))}
+                            </div>
+
+                            {selectedNumber === number.phoneNumber && (
+                              <Badge className="bg-green-100 text-green-800">
+                                Selected
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
             </div>
           )}
-        </div>
-      )}
 
-      {!hasSearched && (
-        <Card>
-          <CardContent className="text-center py-12">
-            <Phone className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
-            <h4 className="text-lg font-semibold mb-2">
-              Find Your Perfect Number
-            </h4>
-            <p className="text-muted-foreground max-w-md mx-auto">
-              Search for available phone numbers by area code, state, or city.
-              Choose from local numbers or toll-free options.
-            </p>
-          </CardContent>
-        </Card>
-      )}
+          {!hasSearched && (
+            <Card>
+              <CardContent className="py-12 text-center">
+                <Phone className="mx-auto mb-4 h-16 w-16 text-muted-foreground" />
+                <h4 className="mb-2 text-lg font-semibold">
+                  Find Your Perfect Number
+                </h4>
+                <p className="mx-auto max-w-md text-muted-foreground">
+                  Search for available phone numbers by area code, state, or
+                  city. Choose from local numbers or toll-free options.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
-/**
- * Simple chip-style multi-select for prefixes based on selected state.
- * For a more advanced UI, you can swap this for a command palette or a shadcn Combobox.
- */
 function PrefixMultiSelect({
   stateCode,
   selected,
@@ -694,8 +695,8 @@ function PrefixMultiSelect({
   };
 
   return (
-    <div className="w-full">
-      <div className="flex flex-wrap gap-2 rounded-md border p-2 min-h-[42px]">
+    <div className="w-full min-w-0">
+      <div className="flex min-h-[42px] flex-wrap gap-2 rounded-md border p-2">
         {selected.length === 0 ? (
           <span className="text-sm text-muted-foreground">All prefixes</span>
         ) : (
@@ -707,22 +708,24 @@ function PrefixMultiSelect({
         )}
       </div>
 
-      <div className="mt-2 max-h-56 overflow-auto rounded-md border bg-popover p-2 shadow-sm">
+      <div className="mt-2 max-h-40 overflow-y-auto rounded-md border bg-popover p-2 shadow-sm">
         <button
           type="button"
-          className="w-full text-left text-sm px-2 py-1 hover:bg-accent rounded"
+          className="w-full rounded px-2 py-1 text-left text-sm hover:bg-accent"
           onClick={() => onChange([])}
         >
           Select none (all prefixes)
         </button>
+
         <div className="mt-1 grid grid-cols-2 gap-1">
           {options.map((opt) => {
             const isSel = selected.includes(opt);
+
             return (
               <button
                 type="button"
                 key={opt}
-                className={`text-left text-sm px-2 py-1 rounded hover:bg-accent ${
+                className={`rounded px-2 py-1 text-left text-sm hover:bg-accent ${
                   isSel ? 'bg-accent' : ''
                 }`}
                 onClick={() => toggle(opt)}
