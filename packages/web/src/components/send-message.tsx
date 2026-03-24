@@ -263,8 +263,8 @@ function SendMessageDialog() {
                             <CommandEmpty>No contacts found.</CommandEmpty>
                             {contacts?.map((contact) => (
                               <CommandItem
-                                key={contact.number}
-                                value={contact.number}
+                                key={contact.id}
+                                value={`${contact.label ?? ''} ${contact.number ?? ''}`}
                                 onSelect={() => {
                                   field.onChange(contact.number);
                                   setSelectedContactId(contact.id);

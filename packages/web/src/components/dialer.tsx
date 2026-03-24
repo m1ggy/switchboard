@@ -131,15 +131,15 @@ function Dialer() {
             <CommandEmpty>No contacts found.</CommandEmpty>
             {contacts.map((contact) => (
               <CommandItem
-                key={contact.number}
-                value={contact.number}
+                key={contact.id}
+                value={`${contact.label} ${contact.number}`}
                 onSelect={() => {
                   setSelectedContactId(contact.id);
                 }}
                 className={clsx(
                   'cursor-pointer',
-                  selectedContactId == contact.id &&
-                    ' bg-accent text-accent-foreground'
+                  selectedContactId === contact.id &&
+                    'bg-accent text-accent-foreground'
                 )}
               >
                 <div>
