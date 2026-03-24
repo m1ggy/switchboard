@@ -2,6 +2,7 @@
 
 import { getQueryClient } from '@/App';
 import { useTwilioVoice } from '@/hooks/twilio-provider';
+import { auth } from '@/lib/firebase';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -21,8 +22,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from './ui/select';
-// adjust this import to wherever your Firebase auth is exported from
-import { auth } from '@/lib/firebase';
 
 function ActiveCallDialog() {
   const trpc = useTRPC();
@@ -50,11 +49,9 @@ function ActiveCallDialog() {
     trpc.contacts.createContact.mutationOptions()
   );
 
-  // transfer UI state
   const [transferTo, setTransferTo] = useState<string>('');
-  const [isTransferring, setIsTransferring] = useState(false); // cold
+  const [isTransferring, setIsTransferring] = useState(false);
 
-  // warm transfer state
   const [isWarmBusy, setIsWarmBusy] = useState(false);
   const [warmActive, setWarmActive] = useState(false);
   const [isCompletingWarm, setIsCompletingWarm] = useState(false);
@@ -80,11 +77,10 @@ function ActiveCallDialog() {
     else setCallerId('Unknown');
   }, [contacts, counterpartyNumber]);
 
-  // derive transfer targets: all company numbers except the current active number
   const transferOptions = useMemo(() => {
     if (!companies) return [];
 
-    const seen = new Set<string>(); // de-dupe by number
+    const seen = new Set<string>();
     const opts: Array<{
       id: string;
       number: string;
@@ -97,14 +93,10 @@ function ActiveCallDialog() {
     for (const c of companies) {
       const nums = c?.numbers ?? [];
       for (const n of nums) {
-        // skip the number you're currently using
         if (n.id === activeNumber?.id) continue;
-
-        // de-dupe by actual phone number value
         if (seen.has(n.number)) continue;
         seen.add(n.number);
 
-        // include company context in label and a composite id to avoid collisions
         opts.push({
           id: `${c.id}:${n.id}`,
           number: n.number,
@@ -119,9 +111,6 @@ function ActiveCallDialog() {
     return opts;
   }, [companies, activeNumber?.id]);
 
-  // =========================
-  // ✅ Wake Lock integration
-  // =========================
   const wakeLockRef = useRef<any>(null);
   const [wakeLockSupported, setWakeLockSupported] = useState(false);
 
@@ -131,7 +120,6 @@ function ActiveCallDialog() {
     );
   }, []);
 
-  // Request wake lock while call is active, and re-request on visibility changes
   useEffect(() => {
     if (!open || callState !== 'connected') return;
 
@@ -141,7 +129,7 @@ function ActiveCallDialog() {
       if (!('wakeLock' in navigator)) return;
 
       try {
-        // @ts-expect-error - Wake Lock API may not be in TS lib depending on setup
+        // @ts-expect-error
         const sentinel = await navigator.wakeLock.request('screen');
 
         if (cancelled) {
@@ -155,7 +143,6 @@ function ActiveCallDialog() {
           wakeLockRef.current = null;
         });
       } catch (err) {
-        // Often NotAllowedError if no user gesture (esp. on incoming calls)
         console.warn('Wake lock request failed:', err);
       }
     };
@@ -168,10 +155,8 @@ function ActiveCallDialog() {
       }
     };
 
-    // Initial request
     requestWakeLock();
 
-    // Re-request when visible again (locks often drop when hidden)
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') requestWakeLock();
       else releaseWakeLock();
@@ -186,7 +171,6 @@ function ActiveCallDialog() {
     };
   }, [open, callState]);
 
-  // Also release wake lock if the dialog is force-closed while connected (belt & suspenders)
   useEffect(() => {
     if (open) return;
     const sentinel = wakeLockRef.current;
@@ -247,7 +231,6 @@ function ActiveCallDialog() {
         setCallDuration(0);
         setActiveCall(null);
 
-        // reset warm transfer state
         setWarmActive(false);
         setIsWarmBusy(false);
         setIsCompletingWarm(false);
@@ -302,7 +285,6 @@ function ActiveCallDialog() {
     setOpen(false);
   };
 
-  // 🔹 Cold transfer, using your fetch pattern
   const doColdTransfer = async () => {
     if (!transferTo || !activeCall || !activeNumber?.number) return;
 
@@ -321,14 +303,13 @@ function ActiveCallDialog() {
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            callSid, // backend can fall back using agentIdentity if needed
+            callSid,
             to: transferTo,
             agentIdentity: activeNumber.number,
           }),
         }
       );
 
-      // after cold transfer, we typically hang up our leg
       hangUp();
     } catch (e) {
       console.error('Cold transfer failed', e);
@@ -337,7 +318,6 @@ function ActiveCallDialog() {
     }
   };
 
-  // 🔥 Warm transfer (create conference + add target) with same pattern
   const doWarmTransfer = async () => {
     if (!transferTo || !activeCall || !activeNumber?.number) return;
 
@@ -348,7 +328,6 @@ function ActiveCallDialog() {
       const callSid = activeCall.parameters.CallSid;
       const token = await auth.currentUser?.getIdToken();
 
-      // 1) upgrade current call to warm conference
       const res1 = await fetch(
         `${import.meta.env.VITE_WEBSOCKET_URL}/twilio/transfer/warm/create`,
         {
@@ -369,7 +348,6 @@ function ActiveCallDialog() {
         throw new Error(data?.error || 'Failed to start warm transfer');
       }
 
-      // 2) add the chosen target into the warm conference
       const res2 = await fetch(
         `${import.meta.env.VITE_WEBSOCKET_URL}/twilio/transfer/warm/add-party`,
         {
@@ -400,7 +378,6 @@ function ActiveCallDialog() {
     }
   };
 
-  // ✅ Complete warm transfer: drop this agent from 3-way
   const completeWarmTransfer = async () => {
     if (!activeCall || !activeNumber?.number) return;
 
@@ -430,8 +407,6 @@ function ActiveCallDialog() {
         const data = await res.json().catch(() => null);
         throw new Error(data?.error || 'Failed to complete warm transfer');
       }
-
-      // Twilio should disconnect our leg; onDisconnect handler will clean up UI
     } catch (e: any) {
       console.error('Complete warm transfer failed', e);
       setWarmError(e?.message || 'Failed to complete warm transfer');
@@ -445,16 +420,16 @@ function ActiveCallDialog() {
       <DialogContent
         className={[
           'p-0 max-w-none h-[100dvh] w-[100vw] rounded-none',
-          'flex flex-col',
-          'sm:max-w-sm sm:h-auto sm:w-auto sm:rounded-lg sm:p-6',
+          'flex flex-col overflow-hidden min-h-0',
+          'sm:max-w-sm sm:h-auto sm:max-h-[90dvh] sm:w-full sm:rounded-lg sm:p-6',
           '[&>button:last-child]:hidden',
         ].join(' ')}
       >
         <DialogHeader
           className={[
-            'px-4 pt-4 pb-2 sm:p-0',
+            'shrink-0 px-4 pt-4 pb-2 sm:p-0',
             'border-b sm:border-0',
-            'sticky top-0 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 z-10',
+            'bg-background',
           ].join(' ')}
           style={{ paddingTop: 'max(env(safe-area-inset-top), 1rem)' }}
         >
@@ -462,7 +437,7 @@ function ActiveCallDialog() {
             📞 Call In Progress
           </DialogTitle>
 
-          <div className="text-muted-foreground text-sm mt-1">
+          <div className="mt-1 text-sm text-muted-foreground">
             Talking to: <span className="font-medium">{callerId}</span>
           </div>
           <div className="text-sm">
@@ -470,17 +445,14 @@ function ActiveCallDialog() {
             <span className="font-mono">{formatDuration(callDuration)}</span>
           </div>
 
-          {/* Optional info to indicate wake lock attempt */}
           {wakeLockSupported && callState === 'connected' && (
-            <div className="text-xs text-muted-foreground mt-1">
+            <div className="mt-1 text-xs text-muted-foreground">
               Screen will stay awake during this call
             </div>
           )}
         </DialogHeader>
 
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 sm:p-0">
-          {/* Dial pad */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 sm:p-0">
           <div className="grid grid-cols-3 gap-3 sm:gap-2 mb-4">
             {['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map(
               (digit) => (
@@ -496,8 +468,7 @@ function ActiveCallDialog() {
             )}
           </div>
 
-          {/* Transfer controls */}
-          <div className="space-y-2">
+          <div className="space-y-2 pb-2">
             <div className="text-sm font-medium">Transfer to</div>
             <Select value={transferTo} onValueChange={setTransferTo}>
               <SelectTrigger className="w-full">
@@ -523,7 +494,6 @@ function ActiveCallDialog() {
             )}
 
             <div className="flex flex-wrap gap-2">
-              {/* Cold transfer */}
               <Button
                 className="h-10"
                 variant="outline"
@@ -535,7 +505,6 @@ function ActiveCallDialog() {
                 {isTransferring ? 'Transferring…' : 'Cold Transfer'}
               </Button>
 
-              {/* Warm transfer */}
               <Button
                 className="h-10"
                 disabled={!transferTo || isWarmBusy || warmActive}
@@ -544,7 +513,6 @@ function ActiveCallDialog() {
                 {isWarmBusy ? 'Starting Warm…' : 'Warm Transfer'}
               </Button>
 
-              {/* Complete warm (drop myself) */}
               <Button
                 className="h-10"
                 variant="secondary"
@@ -559,10 +527,10 @@ function ActiveCallDialog() {
 
         <DialogFooter
           className={[
-            'gap-2',
+            'shrink-0 gap-2',
             'px-4 py-4 border-t',
-            'sticky bottom-0 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60',
-            'sm:static sm:border-0 sm:bg-transparent sm:px-0 sm:py-0',
+            'bg-background',
+            'sm:border-0 sm:bg-transparent sm:px-0 sm:py-0',
             'flex flex-col sm:flex-row sm:justify-center',
           ].join(' ')}
           style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 1rem)' }}
