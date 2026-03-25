@@ -7,7 +7,7 @@ import {
 import { useTRPC } from '@/lib/trpc';
 import { useQuery } from '@tanstack/react-query';
 import { Mic, MicOff, Video, VideoOff } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { VideoTrackPreview } from './video-preview';
@@ -23,8 +23,13 @@ function ActiveVideoCallDialog() {
   } = useMainStore();
   const { remote, local, localAudio } = useVideoCallStreamStore();
   const { conference } = useJitsi();
+
   const [muted, setMuted] = useState(false);
   const [videoMuted, setVideoMuted] = useState(false);
+  const [speakingMap, setSpeakingMap] = useState<Record<string, boolean>>({});
+
+  const remoteAudioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
+
   const { data: contact } = useQuery({
     ...trpc.contacts.findContactById.queryOptions({
       contactId: currentCallContactId as string,
@@ -32,96 +37,107 @@ function ActiveVideoCallDialog() {
     enabled: !!currentCallContactId,
   });
 
-  const localVideoRef = useRef<HTMLVideoElement>(null);
-  const remoteVideoRefs = useRef<HTMLVideoElement[]>([]);
-  const remoteAudioRefs = useRef<HTMLAudioElement[]>([]);
+  const remoteVideoTracks = useMemo(
+    () => remote.filter((track) => track.isVideoTrack()),
+    [remote]
+  );
 
-  const [speakingMap, setSpeakingMap] = useState<Record<string, boolean>>({});
+  const remoteAudioTracks = useMemo(
+    () => remote.filter((track) => track.isAudioTrack()),
+    [remote]
+  );
 
   useEffect(() => {
     let frameId: number;
 
     const pollAudioLevels = () => {
-      const newSpeakingMap: Record<string, boolean> = {};
+      const nextSpeakingMap: Record<string, boolean> = {};
 
-      remote
-        .filter((track) => track.isAudioTrack())
-        .forEach((track) => {
-          const id = track.getId?.();
-          /* eslint-disable */
-          // @ts-ignore
-          const level = track.getAudioLevel?.();
-          newSpeakingMap[id] = level > 0.1;
-        });
+      remoteAudioTracks.forEach((track) => {
+        const id = track.getId?.();
+        // @ts-ignore
+        const level = track.getAudioLevel?.() ?? 0;
 
-      setSpeakingMap(newSpeakingMap);
+        if (id) {
+          nextSpeakingMap[id] = level > 0.1;
+        }
+      });
+
+      setSpeakingMap(nextSpeakingMap);
       frameId = requestAnimationFrame(pollAudioLevels);
     };
 
-    if (remote?.length) {
+    if (remoteAudioTracks.length > 0) {
       frameId = requestAnimationFrame(pollAudioLevels);
+    } else {
+      setSpeakingMap({});
     }
 
-    return () => cancelAnimationFrame(frameId);
-  }, [remote]);
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+    };
+  }, [remoteAudioTracks]);
 
-  // Attach local track
   useEffect(() => {
-    if (!local || !localVideoRef.current) return;
+    remoteAudioTracks.forEach((track) => {
+      const trackId = track.getId?.();
+      if (!trackId) return;
 
-    const el = localVideoRef.current;
+      const el = remoteAudioRefs.current[trackId];
+      if (!el) return;
 
-    console.log('SETTING LOCAL: ', local, el);
-
-    requestAnimationFrame(() => {
       try {
-        local.attach(el);
-        el.muted = true;
+        track.attach(el);
+        el.autoplay = true;
+        el.playsInline = true;
+        el.muted = false;
+
+        const playPromise = el.play?.();
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch((err) => {
+            console.warn('[Remote Audio] autoplay blocked:', err);
+          });
+        }
       } catch (err) {
-        console.error('[Local Track] Failed to attach:', err);
+        console.error('[Remote Audio] Failed to attach:', err);
       }
     });
 
     return () => {
-      try {
-        local.detach(el);
-        // eslint-disable-next-line
-      } catch (err) {
-        console.warn('[Local Track] Failed to detach or already detached.');
-      }
+      remoteAudioTracks.forEach((track) => {
+        const trackId = track.getId?.();
+        if (!trackId) return;
+
+        const el = remoteAudioRefs.current[trackId];
+        if (!el) return;
+
+        try {
+          track.detach(el);
+        } catch {
+          // ignore detach issues
+        }
+      });
     };
-  }, [local, localVideoRef.current]);
-
-  // Attach remote tracks
-  useEffect(() => {
-    if (!remote?.length) return;
-
-    // Attach video
-    remote
-      .filter((track) => track.isVideoTrack())
-      .forEach((track, i) => {
-        const el = remoteVideoRefs.current[i];
-        if (track && el) {
-          track.attach(el);
-        }
-      });
-
-    // Attach audio
-    remote
-      .filter((track) => track.isAudioTrack())
-      .forEach((track, i) => {
-        const el = remoteAudioRefs.current[i];
-        if (track && el) {
-          track.attach(el);
-        }
-      });
-  }, [remote]);
+  }, [remoteAudioTracks]);
 
   function endCall() {
-    console.log('END CALL: ', { local, localAudio, conference });
-    local?.dispose();
-    localAudio?.dispose();
-    conference?.end();
+    try {
+      local?.dispose();
+    } catch (err) {
+      console.warn('[Local Video] dispose failed', err);
+    }
+
+    try {
+      localAudio?.dispose();
+    } catch (err) {
+      console.warn('[Local Audio] dispose failed', err);
+    }
+
+    try {
+      conference?.end();
+    } catch (err) {
+      console.warn('[Conference] end failed', err);
+    }
   }
 
   return (
@@ -133,48 +149,66 @@ function ActiveVideoCallDialog() {
           </DialogTitle>
         </DialogHeader>
 
-        <div className="flex flex-col lg:flex-row gap-4">
-          <div className="flex gap-1 flex-1">
-            {/* Video Panel */}
-            <div className="flex-1">
-              {remote
-                .filter((track) => track.isVideoTrack())
-                .map((_) => (
-                  <VideoTrackPreview
-                    track={_}
-                    label={contact?.label}
-                    isSpeaking={speakingMap[_.getId?.() ?? '']}
-                    key={_.getId()}
-                  />
-                ))}
+        <div className="flex flex-col gap-4 lg:flex-row">
+          <div className="flex min-h-0 flex-1 gap-2">
+            <div className="flex-1 min-h-[400px]">
+              {remoteVideoTracks.length > 0 ? (
+                remoteVideoTracks.map((track) => {
+                  const matchingAudioTrack = remoteAudioTracks.find(
+                    (audioTrack) =>
+                      audioTrack.getParticipantId?.() ===
+                      track.getParticipantId?.()
+                  );
+
+                  const speakingKey =
+                    matchingAudioTrack?.getId?.() ?? track.getId?.() ?? '';
+
+                  return (
+                    <VideoTrackPreview
+                      key={track.getId()}
+                      track={track}
+                      label={contact?.label}
+                      isSpeaking={speakingMap[speakingKey]}
+                      className="h-full"
+                    />
+                  );
+                })
+              ) : (
+                <div className="flex h-full min-h-[400px] items-center justify-center rounded-lg border bg-muted/30 text-sm text-muted-foreground">
+                  Waiting for remote video...
+                </div>
+              )}
             </div>
-            {remote
-              .filter((track) => track.isAudioTrack())
-              .map((_, i) => (
-                <audio
-                  key={`audio-${i}`}
-                  ref={(el) => {
-                    if (el) remoteAudioRefs.current[i] = el;
-                  }}
-                  autoPlay
-                  // eslint-disable-next-line
-                  playsInline
-                />
-              ))}
+
             {local && (
               <VideoTrackPreview
                 track={local}
                 label="ME"
                 muted
-                className="w-1/4 h-fit"
+                className="w-1/4 min-w-[140px] max-w-[220px] self-start"
               />
             )}
+
+            {remoteAudioTracks.map((track) => {
+              const trackId = track.getId?.();
+              if (!trackId) return null;
+
+              return (
+                <audio
+                  key={trackId}
+                  ref={(el) => {
+                    remoteAudioRefs.current[trackId] = el;
+                  }}
+                  autoPlay
+                  playsInline
+                />
+              );
+            })}
           </div>
 
-          {/* Sidebar */}
-          <div className="w-full lg:w-[320px] flex flex-col gap-4">
+          <div className="flex w-full flex-col gap-4 lg:w-[320px]">
             <div>
-              <h3 className="font-semibold text-lg mb-2">Contact Info</h3>
+              <h3 className="mb-2 text-lg font-semibold">Contact Info</h3>
               <p className="text-sm text-muted-foreground">
                 {contact?.label}
                 <br />({contact?.number})
@@ -188,17 +222,22 @@ function ActiveVideoCallDialog() {
           </div>
         </div>
 
-        {/* Footer Controls */}
-        <div className="flex justify-end gap-2 mt-6">
+        <div className="mt-6 flex justify-end gap-2">
           <Button
-            variant={'outline'}
+            variant="outline"
             onClick={() => {
               setVideoMuted((prev) => {
                 const isMuted = !prev;
 
-                if (isMuted) {
-                  local?.mute();
-                } else local?.unmute();
+                try {
+                  if (isMuted) {
+                    local?.mute();
+                  } else {
+                    local?.unmute();
+                  }
+                } catch (err) {
+                  console.error('[Local Video] mute toggle failed:', err);
+                }
 
                 return isMuted;
               });
@@ -206,15 +245,22 @@ function ActiveVideoCallDialog() {
           >
             {videoMuted ? <VideoOff /> : <Video />}
           </Button>
+
           <Button
-            variant={'outline'}
+            variant="outline"
             onClick={() => {
               setMuted((prev) => {
                 const isMuted = !prev;
 
-                if (isMuted) {
-                  localAudio?.mute();
-                } else localAudio?.unmute();
+                try {
+                  if (isMuted) {
+                    localAudio?.mute();
+                  } else {
+                    localAudio?.unmute();
+                  }
+                } catch (err) {
+                  console.error('[Local Audio] mute toggle failed:', err);
+                }
 
                 return isMuted;
               });
@@ -222,6 +268,7 @@ function ActiveVideoCallDialog() {
           >
             {muted ? <MicOff /> : <Mic />}
           </Button>
+
           <Button
             variant="destructive"
             onClick={() => {

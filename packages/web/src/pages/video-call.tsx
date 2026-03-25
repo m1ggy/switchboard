@@ -13,7 +13,7 @@ import {
   Video,
   VideoOff,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 
@@ -41,24 +41,103 @@ function VideoCall() {
   const [connectionQuality, setConnectionQuality] = useState<number | null>(
     null
   );
-  const [callDuration, setCallDuration] = useState(0); // in seconds
+  const [callDuration, setCallDuration] = useState(0);
 
-  const remoteAudioRefs = useRef<HTMLAudioElement[]>([]);
+  const remoteAudioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
   const hasInitialized = useRef(false);
   const connRef = useRef<JitsiMeetJS.JitsiConnection | null>(null);
 
   const jwt = searchParams.get('jwt');
-
   const companyName = searchParams.get('companyName') ?? 'Agent';
 
-  // Call timer
+  const remoteVideoTrack = useMemo(
+    () =>
+      remoteStreams.find(
+        (stream) => stream.isVideoTrack() && !stream.isLocal()
+      ) ?? null,
+    [remoteStreams]
+  );
+
+  const remoteAudioTracks = useMemo(
+    () =>
+      remoteStreams.filter(
+        (stream) => stream.isAudioTrack() && !stream.isLocal()
+      ),
+    [remoteStreams]
+  );
+
   useEffect(() => {
     if (!conference) return;
+
     const interval = setInterval(() => {
       setCallDuration((d) => d + 1);
     }, 1000);
+
     return () => clearInterval(interval);
   }, [conference]);
+
+  useEffect(() => {
+    remoteAudioTracks.forEach((track) => {
+      const trackId = track.getId?.();
+      if (!trackId) return;
+
+      const el = remoteAudioRefs.current[trackId];
+      if (!el) return;
+
+      try {
+        track.attach(el);
+        el.autoplay = true;
+        el.playsInline = true;
+        el.muted = false;
+
+        const playPromise = el.play?.();
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch((err) => {
+            console.warn('[Remote Audio] autoplay blocked:', err);
+          });
+        }
+      } catch (err) {
+        console.error('[Remote Audio] attach failed:', err);
+      }
+    });
+
+    return () => {
+      remoteAudioTracks.forEach((track) => {
+        const trackId = track.getId?.();
+        if (!trackId) return;
+
+        const el = remoteAudioRefs.current[trackId];
+        if (!el) return;
+
+        try {
+          track.detach(el);
+        } catch (err) {
+          console.warn('[Remote Audio] detach failed:', err);
+        }
+      });
+    };
+  }, [remoteAudioTracks]);
+
+  useEffect(() => {
+    if (!remoteVideoTrack || !remoteVideoTrack.getTrackStreamingStatus) {
+      setConnectionQuality(null);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const status = remoteVideoTrack.getTrackStreamingStatus?.();
+
+      if (status === 'active') {
+        setConnectionQuality(2);
+      } else if (status === 'interrupted') {
+        setConnectionQuality(1);
+      } else {
+        setConnectionQuality(0);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [remoteVideoTrack]);
 
   const formatDuration = (s: number) => {
     const m = Math.floor(s / 60);
@@ -87,97 +166,101 @@ function VideoCall() {
     connRef.current = conn;
 
     let conf: JitsiMeetJS.JitsiConference;
-    let statusInterval: NodeJS.Timeout;
+    let createdAudioTrack: JitsiMeetJS.JitsiTrack | null = null;
+    let createdVideoTrack: JitsiMeetJS.JitsiTrack | null = null;
 
     conn.addEventListener(
       jitsi.events.connection.CONNECTION_ESTABLISHED,
       async () => {
-        toast.success('Connection Established');
+        try {
+          toast.success('Connection Established');
 
-        const localTracks = await jitsi.createLocalTracks({
-          devices: ['audio', 'video'],
-        });
-        const videoTrack = localTracks.find(
-          (t: JitsiMeetJS.JitsiTrack) => t.getType() === 'video'
-        )!;
-        const audioTrack = localTracks.find(
-          (t: JitsiMeetJS.JitsiTrack) => t.getType() === 'audio'
-        )!;
+          const localTracks = await jitsi.createLocalTracks({
+            devices: ['audio', 'video'],
+          });
 
-        setLocalVideo(videoTrack);
-        setLocalAudio(audioTrack);
+          const videoTrack = localTracks.find(
+            (t: JitsiMeetJS.JitsiTrack) => t.getType() === 'video'
+          )!;
+          const audioTrack = localTracks.find(
+            (t: JitsiMeetJS.JitsiTrack) => t.getType() === 'audio'
+          )!;
 
-        conf = conn.initJitsiConference(callId as string, {
-          config: { p2p: { enabled: true } },
-        });
+          createdVideoTrack = videoTrack;
+          createdAudioTrack = audioTrack;
 
-        conf.addTrack(videoTrack);
-        conf.addTrack(audioTrack);
-        setConference(conf);
+          setLocalVideo(videoTrack);
+          setLocalAudio(audioTrack);
 
-        conf.on(jitsi.events.conference.CONFERENCE_JOINED, () => {
-          toast.success('Joined room');
-          toast.dismiss(loadingToast);
-          setIsInitializing(false);
-        });
+          conf = conn.initJitsiConference(callId as string, {
+            config: {
+              p2p: { enabled: true },
+            },
+          });
 
-        conf.on(jitsi.events.conference.CONFERENCE_LEFT, () => {
-          audioTrack.dispose();
-          videoTrack.dispose();
-          setIsCallDone(true);
-        });
+          setConference(conf);
 
-        conf.on(jitsi.events.conference.USER_JOINED, (user) => {
-          console.log('USER JOINED: ', user);
-        });
-
-        conf.on(
-          jitsi.events.conference.TRACK_ADDED,
-          (track: JitsiMeetJS.JitsiTrack) => {
-            console.log('TRACK ADDED: ', track);
-            if (!track.isLocal()) {
-              setRemoteStreams((prev) => {
-                const exists = prev.find((t) => t.getId() === track.getId());
-                return exists ? prev : [...prev, track];
-              });
+          conf.on(jitsi.events.conference.CONFERENCE_JOINED, async () => {
+            try {
+              await conf.addTrack(videoTrack);
+              await conf.addTrack(audioTrack);
+              toast.success('Joined room');
+            } catch (err) {
+              console.error('[Jitsi] Failed to add local tracks:', err);
+              toast.error('Failed to publish local media');
+            } finally {
+              toast.dismiss(loadingToast);
+              setIsInitializing(false);
             }
-          }
-        );
+          });
 
-        conf.on(
-          jitsi.events.conference.TRACK_REMOVED,
-          (track: JitsiMeetJS.JitsiTrack) => {
-            if (!track.isLocal()) {
-              setRemoteStreams((prev) =>
-                prev.filter((t) => t.getId() !== track.getId())
-              );
+          conf.on(jitsi.events.conference.CONFERENCE_LEFT, () => {
+            try {
+              createdAudioTrack?.dispose();
+            } catch {}
+
+            try {
+              createdVideoTrack?.dispose();
+            } catch {}
+
+            setIsCallDone(true);
+          });
+
+          conf.on(jitsi.events.conference.USER_JOINED, (user) => {
+            console.log('USER JOINED:', user);
+          });
+
+          conf.on(
+            jitsi.events.conference.TRACK_ADDED,
+            (track: JitsiMeetJS.JitsiTrack) => {
+              if (!track.isLocal()) {
+                setRemoteStreams((prev) => {
+                  const exists = prev.find((t) => t.getId() === track.getId());
+                  return exists ? prev : [...prev, track];
+                });
+              }
             }
-          }
-        );
-
-        conf.join();
-
-        // Poll connection status from remote track
-        statusInterval = setInterval(() => {
-          const remoteTrack = remoteStreams.find(
-            (track) => track.isVideoTrack() && !track.isLocal()
           );
 
-          if (!remoteTrack || !remoteTrack.getTrackStreamingStatus) {
-            setConnectionQuality(null);
-            return;
-          }
+          conf.on(
+            jitsi.events.conference.TRACK_REMOVED,
+            (track: JitsiMeetJS.JitsiTrack) => {
+              if (!track.isLocal()) {
+                setRemoteStreams((prev) =>
+                  prev.filter((t) => t.getId() !== track.getId())
+                );
+              }
+            }
+          );
 
-          const status = remoteTrack.getTrackStreamingStatus();
-
-          if (status === 'active') {
-            setConnectionQuality(2); // Excellent
-          } else if (status === 'interrupted') {
-            setConnectionQuality(1); // Good
-          } else {
-            setConnectionQuality(0); // Poor
-          }
-        }, 5000);
+          conf.join();
+        } catch (err) {
+          console.error('[Jitsi] Initialization failed:', err);
+          toast.error('Failed to initialize local media');
+          setIsErrored(true);
+          setIsInitializing(false);
+          toast.dismiss(loadingToast);
+        }
       }
     );
 
@@ -205,11 +288,24 @@ function VideoCall() {
 
     return () => {
       hasInitialized.current = false;
-      conference?.leave?.();
-      connRef.current?.disconnect?.();
-      clearInterval(statusInterval);
+
+      try {
+        conf?.leave?.();
+      } catch {}
+
+      try {
+        createdAudioTrack?.dispose?.();
+      } catch {}
+
+      try {
+        createdVideoTrack?.dispose?.();
+      } catch {}
+
+      try {
+        connRef.current?.disconnect?.();
+      } catch {}
     };
-  }, [jwt]);
+  }, [jwt, callId]);
 
   if (isInitializing) {
     return (
@@ -245,10 +341,6 @@ function VideoCall() {
       </div>
     );
   }
-
-  const remoteVideoTrack = remoteStreams.find(
-    (stream) => stream.isVideoTrack() && !stream.isLocal()
-  );
 
   return (
     <div>
@@ -287,12 +379,11 @@ function VideoCall() {
                     </span>
                   ) : null}
                 </div>
-                <div className="font-mono text-xs bg-black/20 px-2 py-1 rounded">
+                <div className="rounded bg-black/20 px-2 py-1 font-mono text-xs">
                   {formatDuration(callDuration)}
                 </div>
               </div>
 
-              {/* Remote Video */}
               <div className="flex">
                 {remoteVideoTrack ? (
                   <VideoTrackPreview
@@ -301,37 +392,40 @@ function VideoCall() {
                     className="h-fit"
                   />
                 ) : (
-                  <div className="flex items-center justify-center w-full h-[40vh]">
-                    <Loader className="animate-spin w-6 h-6 mr-2" />
+                  <div className="flex h-[40vh] w-full items-center justify-center">
+                    <Loader className="mr-2 h-6 w-6 animate-spin" />
                     <span className="text-sm">Waiting for participant...</span>
                   </div>
                 )}
               </div>
 
-              {remoteStreams
-                .filter((stream) => stream.isAudioTrack())
-                .map((_, i) => (
+              {remoteAudioTracks.map((track) => {
+                const trackId = track.getId?.();
+                if (!trackId) return null;
+
+                return (
                   <audio
-                    key={`audio-${i}`}
+                    key={trackId}
                     ref={(el) => {
-                      if (el) remoteAudioRefs.current[i] = el;
+                      remoteAudioRefs.current[trackId] = el;
                     }}
                     autoPlay
                     playsInline
                   />
-                ))}
+                );
+              })}
 
-              {/* Local Video */}
-              <div className="flex justify-end mt-2">
+              <div className="mt-2 flex justify-end">
                 {localVideo ? (
                   <VideoTrackPreview
                     track={localVideo}
                     className="w-1/3"
                     label="You"
+                    muted
                   />
                 ) : (
-                  <div className="w-1/3 h-[100px] flex items-center justify-center border rounded-md">
-                    <Loader className="animate-spin mr-2 w-4 h-4" />
+                  <div className="flex h-[100px] w-1/3 items-center justify-center rounded-md border">
+                    <Loader className="mr-2 h-4 w-4 animate-spin" />
                     <span className="text-sm">Setting up camera...</span>
                   </div>
                 )}
@@ -339,27 +433,48 @@ function VideoCall() {
             </CardContent>
 
             <CardFooter>
-              <div className="flex gap-2 justify-end">
+              <div className="flex justify-end gap-2">
                 <Button
                   size="icon"
                   variant="outline"
                   onClick={() => {
                     setVideoOff((prev) => {
                       const newState = !prev;
-                      newState ? localVideo?.mute() : localVideo?.unmute();
+
+                      try {
+                        if (newState) {
+                          localVideo?.mute();
+                        } else {
+                          localVideo?.unmute();
+                        }
+                      } catch (err) {
+                        console.error('[Local Video] mute toggle failed:', err);
+                      }
+
                       return newState;
                     });
                   }}
                 >
                   {videoOff ? <VideoOff /> : <Video />}
                 </Button>
+
                 <Button
                   size="icon"
                   variant="outline"
                   onClick={() => {
                     setMuted((prev) => {
                       const newState = !prev;
-                      newState ? localAudio?.mute() : localAudio?.unmute();
+
+                      try {
+                        if (newState) {
+                          localAudio?.mute();
+                        } else {
+                          localAudio?.unmute();
+                        }
+                      } catch (err) {
+                        console.error('[Local Audio] mute toggle failed:', err);
+                      }
+
                       return newState;
                     });
                   }}
