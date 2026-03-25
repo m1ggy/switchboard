@@ -37,13 +37,14 @@ function ActiveVideoCallDialog() {
     enabled: !!currentCallContactId,
   });
 
-  const remoteVideoTracks = useMemo(
-    () => remote.filter((track) => track.isVideoTrack()),
+  const remoteVideoTrack = useMemo(
+    () =>
+      remote.find((track) => track.isVideoTrack() && !track.isLocal()) ?? null,
     [remote]
   );
 
   const remoteAudioTracks = useMemo(
-    () => remote.filter((track) => track.isAudioTrack()),
+    () => remote.filter((track) => track.isAudioTrack() && !track.isLocal()),
     [remote]
   );
 
@@ -140,6 +141,15 @@ function ActiveVideoCallDialog() {
     }
   }
 
+  const speakingAudioTrackId =
+    remoteAudioTracks
+      .find(
+        (audioTrack) =>
+          audioTrack.getParticipantId?.() ===
+          remoteVideoTrack?.getParticipantId?.()
+      )
+      ?.getId?.() ?? '';
+
   return (
     <Dialog open={activeVideoCallDialogShown}>
       <DialogContent className="[&>button:last-child]:hidden !w-[90vw] !max-w-none">
@@ -152,27 +162,14 @@ function ActiveVideoCallDialog() {
         <div className="flex flex-col gap-4 lg:flex-row">
           <div className="flex min-h-0 flex-1 gap-2">
             <div className="flex-1 min-h-[400px]">
-              {remoteVideoTracks.length > 0 ? (
-                remoteVideoTracks.map((track) => {
-                  const matchingAudioTrack = remoteAudioTracks.find(
-                    (audioTrack) =>
-                      audioTrack.getParticipantId?.() ===
-                      track.getParticipantId?.()
-                  );
-
-                  const speakingKey =
-                    matchingAudioTrack?.getId?.() ?? track.getId?.() ?? '';
-
-                  return (
-                    <VideoTrackPreview
-                      key={track.getId()}
-                      track={track}
-                      label={contact?.label}
-                      isSpeaking={speakingMap[speakingKey]}
-                      className="h-full"
-                    />
-                  );
-                })
+              {remoteVideoTrack ? (
+                <VideoTrackPreview
+                  key={remoteVideoTrack.getId?.() ?? 'remote-video'}
+                  track={remoteVideoTrack}
+                  label={contact?.label}
+                  isSpeaking={speakingMap[speakingAudioTrackId]}
+                  className="h-full min-h-[400px] w-full"
+                />
               ) : (
                 <div className="flex h-full min-h-[400px] items-center justify-center rounded-lg border bg-muted/30 text-sm text-muted-foreground">
                   Waiting for remote video...
