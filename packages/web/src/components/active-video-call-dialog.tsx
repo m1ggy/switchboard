@@ -121,23 +121,35 @@ function ActiveVideoCallDialog() {
     };
   }, [remoteAudioTracks]);
 
-  function endCall() {
+  async function endCall() {
     try {
-      local?.dispose();
-    } catch (err) {
-      console.warn('[Local Video] dispose failed', err);
-    }
+      if (conference) {
+        try {
+          await conference.leave();
+        } catch (err) {
+          console.warn('[Conference] leave failed, trying end()', err);
 
-    try {
-      localAudio?.dispose();
-    } catch (err) {
-      console.warn('[Local Audio] dispose failed', err);
-    }
+          try {
+            await conference.end();
+          } catch (endErr) {
+            console.warn('[Conference] end failed', endErr);
+          }
+        }
+      }
+    } finally {
+      try {
+        local?.dispose();
+      } catch (err) {
+        console.warn('[Local Video] dispose failed', err);
+      }
 
-    try {
-      conference?.end();
-    } catch (err) {
-      console.warn('[Conference] end failed', err);
+      try {
+        localAudio?.dispose();
+      } catch (err) {
+        console.warn('[Local Audio] dispose failed', err);
+      }
+
+      setActiveVideoCallDialogShown(false);
     }
   }
 
@@ -268,9 +280,8 @@ function ActiveVideoCallDialog() {
 
           <Button
             variant="destructive"
-            onClick={() => {
-              setActiveVideoCallDialogShown(false);
-              endCall();
+            onClick={async () => {
+              await endCall();
             }}
           >
             END

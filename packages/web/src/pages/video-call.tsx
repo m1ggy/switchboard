@@ -214,7 +214,7 @@ function VideoCall() {
             }
           });
 
-          conf.on(jitsi.events.conference.CONFERENCE_LEFT, () => {
+          const handleCallEnded = () => {
             try {
               createdAudioTrack?.dispose();
             } catch {}
@@ -223,7 +223,16 @@ function VideoCall() {
               createdVideoTrack?.dispose();
             } catch {}
 
+            setRemoteStreams([]);
+            setConference(null);
             setIsCallDone(true);
+          };
+
+          conf.on(jitsi.events.conference.CONFERENCE_LEFT, handleCallEnded);
+
+          conf.on(jitsi.events.conference.CONFERENCE_FAILED, (err) => {
+            console.error('[Jitsi] Conference failed:', err);
+            handleCallEnded();
           });
 
           conf.on(jitsi.events.conference.USER_JOINED, (user) => {
@@ -281,6 +290,7 @@ function VideoCall() {
         toast('Disconnected');
         toast.dismiss(loadingToast);
         setIsInitializing(false);
+        setIsCallDone(true);
       }
     );
 

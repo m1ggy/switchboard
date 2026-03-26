@@ -1,6 +1,26 @@
 import pool from '@/lib/pg';
 import { Inbox, InboxWithDetails } from '@/types/db';
 
+type InboxListItem = InboxWithDetails & {
+  unreadCount: number;
+  lastFileInbound: boolean;
+  lastFileOutbound: boolean;
+  lastFax?: {
+    id: string;
+    number_id: string;
+    contact_id: string;
+    direction: 'inbound' | 'outbound';
+    status: string;
+    pages: number | null;
+    media_url: string | null;
+    fax_id: string | null;
+    meta: any;
+    created_at: string | null;
+    initiated_at: string | null;
+    activity_at: string;
+  } | null;
+};
+
 export const InboxesRepository = {
   async findOrCreate({
     numberId,
@@ -43,13 +63,7 @@ export const InboxesRepository = {
   async findByNumberId(
     numberId: string,
     opts?: { search?: string }
-  ): Promise<
-    (InboxWithDetails & {
-      unreadCount: number;
-      lastFileInbound: boolean;
-      lastFileOutbound: boolean;
-    })[]
-  > {
+  ): Promise<InboxListItem[]> {
     const search = opts?.search?.trim() ?? '';
     const like = `%${search}%`;
     const digitsOnly = search.replace(/\D/g, '');
@@ -79,54 +93,77 @@ export const InboxesRepository = {
       ? `AND (${searchParts.join(' OR ')})`
       : '';
 
-    // 1) Base inbox fetch (keep SQL simple)
     const sql = `
-    WITH unread_counts AS (
+      WITH unread_counts AS (
+        SELECT 
+          i.id AS inbox_id,
+          COUNT(m.id) AS unread_count
+        FROM inboxes i
+        JOIN messages m ON
+          m.contact_id = i.contact_id
+          AND m.number_id = i.number_id
+          AND (
+            i.last_viewed_at IS NULL
+            OR m.created_at > i.last_viewed_at
+          )
+        WHERE i.number_id = $1
+        GROUP BY i.id
+      )
       SELECT 
-        i.id AS inbox_id,
-        COUNT(m.id) AS unread_count
+        i.id,
+        i.number_id,
+        i.contact_id,
+        i.last_message_id,
+        i.last_call_id,
+        i.last_viewed_at,
+
+        to_jsonb(c) AS contact,
+        to_jsonb(lm) AS "lastMessage",
+        to_jsonb(lc) AS "lastCall",
+        to_jsonb(lf) AS "lastFax",
+
+        COALESCE(uc.unread_count, 0) AS "unreadCount",
+
+        GREATEST(
+          COALESCE(lm.created_at, '1970-01-01'::timestamptz),
+          COALESCE(lc.initiated_at, '1970-01-01'::timestamptz),
+          COALESCE(lf.activity_at, '1970-01-01'::timestamptz)
+        ) AS latest_activity
       FROM inboxes i
-      JOIN messages m ON
-        m.contact_id = i.contact_id
-        AND m.number_id = i.number_id
-        AND (
-          i.last_viewed_at IS NULL
-          OR m.created_at > i.last_viewed_at
-        )
+      JOIN contacts c ON i.contact_id = c.id
+      LEFT JOIN messages lm ON i.last_message_id = lm.id
+      LEFT JOIN calls lc ON i.last_call_id = lc.id
+      LEFT JOIN unread_counts uc ON i.id = uc.inbox_id
+
+      LEFT JOIN LATERAL (
+        SELECT
+          f.id,
+          f.number_id,
+          f.contact_id,
+          f.direction,
+          f.status,
+          f.pages,
+          f.media_url,
+          f.fax_id,
+          f.meta,
+          f.created_at,
+          f.initiated_at,
+          COALESCE(f.initiated_at, f.created_at, '1970-01-01'::timestamptz) AS activity_at
+        FROM faxes f
+        WHERE f.number_id = i.number_id
+          AND f.contact_id = i.contact_id
+        ORDER BY COALESCE(f.initiated_at, f.created_at, '1970-01-01'::timestamptz) DESC, f.id DESC
+        LIMIT 1
+      ) lf ON TRUE
+
       WHERE i.number_id = $1
-      GROUP BY i.id
-    )
-    SELECT 
-      i.id,
-      i.number_id,
-      i.contact_id,
-      i.last_message_id,
-      i.last_call_id,
-      i.last_viewed_at,
-
-      to_jsonb(c) AS contact,
-      to_jsonb(lm) AS "lastMessage",
-      to_jsonb(lc) AS "lastCall",
-
-      COALESCE(uc.unread_count, 0) AS "unreadCount",
-
-      GREATEST(
-        COALESCE(lm.created_at, '1970-01-01'::timestamp),
-        COALESCE(lc.initiated_at, '1970-01-01'::timestamp)
-      ) AS latest_activity
-    FROM inboxes i
-    JOIN contacts c ON i.contact_id = c.id
-    LEFT JOIN messages lm ON i.last_message_id = lm.id
-    LEFT JOIN calls lc ON i.last_call_id = lc.id
-    LEFT JOIN unread_counts uc ON i.id = uc.inbox_id
-    WHERE i.number_id = $1
-    ${searchClause}
-    ORDER BY latest_activity DESC
-  `;
+      ${searchClause}
+      ORDER BY latest_activity DESC
+    `;
 
     const result = await pool.query(sql, params);
 
-    const inboxes = result.rows.map((row) => ({
+    const inboxes: InboxListItem[] = result.rows.map((row) => ({
       id: row.id,
       numberId: row.number_id,
       contactId: row.contact_id,
@@ -135,22 +172,20 @@ export const InboxesRepository = {
       contact: row.contact,
       lastMessage: row.lastMessage,
       lastCall: row.lastCall,
+      lastFax: row.lastFax,
       lastViewedAt: row.last_viewed_at,
       unreadCount: Number(row.unreadCount),
-      // will fill
       lastFileInbound: false,
       lastFileOutbound: false,
     }));
 
     if (inboxes.length === 0) return inboxes;
 
-    // 2) Collect IDs for bulk enrichment
     const contactIds = [...new Set(inboxes.map((i) => i.contactId))];
     const lastMessageIds = [
       ...new Set(inboxes.map((i) => i.lastMessageId).filter(Boolean)),
     ] as string[];
 
-    // 3) Attachments for lastMessage (bulk, not per-row)
     let attachmentsByMessageId: Record<
       string,
       {
@@ -164,11 +199,11 @@ export const InboxesRepository = {
     if (lastMessageIds.length > 0) {
       const attRes = await pool.query(
         `
-      SELECT id, message_id, media_url, content_type, file_name
-      FROM media_attachments
-      WHERE message_id = ANY($1::uuid[])
-      ORDER BY id DESC
-      `,
+        SELECT id, message_id, media_url, content_type, file_name
+        FROM media_attachments
+        WHERE message_id = ANY($1::uuid[])
+        ORDER BY id DESC
+        `,
         [lastMessageIds]
       );
 
@@ -187,22 +222,19 @@ export const InboxesRepository = {
       );
     }
 
-    // 4) Latest file-bearing MESSAGE per (contact_id, number_id)
-    // Uses DISTINCT ON to pick newest message that has at least 1 attachment.
-    // IMPORTANT: this is still SQL for *fetching data*, but the business logic stays in JS.
     const latestMsgFileRes = await pool.query(
       `
-    SELECT DISTINCT ON (m.contact_id, m.number_id)
-      m.contact_id,
-      m.number_id,
-      m.created_at AS created_at,
-      m.direction::text AS direction
-    FROM messages m
-    JOIN media_attachments ma ON ma.message_id = m.id
-    WHERE m.number_id = $1
-      AND m.contact_id = ANY($2::uuid[])
-    ORDER BY m.contact_id, m.number_id, m.created_at DESC, m.id DESC
-    `,
+      SELECT DISTINCT ON (m.contact_id, m.number_id)
+        m.contact_id,
+        m.number_id,
+        m.created_at AS created_at,
+        m.direction::text AS direction
+      FROM messages m
+      JOIN media_attachments ma ON ma.message_id = m.id
+      WHERE m.number_id = $1
+        AND m.contact_id = ANY($2::uuid[])
+      ORDER BY m.contact_id, m.number_id, m.created_at DESC, m.id DESC
+      `,
       [numberId, contactIds]
     );
 
@@ -218,20 +250,19 @@ export const InboxesRepository = {
       });
     }
 
-    // 5) Latest file-bearing FAX per (contact_id, number_id)
     const latestFaxFileRes = await pool.query(
       `
-    SELECT DISTINCT ON (f.contact_id, f.number_id)
-      f.contact_id,
-      f.number_id,
-      COALESCE(f.initiated_at, f.created_at, '1970-01-01'::timestamptz) AS created_at,
-      f.direction::text AS direction
-    FROM faxes f
-    WHERE f.number_id = $1
-      AND f.contact_id = ANY($2::uuid[])
-      AND f.media_url IS NOT NULL
-    ORDER BY f.contact_id, f.number_id, created_at DESC, f.id DESC
-    `,
+      SELECT DISTINCT ON (f.contact_id, f.number_id)
+        f.contact_id,
+        f.number_id,
+        COALESCE(f.initiated_at, f.created_at, '1970-01-01'::timestamptz) AS created_at,
+        f.direction::text AS direction
+      FROM faxes f
+      WHERE f.number_id = $1
+        AND f.contact_id = ANY($2::uuid[])
+        AND f.media_url IS NOT NULL
+      ORDER BY f.contact_id, f.number_id, created_at DESC, f.id DESC
+      `,
       [numberId, contactIds]
     );
 
@@ -247,9 +278,7 @@ export const InboxesRepository = {
       });
     }
 
-    // 6) Merge everything in JS: attachments + single direction flag
     return inboxes.map((inbox) => {
-      // enrich lastMessage.attachments
       if (inbox.lastMessage?.id) {
         const atts = attachmentsByMessageId[inbox.lastMessage.id] ?? [];
         inbox.lastMessage = { ...inbox.lastMessage, attachments: atts };
@@ -260,7 +289,6 @@ export const InboxesRepository = {
       const msgFile = latestMsgFileByKey.get(key);
       const faxFile = latestFaxFileByKey.get(key);
 
-      // pick the newer “file-bearing” activity
       const msgTime = msgFile
         ? new Date(msgFile.createdAt).getTime()
         : -Infinity;
@@ -276,13 +304,14 @@ export const InboxesRepository = {
       return inbox;
     });
   },
+
   async findActivityByContactPaginated(
     contactId: string,
     {
       limit = 50,
       cursorCreatedAt,
       cursorId,
-      numberId, // optional filter
+      numberId,
     }: {
       limit?: number;
       cursorCreatedAt?: string;
@@ -320,7 +349,6 @@ export const InboxesRepository = {
     const result = await pool.query(
       `SELECT *
         FROM (
-          -- messages
           SELECT
             'message' AS type,
             m.id,
@@ -339,7 +367,6 @@ export const InboxesRepository = {
 
           UNION ALL
 
-          -- calls
           SELECT
             'call' AS type,
             c.id,
@@ -358,7 +385,6 @@ export const InboxesRepository = {
 
           UNION ALL
 
-          -- faxes
           SELECT
             'fax' AS type,
             f.id,
@@ -406,7 +432,6 @@ export const InboxesRepository = {
       callSid?: string | null;
     }>;
 
-    // 🧩 Collect IDs for enrichment
     const messageIds = activity
       .filter((item) => item.type === 'message')
       .map((item) => item.id);
@@ -415,15 +440,14 @@ export const InboxesRepository = {
       .filter((item) => item.type === 'call' && item.callSid)
       .map((item) => item.callSid!) as string[];
 
-    // === MMS attachments by message_id ===
     let attachmentsByMessageId: Record<string, any[]> = {};
     if (messageIds.length > 0) {
       const res = await pool.query(
         `
-      SELECT id, message_id, media_url, content_type, file_name
-      FROM media_attachments
-      WHERE message_id = ANY($1::uuid[])
-      `,
+        SELECT id, message_id, media_url, content_type, file_name
+        FROM media_attachments
+        WHERE message_id = ANY($1::uuid[])
+        `,
         [messageIds]
       );
 
@@ -442,22 +466,21 @@ export const InboxesRepository = {
       );
     }
 
-    // === Voicemails by call_sid (NOT call id) ===
     let voicemailsByCallSid: Record<string, any[]> = {};
     if (callSids.length > 0) {
       const res = await pool.query(
         `
-      SELECT
-        v.id,
-        v.call_sid,
-        v.recording_url,
-        v.transcription_text,
-        v.duration_secs,
-        v.created_at
-      FROM voicemails v
-      WHERE v.call_sid = ANY($1::text[])
-      ORDER BY v.created_at DESC, v.id DESC
-      `,
+        SELECT
+          v.id,
+          v.call_sid,
+          v.recording_url,
+          v.transcription_text,
+          v.duration_secs,
+          v.created_at
+        FROM voicemails v
+        WHERE v.call_sid = ANY($1::text[])
+        ORDER BY v.created_at DESC, v.id DESC
+        `,
         [callSids]
       );
 
@@ -477,7 +500,6 @@ export const InboxesRepository = {
       );
     }
 
-    // 🔁 Normalize all results
     return activity.map((item) => {
       if (item.type === 'message') {
         return {
@@ -485,6 +507,7 @@ export const InboxesRepository = {
           attachments: attachmentsByMessageId[item.id] ?? [],
         };
       }
+
       if (item.type === 'call') {
         return {
           ...item,
@@ -493,56 +516,96 @@ export const InboxesRepository = {
             : [],
         };
       }
+
       return item;
     });
   },
+
   async markInboxAsViewed(inboxId: string): Promise<void> {
     await pool.query(`UPDATE inboxes SET last_viewed_at = $1 WHERE id = $2`, [
       new Date(),
       inboxId,
     ]);
   },
-  async findInboxesWithUnreadMessageCounts(
-    numberId: string
-  ): Promise<(InboxWithDetails & { unreadCount: number })[]> {
+
+  async findInboxesWithUnreadMessageCounts(numberId: string): Promise<
+    (InboxWithDetails & {
+      unreadCount: number;
+      lastFax?: {
+        id: string;
+        number_id: string;
+        contact_id: string;
+        direction: 'inbound' | 'outbound';
+        status: string;
+        pages: number | null;
+        media_url: string | null;
+        fax_id: string | null;
+        meta: any;
+        created_at: string | null;
+        initiated_at: string | null;
+        activity_at: string;
+      } | null;
+    })[]
+  > {
     const result = await pool.query(
       `
-    WITH unread_counts AS (
+      WITH unread_counts AS (
+        SELECT 
+          i.id AS inbox_id,
+          COUNT(m.id) AS unread_count
+        FROM inboxes i
+        JOIN messages m ON
+          m.contact_id = i.contact_id
+          AND m.number_id = i.number_id
+          AND (
+            i.last_viewed_at IS NULL
+            OR m.created_at > i.last_viewed_at
+          )
+        WHERE i.number_id = $1
+        GROUP BY i.id
+        HAVING COUNT(m.id) > 0
+      )
       SELECT 
-        i.id AS inbox_id,
-        COUNT(m.id) AS unread_count
-      FROM inboxes i
-      JOIN messages m ON
-        m.contact_id = i.contact_id
-        AND m.number_id = i.number_id
-        AND (
-          i.last_viewed_at IS NULL
-          OR m.created_at > i.last_viewed_at
-        )
-      WHERE i.number_id = $1
-      GROUP BY i.id
-      HAVING COUNT(m.id) > 0
-    )
-    SELECT 
-      i.id,
-      i.number_id,
-      i.contact_id,
-      i.last_message_id,
-      i.last_call_id,
-      i.last_viewed_at,
+        i.id,
+        i.number_id,
+        i.contact_id,
+        i.last_message_id,
+        i.last_call_id,
+        i.last_viewed_at,
 
-      to_jsonb(c) AS contact,
-      to_jsonb(lm) AS "lastMessage",
-      to_jsonb(lc) AS "lastCall",
+        to_jsonb(c) AS contact,
+        to_jsonb(lm) AS "lastMessage",
+        to_jsonb(lc) AS "lastCall",
+        to_jsonb(lf) AS "lastFax",
 
-      uc.unread_count AS "unreadCount"
-    FROM unread_counts uc
-    JOIN inboxes i ON i.id = uc.inbox_id
-    JOIN contacts c ON i.contact_id = c.id
-    LEFT JOIN messages lm ON i.last_message_id = lm.id
-    LEFT JOIN calls lc ON i.last_call_id = lc.id
-    ORDER BY uc.unread_count DESC
-    `,
+        uc.unread_count AS "unreadCount"
+      FROM unread_counts uc
+      JOIN inboxes i ON i.id = uc.inbox_id
+      JOIN contacts c ON i.contact_id = c.id
+      LEFT JOIN messages lm ON i.last_message_id = lm.id
+      LEFT JOIN calls lc ON i.last_call_id = lc.id
+      LEFT JOIN LATERAL (
+        SELECT
+          f.id,
+          f.number_id,
+          f.contact_id,
+          f.direction,
+          f.status,
+          f.pages,
+          f.media_url,
+          f.fax_id,
+          f.meta,
+          f.created_at,
+          f.initiated_at,
+          COALESCE(f.initiated_at, f.created_at, '1970-01-01'::timestamptz) AS activity_at
+        FROM faxes f
+        WHERE f.number_id = i.number_id
+          AND f.contact_id = i.contact_id
+        ORDER BY COALESCE(f.initiated_at, f.created_at, '1970-01-01'::timestamptz) DESC, f.id DESC
+        LIMIT 1
+      ) lf ON TRUE
+      ORDER BY uc.unread_count DESC
+      `,
       [numberId]
     );
 
@@ -555,6 +618,7 @@ export const InboxesRepository = {
       contact: row.contact,
       lastMessage: row.lastMessage,
       lastCall: row.lastCall,
+      lastFax: row.lastFax,
       lastViewedAt: row.last_viewed_at,
       unreadCount: Number(row.unreadCount),
     }));
@@ -566,22 +630,22 @@ export const InboxesRepository = {
   ): Promise<number> {
     const result = await pool.query(
       `
-    SELECT COUNT(m.id) AS unread_count
-    FROM inboxes i
-    JOIN messages m ON
-      m.contact_id = i.contact_id
-      AND m.number_id = i.number_id
-      AND (
-        i.last_viewed_at IS NULL
-        OR m.created_at > i.last_viewed_at
-      )
-    WHERE i.number_id = $1 AND i.id = $2
-    GROUP BY i.id
-    `,
+      SELECT COUNT(m.id) AS unread_count
+      FROM inboxes i
+      JOIN messages m ON
+        m.contact_id = i.contact_id
+        AND m.number_id = i.number_id
+        AND (
+          i.last_viewed_at IS NULL
+          OR m.created_at > i.last_viewed_at
+        )
+      WHERE i.number_id = $1 AND i.id = $2
+      GROUP BY i.id
+      `,
       [numberId, inboxId]
     );
 
-    return result.rowCount && result?.rowCount > 0
+    return result.rowCount && result.rowCount > 0
       ? Number(result.rows[0].unread_count)
       : 0;
   },
