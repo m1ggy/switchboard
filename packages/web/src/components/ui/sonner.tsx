@@ -21,7 +21,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
           toast:
             'group toast group-[.toaster]:border-border group-[.toaster]:bg-popover group-[.toaster]:text-popover-foreground group-[.toaster]:shadow-lg',
           title: 'text-foreground',
-          description: 'group-[.toast]:text-muted-foreground !opacity-100',
+          description: '!text-zinc-600 dark:!text-zinc-400 !opacity-100',
           actionButton:
             'group-[.toast]:bg-primary group-[.toast]:text-primary-foreground',
           cancelButton:
