@@ -6,7 +6,7 @@ import {
   signInWithEmailAndPassword,
   signInWithPopup,
 } from 'firebase/auth';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router';
 import z from 'zod';
@@ -32,7 +32,14 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import Loader from '@/components/ui/loader';
-import { Eye, EyeOff, LogIn } from 'lucide-react';
+import {
+  Download,
+  Eye,
+  EyeOff,
+  LogIn,
+  Monitor,
+  Smartphone,
+} from 'lucide-react';
 
 const signInSchema = z.object({
   email: z.string().min(1, 'Required').email(),
@@ -41,15 +48,68 @@ const signInSchema = z.object({
 
 type Schema = z.infer<typeof signInSchema>;
 
+function isStandaloneDisplay(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.matchMedia?.('(display-mode: standalone)').matches ?? false;
+}
+
+function isIOSStandalone(): boolean {
+  if (typeof window === 'undefined') return false;
+  // @ts-expect-error iOS Safari-specific property
+  return !!window.navigator?.standalone;
+}
+
+function isInstalled(): boolean {
+  return isStandaloneDisplay() || isIOSStandalone();
+}
+
+function getDeviceKind() {
+  if (typeof navigator === 'undefined') return 'desktop' as const;
+
+  const ua = navigator.userAgent || '';
+  const isMobile = /Android|iPhone|iPad|iPod|Mobile|Opera Mini|IEMobile/i.test(
+    ua
+  );
+
+  if (!isMobile) return 'desktop' as const;
+  if (/iPhone|iPad|iPod/i.test(ua)) return 'ios' as const;
+  if (/Android/i.test(ua)) return 'android' as const;
+
+  return 'mobile' as const;
+}
+
 function SignIn() {
   const form = useForm<Schema>({ resolver: zodResolver(signInSchema) });
   const trpc = useTRPC();
   const [loading, setLoading] = useState(false);
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [installed, setInstalled] = useState(false);
   const navigate = useNavigate();
   const setUser = useMainStore((state) => state.setUser);
   const createUser = useMutation(trpc.users.createUser.mutationOptions());
+
+  useEffect(() => {
+    setInstalled(isInstalled());
+
+    const onInstalled = () => setInstalled(true);
+    window.addEventListener('appinstalled', onInstalled);
+
+    const mq = window.matchMedia?.('(display-mode: standalone)');
+    const onModeChange = () => setInstalled(isInstalled());
+    mq?.addEventListener?.('change', onModeChange);
+
+    return () => {
+      window.removeEventListener('appinstalled', onInstalled);
+      mq?.removeEventListener?.('change', onModeChange);
+    };
+  }, []);
+
+  const deviceKind = useMemo(() => getDeviceKind(), []);
+  const isDesktop = deviceKind === 'desktop';
+  const isAndroid = deviceKind === 'android';
+  const isIOS = deviceKind === 'ios';
+  const isMobileDevice = !isDesktop;
 
   const onSubmit = async (data: Schema) => {
     setLoading(true);
@@ -140,7 +200,7 @@ function SignIn() {
         sm:px-6
       "
     >
-      <main className="flex-1 flex items-center justify-center">
+      <main className="flex-1 flex items-center justify-center py-6">
         <Card
           className="
             w-full
@@ -289,6 +349,130 @@ function SignIn() {
                   <Link to="/sign-up">Need an account? Create one!</Link>
                 </span>
               </div>
+
+              {!installed && (
+                <div className="mt-6 rounded-xl border bg-muted/30 p-4 text-left">
+                  <div className="mb-2 flex items-center gap-2">
+                    {isMobileDevice ? (
+                      <Smartphone className="size-4" />
+                    ) : (
+                      <Monitor className="size-4" />
+                    )}
+                    <p className="font-medium text-foreground">
+                      Install the Calliya app
+                    </p>
+                  </div>
+
+                  {isAndroid && (
+                    <div className="space-y-2 text-xs sm:text-sm text-muted-foreground">
+                      <p className="text-foreground font-medium">Android</p>
+                      <ol className="list-decimal pl-5 space-y-1">
+                        <li>Open this page on your Android device.</li>
+                        <li>
+                          Go to{' '}
+                          <span className="font-medium">app.calliya.com</span>.
+                        </li>
+                        <li>
+                          On the homepage, below the log in button, tap{' '}
+                          <span className="font-medium">Install the App</span>.
+                        </li>
+                        <li>Confirm the install prompt.</li>
+                        <li>
+                          The app will install and appear on your home screen
+                          automatically.
+                        </li>
+                      </ol>
+                    </div>
+                  )}
+
+                  {isIOS && (
+                    <div className="space-y-2 text-xs sm:text-sm text-muted-foreground">
+                      <p className="text-foreground font-medium">
+                        iPhone / iPad
+                      </p>
+                      <ol className="list-decimal pl-5 space-y-1">
+                        <li>
+                          Open this page in{' '}
+                          <span className="font-medium">Safari</span>.
+                        </li>
+                        <li>
+                          Go to{' '}
+                          <span className="font-medium">app.calliya.com</span>.
+                        </li>
+                        <li>
+                          On the homepage, tap the{' '}
+                          <span className="font-medium">Share</span> button.
+                        </li>
+                        <li>
+                          Select{' '}
+                          <span className="font-medium">
+                            Add to Home Screen
+                          </span>
+                          .
+                        </li>
+                        <li>
+                          Tap <span className="font-medium">Add</span> to
+                          install Calliya on your home screen.
+                        </li>
+                      </ol>
+                    </div>
+                  )}
+
+                  {deviceKind === 'mobile' && (
+                    <div className="space-y-2 text-xs sm:text-sm text-muted-foreground">
+                      <p className="text-foreground font-medium">
+                        Mobile Device
+                      </p>
+                      <ol className="list-decimal pl-5 space-y-1">
+                        <li>
+                          Open{' '}
+                          <span className="font-medium">app.calliya.com</span>{' '}
+                          on your phone.
+                        </li>
+                        <li>
+                          Look below the log in button for the install option.
+                        </li>
+                        <li>Follow the browser prompt to install the app.</li>
+                      </ol>
+                    </div>
+                  )}
+
+                  {isDesktop && (
+                    <div className="space-y-2 text-xs sm:text-sm text-muted-foreground">
+                      <p>App installation is available on mobile devices.</p>
+                      <ol className="list-decimal pl-5 space-y-1">
+                        <li>
+                          Open{' '}
+                          <span className="font-medium">app.calliya.com</span>{' '}
+                          on your phone.
+                        </li>
+                        <li>
+                          Below the log in button, tap{' '}
+                          <span className="font-medium">Install the App</span>{' '}
+                          on Android.
+                        </li>
+                        <li>
+                          On iPhone or iPad, open in{' '}
+                          <span className="font-medium">Safari</span>, tap{' '}
+                          <span className="font-medium">Share</span>, then{' '}
+                          <span className="font-medium">
+                            Add to Home Screen
+                          </span>
+                          .
+                        </li>
+                      </ol>
+                    </div>
+                  )}
+
+                  <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                    <Download className="size-4" />
+                    <span>
+                      Install it for faster access to messages, calls, and
+                      notifications.
+                    </span>
+                  </div>
+                </div>
+              )}
             </CardDescription>
           </CardContent>
         </Card>
