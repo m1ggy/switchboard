@@ -8,7 +8,7 @@ import {
 } from 'firebase/auth';
 import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { Link, useNavigate } from 'react-router';
+import { useNavigate } from 'react-router';
 import z from 'zod';
 
 import { auth } from '@/lib/firebase';
@@ -480,26 +480,6 @@ function SignIn() {
                   </div>
                 </form>
               </Form>
-
-              <div className="my-3 text-center text-xs text-muted-foreground sm:my-4 sm:text-sm">
-                or
-              </div>
-
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleGoogleSignIn}
-                disabled={loading}
-                className="h-11 w-full text-sm sm:h-12 sm:text-base"
-              >
-                {loading ? <Loader /> : 'Continue with Google'}
-              </Button>
-
-              <div className="mt-5 text-center">
-                <span className="text-xs underline sm:text-sm">
-                  <Link to="/sign-up">Need an account? Create one!</Link>
-                </span>
-              </div>
 
               {!installed && <InstallInstructionsDialog />}
             </CardDescription>
