@@ -74,10 +74,9 @@ function normalizeUrl(url: string) {
 function renderTextWithLinks(text?: string) {
   if (!text) return null;
 
-  const urlRegex = /((https?:\/\/|www\.)[^\s]+(?:\.[^\s]+)+[^\s]*)/gi;
-  const parts = text.split(urlRegex);
+  const urlRegex = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi;
 
-  return parts.map((part, index) => {
+  return text.split(urlRegex).map((part, index) => {
     if (!part) return null;
 
     const isUrl = /^(https?:\/\/|www\.)/i.test(part);
@@ -86,22 +85,21 @@ function renderTextWithLinks(text?: string) {
       return <Fragment key={`text-${index}`}>{part}</Fragment>;
     }
 
-    const cleanedHref = normalizeUrl(part);
-    const cleanedLabel = part.replace(/[),.;!?]+$/, '');
-    const trailing = part.slice(cleanedLabel.length);
+    // remove trailing punctuation ONLY
+    const cleaned = part.replace(/[.,!?)]*$/, '');
 
     return (
       <Fragment key={`link-${index}`}>
         <a
-          href={normalizeUrl(cleanedLabel)}
+          href={cleaned.startsWith('http') ? cleaned : `https://${cleaned}`}
           target="_blank"
           rel="noopener noreferrer"
           className="underline underline-offset-2 break-all hover:opacity-80"
           onClick={(e) => e.stopPropagation()}
         >
-          {cleanedLabel}
+          {cleaned}
         </a>
-        {trailing}
+        {part.slice(cleaned.length)}
       </Fragment>
     );
   });
