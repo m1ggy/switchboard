@@ -12,6 +12,7 @@ export const inboxesRouter = t.router({
       });
       return inboxes as InboxWithDetails[];
     }),
+
   getActivityByContact: protectedProcedure
     .input(
       z.object({
@@ -42,7 +43,7 @@ export const inboxesRouter = t.router({
       const hasMore = results.length === limit;
 
       return {
-        items: results, // reverse to show oldest first
+        items: results,
         nextCursor: hasMore
           ? {
               createdAt: results.at(-1)?.createdAt as string,
@@ -52,11 +53,29 @@ export const inboxesRouter = t.router({
       };
     }),
 
+  createInboxIfNotExists: protectedProcedure
+    .input(
+      z.object({
+        companyId: z.string(),
+        numberId: z.string(),
+        contactId: z.string(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const inbox = await InboxesRepository.findOrCreate({
+        numberId: input.numberId,
+        contactId: input.contactId,
+      });
+
+      return inbox;
+    }),
+
   markAsViewed: protectedProcedure
     .input(z.object({ inboxId: z.string() }))
     .mutation(async ({ input }) => {
       await InboxesRepository.markInboxAsViewed(input.inboxId);
     }),
+
   getUnreadInboxesCount: protectedProcedure
     .input(z.object({ numberId: z.string() }))
     .query(async ({ input }) => {
@@ -64,6 +83,7 @@ export const inboxesRouter = t.router({
         input.numberId
       );
     }),
+
   getUnreadCountByInboxId: protectedProcedure
     .input(
       z.object({

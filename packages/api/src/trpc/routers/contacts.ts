@@ -4,36 +4,53 @@ import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { protectedProcedure, t } from '../trpc';
 
-export const contactsRouter = t.router({
-  createContact: protectedProcedure
-    .input(
-      z.object({
-        companyId: z.string(),
-        number: z.string(),
-        label: z.string(),
-      })
-    )
-    .mutation(async ({ input }) => {
-      const existing = await ContactsRepository.findByNumber(input.number);
+const createContactInput = z.object({
+  companyId: z.string(),
+  number: z.string(),
+  label: z.string(),
+});
 
-      if (
-        existing &&
-        existing.number === existing.label &&
-        input.label !== existing.number
-      ) {
-        return await ContactsRepository.update(existing.id, {
-          label: input.label,
-        });
-      }
+async function upsertCompanyContact(input: {
+  companyId: string;
+  number: string;
+  label: string;
+}) {
+  const existing = await ContactsRepository.findByNumber(
+    input.number,
+    input.companyId
+  );
 
-      const contact = await ContactsRepository.create({
-        id: randomUUID(),
-        company_id: input.companyId,
-        number: input.number,
+  if (existing) {
+    if (existing.number === existing.label && input.label !== existing.number) {
+      return await ContactsRepository.update(existing.id, {
         label: input.label,
       });
+    }
 
-      return contact as Contact;
+    return existing;
+  }
+
+  const contact = await ContactsRepository.create({
+    id: randomUUID(),
+    company_id: input.companyId,
+    number: input.number,
+    label: input.label,
+  });
+
+  return contact as Contact;
+}
+
+export const contactsRouter = t.router({
+  createContact: protectedProcedure
+    .input(createContactInput)
+    .mutation(async ({ input }) => {
+      return await upsertCompanyContact(input);
+    }),
+
+  createCompanyContact: protectedProcedure
+    .input(createContactInput)
+    .mutation(async ({ input }) => {
+      return await upsertCompanyContact(input);
     }),
 
   getCompanyContacts: protectedProcedure
@@ -69,7 +86,6 @@ export const contactsRouter = t.router({
       return contact;
     }),
 
-  // 🆕 Find contact by number (optionally scoped to company)
   findContactByNumber: protectedProcedure
     .input(
       z.object({

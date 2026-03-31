@@ -11,6 +11,7 @@ import {
   Printer,
   Settings,
   UserPlus,
+  Video,
   type LucideProps,
 } from 'lucide-react';
 
@@ -46,6 +47,7 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import FaxSendDialog from './ui/fax-send-dialog';
 import { Skeleton } from './ui/skeleton';
+import VideoCallDialog from './ui/video-call-dialog';
 
 // plan feature helper
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -117,6 +119,11 @@ const callsItems: SidebarNavItem[] = [
     onClick: () => useMainStore.getState().setDialerModalShown(true),
   },
   {
+    title: 'Video Call',
+    url: null,
+    icon: Video,
+  },
+  {
     title: 'Call History',
     url: '/dashboard/call-history',
     icon: History,
@@ -157,14 +164,17 @@ function BaseSidebar() {
   } = useMainStore();
 
   const [showFaxDialog, setShowFaxDialog] = useState(false);
+  const [showVideoCallDialog, setShowVideoCallDialog] = useState(false);
 
   const { data: userInfo } = useQuery(trpc.users.getUser.queryOptions());
   const selectedPlan = userInfo?.selected_plan as PlanName | undefined;
 
   const canFax = hasFeature(selectedPlan as PlanName, 'fax');
+  const canVideoCall = hasFeature(selectedPlan as PlanName, 'video_calls');
 
   const filterRestrictedItems = (items: SidebarNavItem[]) =>
     items.filter((item) => {
+      if (item.title === 'Video Call') return canVideoCall;
       if (!item.restricted) return true;
       if (!item.feature || !selectedPlan) return false;
       return hasFeature(selectedPlan, item.feature);
@@ -177,7 +187,7 @@ function BaseSidebar() {
 
   const visibleCallsItems = useMemo(
     () => filterRestrictedItems(callsItems),
-    [selectedPlan]
+    [selectedPlan, canVideoCall]
   );
 
   const visibleContactsItems = useMemo(
@@ -462,6 +472,18 @@ function BaseSidebar() {
                           <item.icon />
                           <span>{item.title}</span>
                         </Link>
+                      ) : item.title === 'Video Call' ? (
+                        <Button
+                          onClick={() => {
+                            setShowVideoCallDialog(true);
+                            closeIfMobile();
+                          }}
+                          className="cursor-pointer"
+                          variant="outline"
+                        >
+                          <Video />
+                          <span>Video Call</span>
+                        </Button>
                       ) : item.onClick ? (
                         <Button
                           onClick={() => {
@@ -589,6 +611,11 @@ function BaseSidebar() {
         onOpenChange={setShowFaxDialog}
         contactId={undefined}
         defaultFromName={activeCompany?.name ?? ''}
+      />
+
+      <VideoCallDialog
+        open={showVideoCallDialog}
+        onOpenChange={setShowVideoCallDialog}
       />
     </Sidebar>
   );

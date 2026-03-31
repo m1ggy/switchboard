@@ -9,7 +9,7 @@ import {
   Printer,
   Voicemail as VoicemailIcon,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
 type Attachment = {
   file_name: string;
@@ -64,6 +64,47 @@ function secondsToMMSS(s: number) {
     .toString()
     .padStart(2, '0');
   return `${mm}:${ss}`;
+}
+
+function normalizeUrl(url: string) {
+  if (/^https?:\/\//i.test(url)) return url;
+  return `https://${url}`;
+}
+
+function renderTextWithLinks(text?: string) {
+  if (!text) return null;
+
+  const urlRegex = /((https?:\/\/|www\.)[^\s]+(?:\.[^\s]+)+[^\s]*)/gi;
+  const parts = text.split(urlRegex);
+
+  return parts.map((part, index) => {
+    if (!part) return null;
+
+    const isUrl = /^(https?:\/\/|www\.)/i.test(part);
+
+    if (!isUrl) {
+      return <Fragment key={`text-${index}`}>{part}</Fragment>;
+    }
+
+    const cleanedHref = normalizeUrl(part);
+    const cleanedLabel = part.replace(/[),.;!?]+$/, '');
+    const trailing = part.slice(cleanedLabel.length);
+
+    return (
+      <Fragment key={`link-${index}`}>
+        <a
+          href={normalizeUrl(cleanedLabel)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline underline-offset-2 break-all hover:opacity-80"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {cleanedLabel}
+        </a>
+        {trailing}
+      </Fragment>
+    );
+  });
 }
 
 /** --- Pretty Voicemail Card ------------------------------------------------ */
@@ -322,7 +363,7 @@ function ChatBubble({
         {/* text message */}
         {item.type === 'message' && (
           <span className="break-words whitespace-pre-wrap">
-            {item.message}
+            {renderTextWithLinks(item.message)}
           </span>
         )}
 
@@ -418,7 +459,7 @@ function ChatBubble({
 
             {item.message && (
               <span className="text-sm mt-1 break-words whitespace-pre-wrap">
-                {item.message}
+                {renderTextWithLinks(item.message)}
               </span>
             )}
           </div>
