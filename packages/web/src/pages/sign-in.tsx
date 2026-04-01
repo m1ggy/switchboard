@@ -6,9 +6,9 @@ import {
   signInWithEmailAndPassword,
   signInWithPopup,
 } from 'firebase/auth';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { Link, useNavigate } from 'react-router';
+import { useNavigate } from 'react-router';
 import z from 'zod';
 
 import { auth } from '@/lib/firebase';
@@ -23,6 +23,14 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import {
   Form,
   FormControl,
   FormField,
@@ -32,7 +40,14 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import Loader from '@/components/ui/loader';
-import { Eye, EyeOff, LogIn } from 'lucide-react';
+import {
+  Download,
+  Eye,
+  EyeOff,
+  LogIn,
+  Monitor,
+  Smartphone,
+} from 'lucide-react';
 
 const signInSchema = z.object({
   email: z.string().min(1, 'Required').email(),
@@ -41,15 +56,213 @@ const signInSchema = z.object({
 
 type Schema = z.infer<typeof signInSchema>;
 
+function isStandaloneDisplay(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.matchMedia?.('(display-mode: standalone)').matches ?? false;
+}
+
+function isIOSStandalone(): boolean {
+  if (typeof window === 'undefined') return false;
+  // @ts-expect-error iOS Safari-specific property
+  return !!window.navigator?.standalone;
+}
+
+function isInstalled(): boolean {
+  return isStandaloneDisplay() || isIOSStandalone();
+}
+
+function getDeviceKind() {
+  if (typeof navigator === 'undefined') return 'desktop' as const;
+
+  const ua = navigator.userAgent || '';
+  const isMobile = /Android|iPhone|iPad|iPod|Mobile|Opera Mini|IEMobile/i.test(
+    ua
+  );
+
+  if (!isMobile) return 'desktop' as const;
+  if (/iPhone|iPad|iPod/i.test(ua)) return 'ios' as const;
+  if (/Android/i.test(ua)) return 'android' as const;
+
+  return 'mobile' as const;
+}
+
+function InstallInstructionsDialog() {
+  const deviceKind = useMemo(() => getDeviceKind(), []);
+  const isDesktop = deviceKind === 'desktop';
+  const isAndroid = deviceKind === 'android';
+  const isIOS = deviceKind === 'ios';
+  const isMobileDevice = !isDesktop;
+
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          className="mt-4 h-auto w-full justify-center px-2 py-2 text-xs sm:text-sm text-muted-foreground"
+        >
+          <span className="inline-flex items-center gap-2 text-center">
+            <Download className="size-4 shrink-0" />
+            Install the app
+          </span>
+        </Button>
+      </DialogTrigger>
+
+      <DialogContent
+        className="
+          w-[calc(100vw-2rem)]
+          max-w-md
+          rounded-2xl
+          p-0
+          gap-0
+          overflow-hidden
+        "
+      >
+        <div className="max-h-[85svh] overflow-y-auto">
+          <DialogHeader className="px-4 pt-5 pb-3 sm:px-6">
+            <div className="flex items-center gap-2">
+              {isMobileDevice ? (
+                <Smartphone className="size-5 shrink-0" />
+              ) : (
+                <Monitor className="size-5 shrink-0" />
+              )}
+              <DialogTitle className="text-left text-base sm:text-lg">
+                Install Calliya
+              </DialogTitle>
+            </div>
+            <DialogDescription className="text-left text-xs sm:text-sm">
+              Follow the steps below based on your device.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="px-4 pb-5 sm:px-6 space-y-4">
+            {isAndroid && (
+              <div className="rounded-xl border bg-muted/30 p-4">
+                <p className="mb-2 font-medium text-sm sm:text-base text-foreground">
+                  Android
+                </p>
+                <ol className="list-decimal space-y-2 pl-5 text-xs sm:text-sm text-muted-foreground">
+                  <li>Open this page on your Android device.</li>
+                  <li>
+                    Go to <span className="font-medium">app.calliya.com</span>.
+                  </li>
+                  <li>
+                    On the homepage, below the log in button, tap{' '}
+                    <span className="font-medium">Install the App</span>.
+                  </li>
+                  <li>Confirm the install prompt.</li>
+                  <li>
+                    The app will install automatically and appear on your home
+                    screen.
+                  </li>
+                </ol>
+              </div>
+            )}
+
+            {isIOS && (
+              <div className="rounded-xl border bg-muted/30 p-4">
+                <p className="mb-2 font-medium text-sm sm:text-base text-foreground">
+                  iPhone / iPad
+                </p>
+                <ol className="list-decimal space-y-2 pl-5 text-xs sm:text-sm text-muted-foreground">
+                  <li>
+                    Open <span className="font-medium">app.calliya.com</span> in{' '}
+                    <span className="font-medium">Safari</span>.
+                  </li>
+                  <li>
+                    On the homepage, tap the{' '}
+                    <span className="font-medium">Share</span> button.
+                  </li>
+                  <li>
+                    Select{' '}
+                    <span className="font-medium">Add to Home Screen</span>.
+                  </li>
+                  <li>
+                    Tap <span className="font-medium">Add</span>.
+                  </li>
+                  <li>Calliya will appear on your home screen.</li>
+                </ol>
+              </div>
+            )}
+
+            {deviceKind === 'mobile' && (
+              <div className="rounded-xl border bg-muted/30 p-4">
+                <p className="mb-2 font-medium text-sm sm:text-base text-foreground">
+                  Mobile Device
+                </p>
+                <ol className="list-decimal space-y-2 pl-5 text-xs sm:text-sm text-muted-foreground">
+                  <li>
+                    Open <span className="font-medium">app.calliya.com</span> on
+                    your phone.
+                  </li>
+                  <li>Look below the log in button for the install option.</li>
+                  <li>Follow the browser prompt to install the app.</li>
+                </ol>
+              </div>
+            )}
+
+            {isDesktop && (
+              <div className="rounded-xl border bg-muted/30 p-4">
+                <p className="mb-2 font-medium text-sm sm:text-base text-foreground">
+                  Desktop
+                </p>
+                <ol className="list-decimal space-y-2 pl-5 text-xs sm:text-sm text-muted-foreground">
+                  <li>
+                    Open <span className="font-medium">app.calliya.com</span> on
+                    your phone.
+                  </li>
+                  <li>
+                    On Android, tap{' '}
+                    <span className="font-medium">Install the App</span> below
+                    the log in button.
+                  </li>
+                  <li>
+                    On iPhone or iPad, open the site in{' '}
+                    <span className="font-medium">Safari</span>, tap{' '}
+                    <span className="font-medium">Share</span>, then{' '}
+                    <span className="font-medium">Add to Home Screen</span>.
+                  </li>
+                </ol>
+              </div>
+            )}
+
+            <div className="rounded-xl border border-dashed p-3 text-xs sm:text-sm text-muted-foreground">
+              Install Calliya for quicker access to messages, calls, and
+              notifications.
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function SignIn() {
   const form = useForm<Schema>({ resolver: zodResolver(signInSchema) });
   const trpc = useTRPC();
   const [loading, setLoading] = useState(false);
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [installed, setInstalled] = useState(false);
   const navigate = useNavigate();
   const setUser = useMainStore((state) => state.setUser);
   const createUser = useMutation(trpc.users.createUser.mutationOptions());
+
+  useEffect(() => {
+    setInstalled(isInstalled());
+
+    const onInstalled = () => setInstalled(true);
+    window.addEventListener('appinstalled', onInstalled);
+
+    const mq = window.matchMedia?.('(display-mode: standalone)');
+    const onModeChange = () => setInstalled(isInstalled());
+    mq?.addEventListener?.('change', onModeChange);
+
+    return () => {
+      window.removeEventListener('appinstalled', onInstalled);
+      mq?.removeEventListener?.('change', onModeChange);
+    };
+  }, []);
 
   const onSubmit = async (data: Schema) => {
     setLoading(true);
@@ -136,25 +349,24 @@ function SignIn() {
       className="
         min-h-svh flex flex-col bg-background
         pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]
-        px-4
-        sm:px-6
+        px-4 sm:px-6
       "
     >
-      <main className="flex-1 flex items-center justify-center">
+      <main className="flex flex-1 items-center justify-center py-6">
         <Card
           className="
             w-full
             max-w-[22rem] sm:max-w-md md:max-w-lg
-            shadow-sm
             rounded-2xl
+            shadow-sm
           "
         >
-          <CardTitle className="text-lg sm:text-xl text-center px-4 pt-6">
-            <div className="flex justify-center mb-2">
+          <CardTitle className="px-4 pt-6 text-center text-lg sm:text-xl">
+            <div className="mb-2 flex justify-center">
               <img
                 src="/calliya-logo.png"
                 alt="Calliya"
-                className="w-28 sm:w-40 h-auto object-contain"
+                className="h-auto w-28 object-contain sm:w-40"
                 loading="eager"
                 decoding="async"
               />
@@ -162,7 +374,7 @@ function SignIn() {
             <span className="block">Sign in to Calliya</span>
           </CardTitle>
 
-          <CardContent className="px-4 sm:px-6 pb-6">
+          <CardContent className="px-4 pb-6 sm:px-6">
             <CardDescription className="text-sm sm:text-base">
               <Form {...form}>
                 <form
@@ -187,7 +399,7 @@ function SignIn() {
                             autoCapitalize="none"
                             autoCorrect="off"
                             placeholder="you@example.com"
-                            className="h-11 sm:h-12 text-sm sm:text-base"
+                            className="h-11 text-sm sm:h-12 sm:text-base"
                           />
                         </FormControl>
                         <FormMessage className="text-xs sm:text-sm" />
@@ -210,16 +422,15 @@ function SignIn() {
                               type={showPw ? 'text' : 'password'}
                               autoComplete="current-password"
                               placeholder="••••••••"
-                              className="h-11 sm:h-12 pr-12 text-sm sm:text-base"
+                              className="h-11 pr-12 text-sm sm:h-12 sm:text-base"
                             />
                             <button
                               type="button"
                               onClick={() => setShowPw((s) => !s)}
                               className="
                                 absolute inset-y-0 right-2 grid place-items-center
-                                px-2 rounded-md
+                                rounded-md px-2 transition
                                 hover:bg-accent/40 active:bg-accent
-                                transition
                                 motion-reduce:transition-none
                               "
                               aria-label={
@@ -243,7 +454,7 @@ function SignIn() {
                   <Button
                     type="submit"
                     disabled={loading}
-                    className="w-full h-11 sm:h-12 text-sm sm:text-base mt-1"
+                    className="mt-1 h-11 w-full text-sm sm:h-12 sm:text-base"
                   >
                     {loading ? (
                       <Loader />
@@ -262,7 +473,7 @@ function SignIn() {
                     role="status"
                   >
                     {error && (
-                      <p className="text-destructive text-xs sm:text-sm font-medium text-center mt-2">
+                      <p className="mt-2 text-center text-xs font-medium text-destructive sm:text-sm">
                         {error}
                       </p>
                     )}
@@ -270,25 +481,7 @@ function SignIn() {
                 </form>
               </Form>
 
-              <div className="text-xs sm:text-sm text-center my-3 sm:my-4 text-muted-foreground">
-                or
-              </div>
-
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleGoogleSignIn}
-                disabled={loading}
-                className="w-full h-11 sm:h-12 text-sm sm:text-base"
-              >
-                {loading ? <Loader /> : 'Continue with Google'}
-              </Button>
-
-              <div className="mt-5 text-center">
-                <span className="underline text-xs sm:text-sm">
-                  <Link to="/sign-up">Need an account? Create one!</Link>
-                </span>
-              </div>
+              {!installed && <InstallInstructionsDialog />}
             </CardDescription>
           </CardContent>
         </Card>

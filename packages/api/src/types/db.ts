@@ -365,3 +365,28 @@ export type ReassuranceCallTranscript = {
 
   created_at: string;
 };
+
+export interface AppointmentReminderDetail {
+  id: string;
+  schedule_id: number;
+  contact_id: string;
+  appointment_title: string;
+  appointment_datetime: string;
+  appointment_timezone: string;
+  provider_name: string | null;
+  provider_phone: string | null;
+  location_name: string | null;
+  location_address: string | null;
+  notes: string | null;
+  reminder_offset_minutes: number;
+  requires_confirmation: boolean;
+  status:
+    | 'scheduled'
+    | 'confirmed'
+    | 'reschedule_requested'
+    | 'cancelled'
+    | 'completed'
+    | 'missed';
+  created_at: string;
+  updated_at: string;
+}

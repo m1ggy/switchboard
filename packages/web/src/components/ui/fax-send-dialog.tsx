@@ -23,7 +23,6 @@ import clsx from 'clsx';
 import { FileText, Loader2, Upload, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
-// Contact picker bits (copied style from SendMessageDialog)
 import {
   Command,
   CommandEmpty,
@@ -41,7 +40,7 @@ type FaxDialogProps = {
   onOpenChange: (open: boolean) => void;
   defaultTo?: string;
   defaultFromName?: string;
-  contactId?: string; // optional
+  contactId?: string;
 };
 
 type AttachedFile = {
@@ -62,44 +61,37 @@ export default function FaxSendDialog({
   const { activeNumber, activeCompany } = useMainStore();
   const trpc = useTRPC();
 
-  // Contact selection mode
   const [mode, setMode] = useState<'phone' | 'contact'>('phone');
   const [showCoverPreview, setShowCoverPreview] = useState(false);
 
   const isMobile = useIsMobile();
   const mobileMax = useMobileVh(55);
 
-  // Contacts for the picker
   const { data: contacts } = useQuery(
     trpc.contacts.getCompanyContacts.queryOptions({
       companyId: activeCompany?.id as string,
     })
   );
 
-  // Selected contact (if any)
   const [selectedContactId, setSelectedContactId] = useState<string | null>(
     null
   );
   const selectedContact = contacts?.find((c) => c.id === selectedContactId);
 
-  // Form state
   const [fromName, setFromName] = useState(defaultFromName);
   const [toName, setToName] = useState('');
   const [to, setTo] = useState('');
   const [subject, setSubject] = useState('');
 
-  // File state
   const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null);
   const [fileError, setFileError] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [isSending, setIsSending] = useState(false);
 
-  // Prefill `to` on first load from defaultTo
   useEffect(() => {
     if (!to && defaultTo) setTo(defaultTo);
   }, [defaultTo, to]);
 
-  // If a contactId prop is provided, try to preselect that contact (best-effort)
   useEffect(() => {
     if (!contacts || !contactId) return;
     const found = contacts.find((c) => c.id === contactId);
@@ -127,6 +119,7 @@ export default function FaxSendDialog({
       e.target.value = '';
       return;
     }
+
     const protectedPdf = await isPdfPasswordProtected(file);
     if (protectedPdf) {
       setFileError('Password-protected PDFs cannot be uploaded.');
@@ -150,6 +143,7 @@ export default function FaxSendDialog({
   };
 
   const removeFile = () => setAttachedFile(null);
+
   const formatFileSize = (bytes: number) =>
     `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 
@@ -166,7 +160,11 @@ export default function FaxSendDialog({
 
     try {
       const formData = new FormData();
-      if (attachedFile) formData.append('file', attachedFile.file);
+
+      if (attachedFile) {
+        formData.append('file', attachedFile.file);
+      }
+
       formData.append('to', to);
       formData.append('companyId', activeCompany?.id as string);
       formData.append('numberId', activeNumber?.id as string);
@@ -183,13 +181,39 @@ export default function FaxSendDialog({
       );
 
       const token = await auth.currentUser?.getIdToken();
+
       await fetch(`${import.meta.env.VITE_WEBSOCKET_URL}/fax/send`, {
         method: 'POST',
         body: formData,
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
 
-      // reset
+      const client = getQueryClient();
+      const targetContactId = contactId ?? selectedContactId ?? undefined;
+
+      if (targetContactId && activeNumber?.id) {
+        await client.invalidateQueries({
+          queryKey: trpc.inboxes.getActivityByContact.infiniteQueryOptions({
+            contactId: targetContactId,
+            numberId: activeNumber.id as string,
+          }).queryKey,
+        });
+      }
+
+      if (activeNumber?.id) {
+        await client.invalidateQueries({
+          queryKey: trpc.inboxes.getNumberInboxes.queryOptions({
+            numberId: activeNumber.id as string,
+          }).queryKey,
+        });
+
+        await client.invalidateQueries({
+          queryKey: trpc.inboxes.getUnreadInboxesCount.queryOptions({
+            numberId: activeNumber.id as string,
+          }).queryKey,
+        });
+      }
+
       setAttachedFile(null);
       setFromName('');
       setSubject('');
@@ -199,17 +223,6 @@ export default function FaxSendDialog({
       setMode('phone');
       setShowCoverPreview(false);
 
-      // Invalidate inbox activity if we have a contact context (prop or selected)
-      const client = getQueryClient();
-      const targetContactId = contactId ?? selectedContactId ?? undefined;
-      if (targetContactId && activeNumber?.id) {
-        client.invalidateQueries({
-          queryKey: trpc.inboxes.getActivityByContact.infiniteQueryOptions({
-            contactId: targetContactId,
-            numberId: activeNumber.id as string,
-          }).queryKey,
-        });
-      }
       toast.success('Fax queued');
       onOpenChange(false);
     } catch (e) {
@@ -242,9 +255,7 @@ export default function FaxSendDialog({
               ...(isMobile ? { maxHeight: mobileMax } : { maxHeight: '90vh' }),
             }}
           >
-            {/* Left column: Form fields */}
             <div className="space-y-4">
-              {/* Mode toggle, mobile-friendly */}
               <div className="flex gap-2">
                 <Button
                   type="button"
@@ -258,6 +269,7 @@ export default function FaxSendDialog({
                 >
                   Phone Number
                 </Button>
+
                 <Button
                   type="button"
                   size="sm"
@@ -269,7 +281,6 @@ export default function FaxSendDialog({
                 </Button>
               </div>
 
-              {/* Selected contact summary */}
               {selectedContactId && selectedContact && (
                 <div className="flex items-center justify-between text-xs sm:text-sm text-green-600 font-medium -mb-1 gap-2">
                   <span className="truncate">
@@ -292,7 +303,6 @@ export default function FaxSendDialog({
                 </div>
               )}
 
-              {/* To (Fax Number) */}
               <div className="grid gap-2">
                 <Label className="text-sm">To (Fax Number)</Label>
                 {mode === 'phone' ? (
@@ -374,6 +384,7 @@ export default function FaxSendDialog({
                   onChange={handleFileSelect}
                   className="hidden"
                 />
+
                 <div className="flex flex-col sm:flex-row gap-2">
                   <Button
                     type="button"
@@ -394,6 +405,7 @@ export default function FaxSendDialog({
                       </>
                     )}
                   </Button>
+
                   {attachedFile && (
                     <Button
                       type="button"

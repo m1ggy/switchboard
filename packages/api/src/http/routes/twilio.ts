@@ -246,8 +246,21 @@ async function routes(app: FastifyInstance) {
 
       // Existing outbound-to-PSTN behavior
       if (isOutboundToPSTN) {
-        response.say('Connecting your call...');
-        response.dial({ callerId }, To);
+        const selectedNumber = callerId
+          ? await NumbersRepository.findByNumber(callerId)
+          : null;
+
+        const safeCallerId = selectedNumber?.number ?? callerId;
+
+        const dial = response.dial({
+          callerId: safeCallerId,
+          answerOnBridge: true,
+          action: `${SERVER_DOMAIN}/twilio/voice/outbound-after-dial`,
+          method: 'POST',
+        });
+
+        dial.number(To);
+
         return reply.type('text/xml').send(response.toString());
       }
 
@@ -325,6 +338,48 @@ async function routes(app: FastifyInstance) {
       dial.client(agentIdentity);
 
       return reply.type('text/xml').status(200).send(response.toString());
+    }
+  );
+
+  app.post(
+    '/voice/outbound-after-dial',
+    { preHandler: verifyTwilioRequest },
+    async (req, reply) => {
+      const {
+        CallSid,
+        DialCallSid,
+        DialCallStatus,
+        DialBridged,
+        To,
+        From,
+        Called,
+        Caller,
+      } = req.body as Record<string, string>;
+
+      app.log.info(
+        {
+          CallSid,
+          DialCallSid,
+          DialCallStatus,
+          DialBridged,
+          To,
+          From,
+          Called,
+          Caller,
+          payload: req.body,
+        },
+        '[Outbound After Dial]'
+      );
+
+      const r = new twiml.VoiceResponse();
+
+      if (DialCallStatus === 'completed' || DialCallStatus === 'answered') {
+        return reply.type('text/xml').status(200).send(r.toString());
+      }
+
+      r.say('Sorry, the call could not be completed.');
+      r.hangup();
+      return reply.type('text/xml').status(200).send(r.toString());
     }
   );
 

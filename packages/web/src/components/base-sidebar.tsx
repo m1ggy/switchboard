@@ -11,6 +11,7 @@ import {
   Printer,
   Settings,
   UserPlus,
+  Video,
   type LucideProps,
 } from 'lucide-react';
 
@@ -34,6 +35,7 @@ import { useTRPC } from '@/lib/trpc';
 import { useQuery } from '@tanstack/react-query';
 import {
   useEffect,
+  useMemo,
   useState,
   type ForwardRefExoticComponent,
   type RefAttributes,
@@ -45,6 +47,7 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import FaxSendDialog from './ui/fax-send-dialog';
 import { Skeleton } from './ui/skeleton';
+import VideoCallDialog from './ui/video-call-dialog';
 
 // plan feature helper
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -58,6 +61,8 @@ type SidebarNavItem = {
     Omit<LucideProps, 'ref'> & RefAttributes<SVGSVGElement>
   >;
   onClick?: () => void;
+  restricted?: boolean;
+  feature?: Parameters<typeof hasFeature>[1];
 };
 
 // PWA: beforeinstallprompt event
@@ -106,12 +111,17 @@ const smsItems: SidebarNavItem[] = [
   },
 ];
 
-const callsItems = [
+const callsItems: SidebarNavItem[] = [
   {
     title: 'New Call',
     url: null,
     icon: PhoneIcon,
     onClick: () => useMainStore.getState().setDialerModalShown(true),
+  },
+  {
+    title: 'Video Call',
+    url: null,
+    icon: Video,
   },
   {
     title: 'Call History',
@@ -122,10 +132,11 @@ const callsItems = [
     title: 'Automated Calls',
     url: '/dashboard/automated-calls',
     icon: BotMessageSquare,
+    restricted: true,
   },
 ];
 
-const contactsItems = [
+const contactsItems: SidebarNavItem[] = [
   {
     title: 'Add Contact',
     url: null,
@@ -153,9 +164,36 @@ function BaseSidebar() {
   } = useMainStore();
 
   const [showFaxDialog, setShowFaxDialog] = useState(false);
+  const [showVideoCallDialog, setShowVideoCallDialog] = useState(false);
 
   const { data: userInfo } = useQuery(trpc.users.getUser.queryOptions());
-  const canFax = hasFeature(userInfo?.selected_plan as PlanName, 'fax');
+  const selectedPlan = userInfo?.selected_plan as PlanName | undefined;
+
+  const canFax = hasFeature(selectedPlan as PlanName, 'fax');
+  const canVideoCall = hasFeature(selectedPlan as PlanName, 'video_calls');
+
+  const filterRestrictedItems = (items: SidebarNavItem[]) =>
+    items.filter((item) => {
+      if (item.title === 'Video Call') return canVideoCall;
+      if (!item.restricted) return true;
+      if (!item.feature || !selectedPlan) return false;
+      return hasFeature(selectedPlan, item.feature);
+    });
+
+  const visibleSmsItems = useMemo(
+    () => filterRestrictedItems(smsItems),
+    [selectedPlan]
+  );
+
+  const visibleCallsItems = useMemo(
+    () => filterRestrictedItems(callsItems),
+    [selectedPlan, canVideoCall]
+  );
+
+  const visibleContactsItems = useMemo(
+    () => filterRestrictedItems(contactsItems),
+    [selectedPlan]
+  );
 
   const { data: companies, isFetching: companiesLoading } = useQuery({
     ...trpc.companies.getUserCompanies.queryOptions(),
@@ -232,7 +270,6 @@ function BaseSidebar() {
   const [installed, setInstalled] = useState<boolean>(isInstalled());
 
   useEffect(() => {
-    // Load any cached prompt immediately
     if (window.__deferredPrompt && !isInstalled()) {
       setDeferredPrompt(window.__deferredPrompt);
     }
@@ -242,6 +279,7 @@ function BaseSidebar() {
     ) => {
       setDeferredPrompt(e.detail.deferredPrompt);
     };
+
     const onInstalled = () => {
       setInstalled(true);
       setDeferredPrompt(null);
@@ -274,22 +312,27 @@ function BaseSidebar() {
     setDeferredPrompt(null);
     closeIfMobile();
   };
+
   useEffect(() => {
     if (!isInstalled() && window.__deferredPrompt) {
       setDeferredPrompt(window.__deferredPrompt);
     }
+
     const onAvailable = (
       e: CustomEvent<{ deferredPrompt: BeforeInstallPromptEvent }>
     ) => setDeferredPrompt(e.detail.deferredPrompt);
+
     const onInstalled = () => {
       setDeferredPrompt(null);
       setInstalled(true);
     };
+
     window.addEventListener(
       'pwa-install-available',
       onAvailable as EventListener
     );
     window.addEventListener('appinstalled', onInstalled);
+
     return () => {
       window.removeEventListener(
         'pwa-install-available',
@@ -304,13 +347,13 @@ function BaseSidebar() {
       <Sidebar>
         <SidebarContent className="overflow-x-hidden p-2">
           <SidebarHeader className="my-2 px-2">
-            <Skeleton className="w-[160px] h-[28px]" />
+            <Skeleton className="h-[28px] w-[160px]" />
           </SidebarHeader>
           <SidebarSeparator />
-          <Skeleton className="w-[200px] h-[20px] rounded-full" />
+          <Skeleton className="h-[20px] w-[200px] rounded-full" />
           <div className="mt-2 space-y-2">
-            <Skeleton className="w-full h-[36px]" />
-            <Skeleton className="w-full h-[36px]" />
+            <Skeleton className="h-[36px] w-full" />
+            <Skeleton className="h-[36px] w-full" />
           </div>
         </SidebarContent>
       </Sidebar>
@@ -325,7 +368,7 @@ function BaseSidebar() {
             <img
               src={`/calliya-${theme.theme}.png`}
               alt="Calliya"
-              className="w-[160px] h-auto object-contain"
+              className="h-auto w-[160px] object-contain"
             />
           </div>
         </SidebarHeader>
@@ -333,17 +376,17 @@ function BaseSidebar() {
         <SidebarSeparator />
 
         {companiesLoading ? (
-          <Skeleton className="w-[200px] h-[20px] rounded-full" />
+          <Skeleton className="h-[20px] w-[200px] rounded-full" />
         ) : (
           <div
-            className="flex hover:bg-accent rounded pl-3 pr-2 justify-between items-center cursor-pointer"
+            className="flex cursor-pointer items-center justify-between rounded pl-3 pr-2 hover:bg-accent"
             title="Change company"
             onClick={() => {
               setCompanySwitcherDialogShown(true);
               closeIfMobile();
             }}
           >
-            <p className="text-muted-foreground font-semibold">
+            <p className="font-semibold text-muted-foreground">
               {activeCompany?.name ?? 'No company'}
             </p>
             <ChevronsUpDown size={18} />
@@ -373,17 +416,17 @@ function BaseSidebar() {
         </SidebarMenu>
 
         {/* Messages */}
-        {smsItems.map((item) => (
+        {visibleSmsItems.map((item) => (
           <SidebarMenuItem key={item.title}>
             <SidebarMenuButton
               asChild
               isActive={location.pathname === item.url}
             >
               {item.url ? (
-                <Link to={item.url!} onClick={closeIfMobile}>
-                  <div className="flex items-center justify-between w-full">
+                <Link to={item.url} onClick={closeIfMobile}>
+                  <div className="flex w-full items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <item.icon className="w-4 h-4" />
+                      <item.icon className="h-4 w-4" />
                       <span>{item.title}</span>
                     </div>
                     {item.title === 'Inbox' &&
@@ -413,73 +456,92 @@ function BaseSidebar() {
         ))}
 
         {/* Calls */}
-        <SidebarGroup>
-          <SidebarGroupLabel>Calls</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {callsItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={location.pathname === item.url}
-                  >
-                    {item.url ? (
-                      <Link to={item.url}>
-                        <item.icon />
-                        <span>{item.title}</span>
-                      </Link>
-                    ) : item.onClick ? (
-                      <Button
-                        onClick={() => {
-                          item.onClick?.();
-                          closeIfMobile();
-                        }}
-                        className="cursor-pointer"
-                        variant="outline"
-                      >
-                        <item.icon />
-                        <span>{item.title}</span>
-                      </Button>
-                    ) : null}
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {visibleCallsItems.length > 0 && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Calls</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {visibleCallsItems.map((item) => (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname === item.url}
+                    >
+                      {item.url ? (
+                        <Link to={item.url} onClick={closeIfMobile}>
+                          <item.icon />
+                          <span>{item.title}</span>
+                        </Link>
+                      ) : item.title === 'Video Call' ? (
+                        <Button
+                          onClick={() => {
+                            setShowVideoCallDialog(true);
+                            closeIfMobile();
+                          }}
+                          className="cursor-pointer"
+                          variant="outline"
+                        >
+                          <Video />
+                          <span>Video Call</span>
+                        </Button>
+                      ) : item.onClick ? (
+                        <Button
+                          onClick={() => {
+                            item.onClick?.();
+                            closeIfMobile();
+                          }}
+                          className="cursor-pointer"
+                          variant="outline"
+                        >
+                          <item.icon />
+                          <span>{item.title}</span>
+                        </Button>
+                      ) : null}
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
 
         {/* Contacts */}
-        <SidebarGroup>
-          <SidebarGroupLabel>Contacts</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {contactsItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={location.pathname === item.url}
-                  >
-                    {item.url ? (
-                      <Link to={item.url}>
-                        <item.icon />
-                        <span>{item.title}</span>
-                      </Link>
-                    ) : item.onClick ? (
-                      <Button
-                        onClick={item.onClick}
-                        className=" cursor-pointer"
-                        variant={'outline'}
-                      >
-                        <item.icon />
-                        <span>{item.title}</span>
-                      </Button>
-                    ) : null}
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {visibleContactsItems.length > 0 && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Contacts</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {visibleContactsItems.map((item) => (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname === item.url}
+                    >
+                      {item.url ? (
+                        <Link to={item.url} onClick={closeIfMobile}>
+                          <item.icon />
+                          <span>{item.title}</span>
+                        </Link>
+                      ) : item.onClick ? (
+                        <Button
+                          onClick={() => {
+                            item.onClick?.();
+                            closeIfMobile();
+                          }}
+                          className="cursor-pointer"
+                          variant="outline"
+                        >
+                          <item.icon />
+                          <span>{item.title}</span>
+                        </Button>
+                      ) : null}
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
 
         {/* Fax */}
         {canFax && (
@@ -512,7 +574,6 @@ function BaseSidebar() {
             <SidebarGroupLabel>Account</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {/* Install App: only when not installed AND a prompt exists */}
                 {!installed && deferredPrompt && (
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild>
@@ -550,6 +611,11 @@ function BaseSidebar() {
         onOpenChange={setShowFaxDialog}
         contactId={undefined}
         defaultFromName={activeCompany?.name ?? ''}
+      />
+
+      <VideoCallDialog
+        open={showVideoCallDialog}
+        onOpenChange={setShowVideoCallDialog}
       />
     </Sidebar>
   );
