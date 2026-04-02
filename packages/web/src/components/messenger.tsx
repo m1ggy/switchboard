@@ -694,7 +694,6 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
       {/* COMPOSER (sticky + compact) */}
       <div
         className="
-    sticky bottom-0 z-10
     flex flex-col gap-1 px-3 py-2 items-stretch border-t bg-background
     md:pb-2 pb-[env(safe-area-inset-bottom)]
     w-full overflow-x-hidden
