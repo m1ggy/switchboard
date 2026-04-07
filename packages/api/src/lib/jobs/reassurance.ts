@@ -1,13 +1,13 @@
+import { TwilioClient } from '@/lib/twilio';
+import crypto from 'crypto';
+import type { FastifyInstance } from 'fastify';
+import cron from 'node-cron';
 // jobs/reassuranceCron.ts
 import { CallsRepository } from '@/db/repositories/calls';
 import { ContactsRepository } from '@/db/repositories/contacts';
 import { NumbersRepository } from '@/db/repositories/numbers';
 import { ReassuranceCallJobsRepository } from '@/db/repositories/reassurance_calls_jobs';
 import { ReassuranceSchedulesRepository } from '@/db/repositories/reassurance_schedules';
-import { TwilioClient } from '@/lib/twilio';
-import crypto from 'crypto';
-import type { FastifyInstance } from 'fastify';
-import cron from 'node-cron';
 import { getNextRunAtForSchedule } from './getNextRunAtForSchedule';
 
 const twilioClient = new TwilioClient(
@@ -111,7 +111,7 @@ async function seedUpcomingJobs(app: FastifyInstance) {
       try {
         if (!schedule.is_active) continue;
 
-        const nextRunAt = getNextRunAtForSchedule(schedule);
+        const nextRunAt = await getNextRunAtForSchedule(schedule);
 
         // FIX: enforce one active job per schedule; reschedule stale pending jobs
         await ensureNextJobForSchedule(app, schedule.id, nextRunAt);
@@ -405,7 +405,7 @@ export async function registerReassuranceCron(app: FastifyInstance) {
         // Seed the next run for this schedule:
         // FIX: enforce one active job per schedule; reschedule stale pending jobs
         try {
-          const nextRunAt = getNextRunAtForSchedule(schedule);
+          const nextRunAt = await getNextRunAtForSchedule(schedule);
           await ensureNextJobForSchedule(app, schedule.id, nextRunAt);
 
           app.log.info(

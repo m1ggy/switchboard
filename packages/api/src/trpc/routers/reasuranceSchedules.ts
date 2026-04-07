@@ -1,49 +1,10 @@
 import { ReassuranceCallJobsRepository } from '@/db/repositories/reassurance_calls_jobs';
 import { ReassuranceSchedulesRepository } from '@/db/repositories/reassurance_schedules';
+import { getNextRunAtForSchedule } from '@/lib/jobs/getNextRunAtForSchedule';
 import { ReassuranceCallSchedule } from '@/types/db';
 import crypto from 'crypto';
 import { z } from 'zod';
 import { protectedProcedure, t } from '../trpc';
-
-function getNextRunAtForSchedule(schedule: ReassuranceCallSchedule): Date {
-  const now = new Date();
-
-  // frequency_time is 'HH:MM' or 'HH:MM:SS' in UTC
-  const [hourStr, minuteStr, secondStr] = schedule.frequency_time.split(':');
-  const hour = parseInt(hourStr, 10) || 0;
-  const minute = parseInt(minuteStr ?? '0', 10) || 0;
-  const second = parseInt(secondStr ?? '0', 10) || 0;
-
-  // Build "today at HH:MM:SS" in UTC
-  let next = new Date(
-    Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
-      hour,
-      minute,
-      second,
-      0
-    )
-  );
-
-  // If that time today (UTC) is already past, schedule for tomorrow (UTC)
-  if (next <= now) {
-    next = new Date(
-      Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate() + 1,
-        hour,
-        minute,
-        second,
-        0
-      )
-    );
-  }
-
-  return next;
-}
 
 const scriptTypeEnum = z.enum(['template', 'custom']);
 const nameInScriptEnum = z.enum(['contact', 'caller']);
@@ -123,7 +84,7 @@ export const reassuranceSchedulesRouter = t.router({
         number_id: input.numberId,
       });
 
-      const runAt = getNextRunAtForSchedule(schedule);
+      const runAt = await getNextRunAtForSchedule(schedule);
 
       await ReassuranceCallJobsRepository.include({
         id: crypto.randomUUID() as string,
@@ -248,7 +209,7 @@ export const reassuranceSchedulesRouter = t.router({
         data.retryInterval !== undefined;
 
       if (timingFieldsTouched && updated.is_active) {
-        const runAt = getNextRunAtForSchedule(
+        const runAt = await getNextRunAtForSchedule(
           updated as ReassuranceCallSchedule
         );
 
@@ -289,7 +250,7 @@ export const reassuranceSchedulesRouter = t.router({
         await ReassuranceCallJobsRepository.findActiveForSchedule(schedule.id);
 
       if (!existing) {
-        const runAt = getNextRunAtForSchedule(schedule);
+        const runAt = await getNextRunAtForSchedule(schedule);
 
         await ReassuranceCallJobsRepository.include({
           id: crypto.randomUUID(),

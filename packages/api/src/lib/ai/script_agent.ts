@@ -50,21 +50,33 @@ export interface UserProfile {
   locale?: string;
 }
 
+export interface AppointmentReminderContext {
+  appointment_title?: string;
+  appointment_datetime?: string;
+  appointment_timezone?: string;
+  provider_name?: string;
+  provider_phone?: string;
+  location_name?: string;
+  location_address?: string;
+  notes?: string;
+  requires_confirmation?: boolean;
+}
+
 export interface CallContext {
   userProfile: UserProfile;
   lastCheckInSummary?: string;
   riskLevel?: 'low' | 'medium' | 'high';
 
-  // ✅ single switch
   callMode: CallMode;
 
-  // ✅ brand + callback
-  companyName?: string; // e.g. "Acme Health"
-  callbackNumber?: string; // e.g. "+1 (415) 555-1212"
+  companyName?: string;
+  callbackNumber?: string;
+
+  appointmentDetails?: AppointmentReminderContext;
 }
 
 /**
- * Strict JSON schema (unchanged except intent enum)
+ * Strict JSON schema
  */
 const scriptPayloadSchema = {
   name: 'ScriptPayload',
@@ -138,7 +150,6 @@ const scriptPayloadSchema = {
   },
 };
 
-// ✅ helper: ensures consistent “recite digits”
 function toSpokenDigits(phone: string | undefined | null): string {
   const raw = (phone ?? '').trim();
   if (!raw) return '';
@@ -151,6 +162,14 @@ function toSpokenDigits(phone: string | undefined | null): string {
   return hasPlus ? `plus ${spaced}` : spaced;
 }
 
+function safeLine(label: string, value: unknown): string {
+  const text =
+    value === null || value === undefined || value === ''
+      ? '(none)'
+      : String(value);
+  return `${label}: ${text}`;
+}
+
 export class ScriptGeneratorAgent {
   constructor(
     private openai: OpenAIClient,
@@ -159,7 +178,12 @@ export class ScriptGeneratorAgent {
 
   // ---------------- OPENING ----------------
   async generateOpeningScript(context: CallContext): Promise<ScriptPayload> {
-    const { userProfile, riskLevel = 'low', callMode } = context;
+    const {
+      userProfile,
+      riskLevel = 'low',
+      callMode,
+      appointmentDetails,
+    } = context;
 
     const calleeName = userProfile.preferredName ?? userProfile.name ?? 'there';
     const companyName = context.companyName ?? 'our team';
@@ -196,16 +220,39 @@ export class ScriptGeneratorAgent {
           `If callMode="appointment_reminder":`,
           `- Purpose must be "a quick appointment reminder".`,
           `- Mention they have an upcoming appointment.`,
+          `- If appointment details are provided in context, use them naturally and briefly.`,
+          `- Prefer mentioning appointment title and provider name if available.`,
+          `- Mention date/time only if provided in context and keep it short.`,
           `- Ask them to confirm if they can make it, or if they need to reschedule.`,
-          `- Do NOT include sensitive details unless provided in context.`,
+          `- Do NOT invent appointment details.`,
+          `- Do NOT include overly sensitive medical detail.`,
           ``,
           `If callMode="reassurance":`,
           `- Purpose must be "a quick reassurance check-in".`,
           ``,
-          `Company name: ${companyName}`,
-          `User name (callee): ${calleeName}`,
-          `Locale: ${userProfile.locale ?? 'Unknown'}`,
-          `Risk level: ${riskLevel}`,
+          safeLine(`Company name`, companyName),
+          safeLine(`User name (callee)`, calleeName),
+          safeLine(`Locale`, userProfile.locale ?? 'Unknown'),
+          safeLine(`Risk level`, riskLevel),
+          ``,
+          `Appointment details (only relevant when callMode="appointment_reminder"):`,
+          safeLine(`appointment_title`, appointmentDetails?.appointment_title),
+          safeLine(
+            `appointment_datetime`,
+            appointmentDetails?.appointment_datetime
+          ),
+          safeLine(
+            `appointment_timezone`,
+            appointmentDetails?.appointment_timezone
+          ),
+          safeLine(`provider_name`, appointmentDetails?.provider_name),
+          safeLine(`provider_phone`, appointmentDetails?.provider_phone),
+          safeLine(`location_name`, appointmentDetails?.location_name),
+          safeLine(`location_address`, appointmentDetails?.location_address),
+          safeLine(
+            `requires_confirmation`,
+            appointmentDetails?.requires_confirmation
+          ),
           ``,
           `Emergency rules:`,
           `- Always populate handoffSignal.`,
@@ -215,6 +262,7 @@ export class ScriptGeneratorAgent {
           `- 1–2 short segments.`,
           `- Simple spoken language.`,
           `- No emojis.`,
+          `- No bullet points.`,
         ].join('\n'),
       },
     ];
@@ -223,7 +271,7 @@ export class ScriptGeneratorAgent {
       input,
       schema: scriptPayloadSchema,
       temperature: 0.6,
-      maxOutputTokens: 240,
+      maxOutputTokens: 260,
     });
   }
 
@@ -231,10 +279,10 @@ export class ScriptGeneratorAgent {
   async generateFollowupScript(params: {
     context: CallContext;
     lastUserUtterance: string;
-    runningSummary?: string; // ✅ allow existing caller signature; not required
+    runningSummary?: string;
   }): Promise<ScriptPayload> {
-    const { context, lastUserUtterance } = params;
-    const { callMode, riskLevel = 'low' } = context;
+    const { context, lastUserUtterance, runningSummary } = params;
+    const { callMode, riskLevel = 'low', appointmentDetails } = context;
 
     const expectedIntent: ScriptIntent =
       callMode === 'medication_reminder'
@@ -242,6 +290,9 @@ export class ScriptGeneratorAgent {
         : callMode === 'appointment_reminder'
           ? 'appointment_reminder'
           : 'followup';
+
+    const callbackNumber = context.callbackNumber ?? '';
+    const callbackSpokenDigits = toSpokenDigits(callbackNumber);
 
     const input: SimpleMessage[] = [
       { role: 'system', content: this.systemInstructions },
@@ -263,8 +314,10 @@ export class ScriptGeneratorAgent {
           ``,
           `If callMode="appointment_reminder":`,
           `- If the user confirms, thank them and prepare to end the call.`,
-          `- If they need to reschedule/cancel, acknowledge and give callback instructions (if available).`,
-          `- Keep it brief; do NOT ask many questions.`,
+          `- If they need to reschedule or cancel, acknowledge that and direct them to call back if a callback number is available.`,
+          `- If callbackSpokenDigits exists, use it exactly as provided if you mention the number.`,
+          `- Keep it very brief; do NOT ask many questions.`,
+          `- Do NOT invent appointment details.`,
           ``,
           `If callMode="reassurance":`,
           `- Ask a short, supportive follow-up question.`,
@@ -273,7 +326,28 @@ export class ScriptGeneratorAgent {
           `User said:`,
           lastUserUtterance,
           ``,
-          `Risk level: ${riskLevel}`,
+          safeLine(`Risk level`, riskLevel),
+          safeLine(`Callback number (raw)`, callbackNumber || '(none)'),
+          safeLine(
+            `Callback number (spoken digits)`,
+            callbackSpokenDigits || '(none)'
+          ),
+          ``,
+          `Appointment details (only relevant when callMode="appointment_reminder"):`,
+          safeLine(`appointment_title`, appointmentDetails?.appointment_title),
+          safeLine(
+            `appointment_datetime`,
+            appointmentDetails?.appointment_datetime
+          ),
+          safeLine(
+            `appointment_timezone`,
+            appointmentDetails?.appointment_timezone
+          ),
+          safeLine(`provider_name`, appointmentDetails?.provider_name),
+          safeLine(`location_name`, appointmentDetails?.location_name),
+          ``,
+          `Running summary so far (may be empty):`,
+          runningSummary ?? 'No summary.',
           ``,
           `Emergency rules:`,
           `- Always return handoffSignal.`,
@@ -282,6 +356,7 @@ export class ScriptGeneratorAgent {
           `Response rules:`,
           `- 1 short segment preferred.`,
           `- Never more than 2 segments.`,
+          `- No emojis.`,
         ].join('\n'),
       },
     ];
@@ -290,7 +365,7 @@ export class ScriptGeneratorAgent {
       input,
       schema: scriptPayloadSchema,
       temperature: 0.6,
-      maxOutputTokens: 220,
+      maxOutputTokens: 240,
     });
   }
 
@@ -300,7 +375,12 @@ export class ScriptGeneratorAgent {
     runningSummary?: string;
   }): Promise<ScriptPayload> {
     const { context, runningSummary } = params;
-    const { userProfile, callMode, riskLevel = 'low' } = context;
+    const {
+      userProfile,
+      callMode,
+      riskLevel = 'low',
+      appointmentDetails,
+    } = context;
 
     const expectedIntent: ScriptIntent =
       callMode === 'medication_reminder'
@@ -328,13 +408,25 @@ export class ScriptGeneratorAgent {
           `- Before ending, ask the callee if they need anything else at all.`,
           `- If a callbackNumber is provided, tell them to call it and recite it as spoken digits.`,
           `- If callbackSpokenDigits is empty, do NOT invent a number; omit the callback instruction.`,
+          `- For appointment reminder closings, do not restate a long list of appointment details.`,
           ``,
-          `Company name: ${companyName}`,
-          `Callback number (raw): ${callbackNumber || '(none)'}`,
-          `Callback number (spoken digits, must be verbatim if used): ${callbackSpokenDigits || '(none)'}`,
+          safeLine(`Company name`, companyName),
+          safeLine(`Callback number (raw)`, callbackNumber || '(none)'),
+          safeLine(
+            `Callback number (spoken digits, must be verbatim if used)`,
+            callbackSpokenDigits || '(none)'
+          ),
           ``,
-          `User name: ${userProfile.preferredName ?? 'there'}`,
-          `Risk level: ${riskLevel}`,
+          safeLine(`User name`, userProfile.preferredName ?? 'there'),
+          safeLine(`Risk level`, riskLevel),
+          ``,
+          `Appointment details (only relevant when callMode="appointment_reminder"):`,
+          safeLine(`appointment_title`, appointmentDetails?.appointment_title),
+          safeLine(`provider_name`, appointmentDetails?.provider_name),
+          safeLine(
+            `appointment_datetime`,
+            appointmentDetails?.appointment_datetime
+          ),
           ``,
           `Call summary so far (may be empty):`,
           `${runningSummary ?? 'No summary.'}`,
@@ -355,7 +447,7 @@ export class ScriptGeneratorAgent {
       input,
       schema: scriptPayloadSchema,
       temperature: 0.5,
-      maxOutputTokens: 170,
+      maxOutputTokens: 190,
     });
   }
 }
@@ -375,9 +467,12 @@ Medication reminder rules:
 - Ask for confirmation in simple terms.
 
 Appointment reminder rules:
-- Remind the person about an upcoming appointment (without sensitive details unless given).
+- Remind the person about an upcoming appointment.
+- If appointment details are provided in context, you may briefly mention the appointment title, provider name, or time.
+- Do NOT invent appointment details.
+- Do NOT include overly sensitive medical detail.
 - Ask if they can confirm attendance or need to reschedule.
-- If rescheduling is needed, direct them to call back (if callbackNumber exists).
+- If rescheduling is needed, direct them to call back if callbackNumber exists.
 - Keep it short and end the call after a single exchange.
 
 Safety:

@@ -49,7 +49,6 @@ export default function CreateDialog({
   const isAllComplete =
     isContactComplete && isProfileComplete && isScheduleComplete;
 
-  // ✅ TRPC + React Query pattern
   const trpc = useTRPC();
   const queryClient = getQueryClient();
   const { activeCompany, activeNumber } = useMainStore();
@@ -66,26 +65,16 @@ export default function CreateDialog({
     })
   );
 
-  /**
-   * ✅ createContactFull endpoint
-   */
   const { mutateAsync: createContactFull, isPending: contactCreationLoading } =
     useMutation(
       trpc.reassuranceContactProfiles.createContactFull.mutationOptions({
         onSuccess: async () => {
-          /**
-           * ✅ invalidate contacts list
-           */
           await queryClient.invalidateQueries({
             queryKey: trpc.contacts.getCompanyContacts.queryOptions({
               companyId: activeCompany?.id as string,
             }).queryKey,
           });
 
-          /**
-           * ✅ invalidate new "profiles + schedules" list
-           * This is what your dashboard uses now
-           */
           await queryClient.invalidateQueries({
             queryKey:
               trpc.reassuranceContactProfiles.getAllWithSchedulesByCompanyId.queryOptions(
@@ -95,7 +84,6 @@ export default function CreateDialog({
               ).queryKey,
           });
 
-          // optional refetches
           await refetchContacts();
           await refetchInboxes();
 
@@ -122,6 +110,7 @@ export default function CreateDialog({
     setSelectedSchedule(scheduleData);
     setActiveTab('summary');
   };
+
   const handleFinalSubmit = async () => {
     if (!selectedContact || !selectedProfile || !selectedSchedule) return;
 
@@ -155,16 +144,15 @@ export default function CreateDialog({
         companyId: activeCompany.id,
 
         profile: {
-          preferred_name: selectedProfile.preferred_name ?? null,
+          preferredName: selectedProfile.preferred_name ?? null,
           timezone: selectedProfile.timezone ?? null,
           locale: selectedProfile.locale ?? null,
-          medical_notes: selectedProfile.medical_notes ?? null,
+          medicalNotes: selectedProfile.medical_notes ?? null,
           goals: selectedProfile.goals ?? null,
-          risk_flags: selectedProfile.risk_flags ?? null,
+          riskFlags: selectedProfile.risk_flags ?? null,
         },
 
         schedule: {
-          // ✅ required by backend
           name: selectedSchedule.name,
           frequency: selectedSchedule.frequency,
           frequency_time: selectedSchedule.frequency_time,
@@ -182,7 +170,6 @@ export default function CreateDialog({
           script_type: selectedSchedule.script_type,
           name_in_script: selectedSchedule.name_in_script,
 
-          // ✅ optional
           caller_name: selectedSchedule.caller_name ?? null,
           template:
             selectedSchedule.script_type === 'template'
@@ -193,19 +180,47 @@ export default function CreateDialog({
               ? (selectedSchedule.script_content ?? null)
               : null,
 
+          appointmentDetails:
+            selectedSchedule.script_type === 'template' &&
+            selectedSchedule.template === 'appointment'
+              ? {
+                  appointment_title:
+                    selectedSchedule.appointmentDetails?.appointment_title ??
+                    '',
+                  appointment_datetime:
+                    selectedSchedule.appointmentDetails?.appointment_datetime ??
+                    '',
+                  appointment_timezone:
+                    selectedSchedule.appointmentDetails?.appointment_timezone ??
+                    '',
+                  provider_name:
+                    selectedSchedule.appointmentDetails?.provider_name ?? null,
+                  provider_phone:
+                    selectedSchedule.appointmentDetails?.provider_phone ?? null,
+                  location_name:
+                    selectedSchedule.appointmentDetails?.location_name ?? null,
+                  location_address:
+                    selectedSchedule.appointmentDetails?.location_address ??
+                    null,
+                  notes: selectedSchedule.appointmentDetails?.notes ?? null,
+                  reminder_offset_minutes:
+                    selectedSchedule.appointmentDetails
+                      ?.reminder_offset_minutes ?? 60,
+                  requires_confirmation:
+                    selectedSchedule.appointmentDetails
+                      ?.requires_confirmation ?? true,
+                }
+              : null,
+
           frequency_days: computed_frequency_days,
 
-          // ✅ retry settings
           calls_per_day: selectedSchedule.calls_per_day,
           max_attempts: selectedSchedule.max_attempts,
           retry_interval: selectedSchedule.retry_interval,
 
-          // ✅ required
           number_id: activeNumber.id,
         },
       };
-
-      console.log('[CreateDialog] Submitting payload:', payload);
 
       await createContactFull(payload);
     } finally {
@@ -222,7 +237,6 @@ export default function CreateDialog({
   };
 
   return (
-    // ✅ IMPORTANT: Don't call handleClose on every open change (this wipes state)
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="!w-[95vw] !max-w-[1400px] max-h-[90vh] overflow-y-auto flex flex-col">
         <div className="p-6 flex flex-col flex-1 overflow-hidden">
@@ -234,7 +248,6 @@ export default function CreateDialog({
           </DialogHeader>
 
           <div className="grid gap-8 grid-cols-1 md:grid-cols-[240px_1fr] flex-1 overflow-hidden mt-6 min-w-0">
-            {/* Sidebar */}
             <div className="space-y-3">
               <h3 className="font-semibold text-sm">Setup Progress</h3>
 
@@ -292,7 +305,6 @@ export default function CreateDialog({
               </div>
             </div>
 
-            {/* Right side */}
             <div className="min-w-0 overflow-hidden">
               <Tabs
                 value={activeTab}
@@ -338,9 +350,10 @@ export default function CreateDialog({
                     value="schedule"
                     className="space-y-6 mt-4 min-w-0"
                   >
-                    {selectedContact && (
+                    {selectedContact && activeNumber?.id && (
                       <ScheduleForm
                         contactId={selectedContact.id || ''}
+                        numberId={activeNumber.id}
                         initialData={selectedSchedule}
                         onSubmit={handleScheduleSubmit}
                         onCancel={handleClose}
@@ -460,6 +473,15 @@ export default function CreateDialog({
                             </p>
                           </div>
 
+                          <div>
+                            <p className="text-sm text-muted-foreground">
+                              Template
+                            </p>
+                            <p className="font-medium capitalize">
+                              {selectedSchedule?.template || 'Custom'}
+                            </p>
+                          </div>
+
                           {selectedSchedule?.selected_days && (
                             <div className="col-span-2">
                               <p className="text-sm text-muted-foreground">
@@ -472,6 +494,118 @@ export default function CreateDialog({
                           )}
                         </div>
                       </Card>
+
+                      {selectedSchedule?.template === 'appointment' &&
+                        selectedSchedule?.appointmentDetails && (
+                          <Card className="p-4">
+                            <h3 className="font-semibold mb-3">
+                              Appointment Details
+                            </h3>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <p className="text-sm text-muted-foreground">
+                                  Title
+                                </p>
+                                <p className="font-medium">
+                                  {
+                                    selectedSchedule.appointmentDetails
+                                      .appointment_title
+                                  }
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-sm text-muted-foreground">
+                                  Appointment Date & Time
+                                </p>
+                                <p className="font-medium">
+                                  {
+                                    selectedSchedule.appointmentDetails
+                                      .appointment_datetime
+                                  }
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-sm text-muted-foreground">
+                                  Timezone
+                                </p>
+                                <p className="font-medium">
+                                  {
+                                    selectedSchedule.appointmentDetails
+                                      .appointment_timezone
+                                  }
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-sm text-muted-foreground">
+                                  Reminder Offset
+                                </p>
+                                <p className="font-medium">
+                                  {
+                                    selectedSchedule.appointmentDetails
+                                      .reminder_offset_minutes
+                                  }{' '}
+                                  minutes
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-sm text-muted-foreground">
+                                  Provider Name
+                                </p>
+                                <p className="font-medium">
+                                  {selectedSchedule.appointmentDetails
+                                    .provider_name || '-'}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-sm text-muted-foreground">
+                                  Provider Phone
+                                </p>
+                                <p className="font-medium">
+                                  {selectedSchedule.appointmentDetails
+                                    .provider_phone || '-'}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-sm text-muted-foreground">
+                                  Location Name
+                                </p>
+                                <p className="font-medium">
+                                  {selectedSchedule.appointmentDetails
+                                    .location_name || '-'}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-sm text-muted-foreground">
+                                  Location Address
+                                </p>
+                                <p className="font-medium">
+                                  {selectedSchedule.appointmentDetails
+                                    .location_address || '-'}
+                                </p>
+                              </div>
+                              <div className="col-span-2">
+                                <p className="text-sm text-muted-foreground">
+                                  Notes
+                                </p>
+                                <p className="font-medium">
+                                  {selectedSchedule.appointmentDetails.notes ||
+                                    '-'}
+                                </p>
+                              </div>
+                              <div className="col-span-2">
+                                <p className="text-sm text-muted-foreground">
+                                  Requires Confirmation
+                                </p>
+                                <p className="font-medium">
+                                  {selectedSchedule.appointmentDetails
+                                    .requires_confirmation
+                                    ? 'Yes'
+                                    : 'No'}
+                                </p>
+                              </div>
+                            </div>
+                          </Card>
+                        )}
                     </div>
 
                     <div className="flex gap-2 justify-end pt-4 border-t">

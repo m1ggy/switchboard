@@ -25,8 +25,16 @@ const frequencies = [
   'monthly',
   'custom',
 ] as const;
+
 const scriptTypes = ['template', 'custom'] as const;
-const templates = ['wellness', 'safety', 'medication', 'social'] as const;
+
+const templates = [
+  'wellness',
+  'safety',
+  'medication',
+  'social',
+  'appointment',
+] as const;
 
 const days = [
   'Monday',
@@ -79,7 +87,8 @@ export default function ScheduleForm({
       | 'wellness'
       | 'safety'
       | 'medication'
-      | 'social',
+      | 'social'
+      | 'appointment',
 
     script_content: initialData?.script_content || '',
     name_in_script: (initialData?.name_in_script || 'contact') as
@@ -99,7 +108,6 @@ export default function ScheduleForm({
     selected_days: (initialData?.selected_days?.length
       ? initialData.selected_days
       : ['Monday', 'Wednesday', 'Friday']) as (typeof days)[number][],
-
     calls_per_day: initialData?.calls_per_day || 1,
     max_attempts: initialData?.max_attempts || 3,
     retry_interval: initialData?.retry_interval || 15,
@@ -109,6 +117,24 @@ export default function ScheduleForm({
 
     is_active:
       initialData?.is_active !== undefined ? initialData.is_active : true,
+
+    appointmentDetails: {
+      appointment_title:
+        initialData?.appointmentDetails?.appointment_title || '',
+      appointment_datetime:
+        initialData?.appointmentDetails?.appointment_datetime || '',
+      appointment_timezone:
+        initialData?.appointmentDetails?.appointment_timezone || '',
+      provider_name: initialData?.appointmentDetails?.provider_name || '',
+      provider_phone: initialData?.appointmentDetails?.provider_phone || '',
+      location_name: initialData?.appointmentDetails?.location_name || '',
+      location_address: initialData?.appointmentDetails?.location_address || '',
+      notes: initialData?.appointmentDetails?.notes || '',
+      reminder_offset_minutes:
+        initialData?.appointmentDetails?.reminder_offset_minutes ?? 60,
+      requires_confirmation:
+        initialData?.appointmentDetails?.requires_confirmation ?? true,
+    },
   });
 
   const clearError = (field: string) => {
@@ -124,6 +150,12 @@ export default function ScheduleForm({
   const showCustomDays = useMemo(() => {
     return formData.frequency === 'custom';
   }, [formData.frequency]);
+
+  const showAppointmentFields = useMemo(() => {
+    return (
+      formData.script_type === 'template' && formData.template === 'appointment'
+    );
+  }, [formData.script_type, formData.template]);
 
   const toggleDay = (day: (typeof days)[number]) => {
     setFormData((prev) => ({
@@ -149,10 +181,13 @@ export default function ScheduleForm({
 
     return {
       contact_id: formData.contact_id,
+      number_id: formData.number_id,
+
       name: formData.name,
       caller_name: formData.caller_name || null,
 
       script_type: formData.script_type,
+      template: formData.script_type === 'template' ? formData.template : null,
       script_content:
         formData.script_type === 'custom' ? formData.script_content : null,
 
@@ -174,6 +209,27 @@ export default function ScheduleForm({
       emergency_contact_phone: formData.emergency_contact_phone || null,
 
       is_active: formData.is_active,
+
+      appointmentDetails: showAppointmentFields
+        ? {
+            appointment_title:
+              formData.appointmentDetails.appointment_title || '',
+            appointment_datetime:
+              formData.appointmentDetails.appointment_datetime || '',
+            appointment_timezone:
+              formData.appointmentDetails.appointment_timezone || '',
+            provider_name: formData.appointmentDetails.provider_name || null,
+            provider_phone: formData.appointmentDetails.provider_phone || null,
+            location_name: formData.appointmentDetails.location_name || null,
+            location_address:
+              formData.appointmentDetails.location_address || null,
+            notes: formData.appointmentDetails.notes || null,
+            reminder_offset_minutes:
+              formData.appointmentDetails.reminder_offset_minutes,
+            requires_confirmation:
+              formData.appointmentDetails.requires_confirmation,
+          }
+        : null,
     };
   };
 
@@ -193,8 +249,6 @@ export default function ScheduleForm({
           const fieldName = error.path.join('.');
           fieldErrors[fieldName] = error.message;
         });
-
-        console.log(fieldErrors);
         setErrors(fieldErrors);
       }
     } finally {
@@ -214,7 +268,6 @@ export default function ScheduleForm({
         </Alert>
       )}
 
-      {/* Schedule Name + Caller */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label htmlFor="name">Schedule Name</Label>
@@ -261,17 +314,19 @@ export default function ScheduleForm({
         </div>
       </div>
 
-      {/* Script Settings */}
       <Card className="p-4 bg-muted/50">
         <h3 className="font-semibold mb-4">Script Settings</h3>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-2">
             <Label>Script Type</Label>
             <Select
               value={formData.script_type}
               onValueChange={(value: any) => {
-                setFormData((prev) => ({ ...prev, script_type: value }));
+                setFormData((prev) => ({
+                  ...prev,
+                  script_type: value,
+                }));
                 clearError('script_type');
               }}
             >
@@ -294,6 +349,43 @@ export default function ScheduleForm({
             </Select>
           </div>
 
+          {formData.script_type === 'template' && (
+            <div className="space-y-2">
+              <Label>Template</Label>
+              <Select
+                value={formData.template}
+                onValueChange={(value: any) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    template: value,
+                  }));
+                  clearError('template');
+                  clearError('appointmentDetails');
+                }}
+              >
+                <SelectTrigger
+                  className={
+                    errors.template
+                      ? 'border-destructive focus:ring-destructive'
+                      : ''
+                  }
+                >
+                  <SelectValue placeholder="Select template" />
+                </SelectTrigger>
+                <SelectContent>
+                  {templates.map((template) => (
+                    <SelectItem key={template} value={template}>
+                      {template.charAt(0).toUpperCase() + template.slice(1)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {errors.template && (
+                <p className="text-sm text-destructive">{errors.template}</p>
+              )}
+            </div>
+          )}
+
           <div className="space-y-2">
             <Label>Name Usage in Script</Label>
             <Select
@@ -313,9 +405,238 @@ export default function ScheduleForm({
             </Select>
           </div>
         </div>
+
+        {formData.script_type === 'custom' && (
+          <div className="space-y-2 mt-4">
+            <Label>Custom Script</Label>
+            <textarea
+              className="w-full min-h-[120px] rounded-md border bg-background px-3 py-2 text-sm"
+              value={formData.script_content}
+              onChange={(e) => {
+                setFormData((prev) => ({
+                  ...prev,
+                  script_content: e.target.value,
+                }));
+                clearError('script_content');
+              }}
+            />
+            {errors.script_content && (
+              <p className="text-sm text-destructive">
+                {errors.script_content}
+              </p>
+            )}
+          </div>
+        )}
       </Card>
 
-      {/* Frequency */}
+      {showAppointmentFields && (
+        <Card className="p-4 bg-muted/50">
+          <h3 className="font-semibold mb-4">Appointment Details</h3>
+
+          {errors.appointmentDetails && (
+            <p className="text-sm text-destructive mb-3">
+              {errors.appointmentDetails}
+            </p>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Appointment Title</Label>
+              <Input
+                value={formData.appointmentDetails.appointment_title}
+                onChange={(e) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    appointmentDetails: {
+                      ...prev.appointmentDetails,
+                      appointment_title: e.target.value,
+                    },
+                  }));
+                  clearError('appointmentDetails.appointment_title');
+                }}
+              />
+              {errors['appointmentDetails.appointment_title'] && (
+                <p className="text-sm text-destructive">
+                  {errors['appointmentDetails.appointment_title']}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Appointment Date & Time</Label>
+              <Input
+                type="datetime-local"
+                value={formData.appointmentDetails.appointment_datetime}
+                onChange={(e) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    appointmentDetails: {
+                      ...prev.appointmentDetails,
+                      appointment_datetime: e.target.value,
+                    },
+                  }));
+                  clearError('appointmentDetails.appointment_datetime');
+                }}
+              />
+              {errors['appointmentDetails.appointment_datetime'] && (
+                <p className="text-sm text-destructive">
+                  {errors['appointmentDetails.appointment_datetime']}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Appointment Timezone</Label>
+              <Input
+                placeholder="e.g., America/Chicago"
+                value={formData.appointmentDetails.appointment_timezone}
+                onChange={(e) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    appointmentDetails: {
+                      ...prev.appointmentDetails,
+                      appointment_timezone: e.target.value,
+                    },
+                  }));
+                  clearError('appointmentDetails.appointment_timezone');
+                }}
+              />
+              {errors['appointmentDetails.appointment_timezone'] && (
+                <p className="text-sm text-destructive">
+                  {errors['appointmentDetails.appointment_timezone']}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Reminder Offset (minutes)</Label>
+              <Input
+                type="number"
+                min="0"
+                value={formData.appointmentDetails.reminder_offset_minutes}
+                onChange={(e) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    appointmentDetails: {
+                      ...prev.appointmentDetails,
+                      reminder_offset_minutes: Number.parseInt(
+                        e.target.value || '0'
+                      ),
+                    },
+                  }));
+                  clearError('appointmentDetails.reminder_offset_minutes');
+                }}
+              />
+              {errors['appointmentDetails.reminder_offset_minutes'] && (
+                <p className="text-sm text-destructive">
+                  {errors['appointmentDetails.reminder_offset_minutes']}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Provider Name</Label>
+              <Input
+                value={formData.appointmentDetails.provider_name}
+                onChange={(e) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    appointmentDetails: {
+                      ...prev.appointmentDetails,
+                      provider_name: e.target.value,
+                    },
+                  }));
+                }}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Provider Phone</Label>
+              <Input
+                type="tel"
+                value={formData.appointmentDetails.provider_phone}
+                onChange={(e) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    appointmentDetails: {
+                      ...prev.appointmentDetails,
+                      provider_phone: e.target.value,
+                    },
+                  }));
+                }}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Location Name</Label>
+              <Input
+                value={formData.appointmentDetails.location_name}
+                onChange={(e) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    appointmentDetails: {
+                      ...prev.appointmentDetails,
+                      location_name: e.target.value,
+                    },
+                  }));
+                }}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Location Address</Label>
+              <Input
+                value={formData.appointmentDetails.location_address}
+                onChange={(e) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    appointmentDetails: {
+                      ...prev.appointmentDetails,
+                      location_address: e.target.value,
+                    },
+                  }));
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2 mt-4">
+            <Label>Notes</Label>
+            <textarea
+              className="w-full min-h-[100px] rounded-md border bg-background px-3 py-2 text-sm"
+              value={formData.appointmentDetails.notes}
+              onChange={(e) => {
+                setFormData((prev) => ({
+                  ...prev,
+                  appointmentDetails: {
+                    ...prev.appointmentDetails,
+                    notes: e.target.value,
+                  },
+                }));
+              }}
+            />
+          </div>
+
+          <div className="flex items-center gap-2 mt-4">
+            <input
+              type="checkbox"
+              checked={formData.appointmentDetails.requires_confirmation}
+              onChange={(e) => {
+                setFormData((prev) => ({
+                  ...prev,
+                  appointmentDetails: {
+                    ...prev.appointmentDetails,
+                    requires_confirmation: e.target.checked,
+                  },
+                }));
+              }}
+              className="w-4 h-4 rounded border-border"
+            />
+            <Label>Requires Confirmation</Label>
+          </div>
+        </Card>
+      )}
+
       <Card className="p-4 bg-muted/50">
         <h3 className="font-semibold mb-1">Schedule Frequency</h3>
         <p className="text-sm text-muted-foreground mb-4">
@@ -328,13 +649,16 @@ export default function ScheduleForm({
             <Select
               value={formData.frequency}
               onValueChange={(value: any) => {
-                setFormData((prev) => ({ ...prev, frequency: value }));
-                clearError('frequency');
+                setFormData((prev) => {
+                  const next = { ...prev, frequency: value };
 
-                // defaults
-                if (value === 'custom') {
-                  setFormData((prev) => ({ ...prev, frequency_days: 7 }));
-                }
+                  if (value === 'custom') {
+                    next.frequency_days = 7;
+                  }
+
+                  return next;
+                });
+                clearError('frequency');
               }}
             >
               <SelectTrigger>
@@ -377,7 +701,6 @@ export default function ScheduleForm({
           </div>
         </div>
 
-        {/* Custom days between */}
         {showCustomDays && (
           <div className="space-y-2 mt-4">
             <Label>Days Between Calls</Label>
@@ -407,7 +730,6 @@ export default function ScheduleForm({
           </div>
         )}
 
-        {/* Weekly + Biweekly day picker */}
         {showDayPicker && (
           <div className="space-y-3 mt-4">
             <Label>Select Days</Label>
@@ -444,7 +766,6 @@ export default function ScheduleForm({
         )}
       </Card>
 
-      {/* Call Settings */}
       <Card className="p-4 bg-muted/50">
         <h3 className="font-semibold mb-4">Call Settings</h3>
 
@@ -499,7 +820,6 @@ export default function ScheduleForm({
         </div>
       </Card>
 
-      {/* Emergency Contact */}
       <Card className="p-4 bg-muted/50">
         <h3 className="font-semibold mb-4">Emergency Contact</h3>
 
@@ -535,7 +855,6 @@ export default function ScheduleForm({
         </div>
       </Card>
 
-      {/* Active */}
       <div className="flex items-center space-x-2">
         <input
           type="checkbox"
@@ -549,7 +868,6 @@ export default function ScheduleForm({
         <Label className="cursor-pointer">Schedule is Active</Label>
       </div>
 
-      {/* Buttons */}
       <div className="flex gap-2 justify-end">
         <Button type="button" variant="outline" onClick={onCancel}>
           Cancel

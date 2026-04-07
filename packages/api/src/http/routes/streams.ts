@@ -2,6 +2,9 @@
 // UPDATED: fixes medication reminder cutoff by (1) moving med speech into endCallFlow via sayTextSegments,
 // and (2) endCallFlow measures wait time via outbound bytes (no guessing), plus a larger cap.
 // UPDATED: adds appointment reminder path + callMode with deterministic one-turn appointment flow.
+// UPDATED: aligns template mapping with new schedule templates: medication / appointment.
+// UPDATED: persists appointment reminder status updates to appointment_reminder_details.
+// UPDATED: passes appointmentDetails into ScriptGeneratorAgent CallContext.
 
 import { spawn } from 'child_process';
 import crypto from 'crypto';
@@ -22,6 +25,7 @@ import { DeepgramLiveTranscriber } from '@/lib/transcription/deepgram-live';
 import { FinalUtteranceBuffer } from '@/lib/transcription/final-utterance-buffer';
 import { ElevenLabsMulawTTS } from '@/lib/tts/elevenlabs';
 
+import { AppointmentReminderDetailsRepository } from '@/db/repositories/appointment_reminder_details';
 import { ContactsRepository } from '@/db/repositories/contacts';
 import { ReassuranceCallSessionsRepository } from '@/db/repositories/reassurance_call_sessions';
 import { ReassuranceCallTurnsRepository } from '@/db/repositories/reassurance_call_turns';
@@ -54,10 +58,16 @@ function resolveCallModeFromScheduleTemplate(
 ): 'reassurance' | 'medication_reminder' | 'appointment_reminder' {
   const t = (template ?? '').trim().toLowerCase();
 
-  if (t === 'medication_reminder') return 'medication_reminder';
-  if (t === 'appointment_reminder') return 'appointment_reminder';
+  // new + legacy values
+  if (t === 'medication' || t === 'medication_reminder') {
+    return 'medication_reminder';
+  }
 
-  // treat 'wellness' (and anything else) as normal reassurance
+  if (t === 'appointment' || t === 'appointment_reminder') {
+    return 'appointment_reminder';
+  }
+
+  // keep wellness/safety/social/unknown as normal reassurance
   return 'reassurance';
 }
 
@@ -71,14 +81,12 @@ function classifyMedAnswer(text: string) {
   if (took && !neg) return 'took';
   if (neg && will) return 'will_take';
   if (neg && !will) return 'not_taking';
-  // fallback: if unclear, treat as will_take (safer for reminder UX)
   return 'will_take';
 }
 
 function classifyAppointmentAnswer(text: string) {
   const t = (text || '').toLowerCase();
 
-  // confirm (but don't misclassify "yes, reschedule")
   if (
     /\b(yes|yeah|yep|sure|i can|i will|confirm|confirmed|okay|ok)\b/.test(t)
   ) {
@@ -267,7 +275,6 @@ async function mixMulawToMp3(
   await runFfmpeg([
     '-y',
 
-    // input 0: inbound
     '-f',
     'mulaw',
     '-ar',
@@ -277,7 +284,6 @@ async function mixMulawToMp3(
     '-i',
     inboundMulawPath,
 
-    // input 1: outbound
     '-f',
     'mulaw',
     '-ar',
@@ -287,7 +293,6 @@ async function mixMulawToMp3(
     '-i',
     outboundMulawPath,
 
-    // mix -> resample -> mp3
     '-filter_complex',
     '[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=2,aresample=44100',
 
@@ -338,10 +343,6 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function hasMedicationReminderGoal(goals: unknown): boolean {
-  return (goals ?? '').toString().toLowerCase().includes('medication reminder');
-}
-
 function wordTimesToMs(
   words?: any[] | null
 ): { start_ms: number; end_ms: number } | null {
@@ -375,6 +376,29 @@ function clamp(s: string | null | undefined, maxLen: number) {
 function nowMs() {
   const [s, ns] = process.hrtime();
   return s * 1000 + ns / 1e6;
+}
+
+function mapAppointmentDetailsForContext(
+  detail:
+    | Awaited<
+        ReturnType<typeof AppointmentReminderDetailsRepository.findByScheduleId>
+      >
+    | null
+    | undefined
+) {
+  if (!detail) return undefined;
+
+  return {
+    appointment_title: detail.appointment_title ?? undefined,
+    appointment_datetime: detail.appointment_datetime ?? undefined,
+    appointment_timezone: detail.appointment_timezone ?? undefined,
+    provider_name: detail.provider_name ?? undefined,
+    provider_phone: detail.provider_phone ?? undefined,
+    location_name: detail.location_name ?? undefined,
+    location_address: detail.location_address ?? undefined,
+    notes: detail.notes ?? undefined,
+    requires_confirmation: detail.requires_confirmation ?? undefined,
+  };
 }
 
 // -------------------- routes --------------------
@@ -415,6 +439,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       let callbackNumber: string | null = null;
 
       let contactProfile: any | null = null;
+      let appointmentDetail: Awaited<
+        ReturnType<typeof AppointmentReminderDetailsRepository.findByScheduleId>
+      > | null = null;
 
       let runningSummary = '';
       let busyGenerating = false;
@@ -423,11 +450,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         | 'medication_reminder'
         | 'appointment_reminder' = 'reassurance';
 
-      // ✅ cap responses per call
       let assistantReplyCount = 0;
       let MAX_ASSISTANT_REPLIES = 3;
 
-      // transcript state
       let transcriptSeq = 0;
       let recordingId: string | null = null;
       const pendingFinals: Array<{ text: string; info: any }> = [];
@@ -435,16 +460,13 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       let isSpeaking = false;
       const finalsWhileSpeaking: string[] = [];
 
-      // ✅ Prevent any repeated generation while we're hanging up
       let isEnding = false;
 
-      // ✅ Track outbound audio position for assistant transcript timings
       let outboundByteCursor = 0;
       function bytesToMs(bytes: number) {
-        return Math.max(0, Math.round((bytes / 8000) * 1000)); // 8kHz ulaw: 8000 bytes/sec
+        return Math.max(0, Math.round((bytes / 8000) * 1000));
       }
 
-      // audio sinks (raw mulaw frames)
       const inboundPath = tmpFile(
         `reassurance-in-${crypto.randomUUID()}.mulaw`
       );
@@ -463,7 +485,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         return;
       }
 
-      // ---- server -> Twilio helpers ----
       function sendAudioToTwilio(mulawBase64: string) {
         if (!streamSid) return;
         socket.send(
@@ -476,8 +497,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
         const buf = Buffer.from(mulawBase64, 'base64');
         outboundStream.write(buf);
-
-        // ✅ advance cursor for assistant transcript timing
         outboundByteCursor += buf.length;
       }
 
@@ -486,7 +505,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         socket.send(JSON.stringify({ event: 'clear', streamSid }));
       }
 
-      // ✅ Insert assistant/outbound into transcript timeline
       async function saveOutboundTranscript(args: {
         text: string;
         start_ms: number;
@@ -514,7 +532,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         });
       }
 
-      // ✅ STREAMING: speak + return timing (based on outbound bytes)
       async function speakTextStreamingWithTiming(text: string): Promise<{
         start_ms: number;
         end_ms: number;
@@ -539,7 +556,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         } finally {
           isSpeaking = false;
 
-          // ✅ flush anything the user said while we were speaking (unless we're ending)
           if (!isEnding && finalsWhileSpeaking.length) {
             const queued = finalsWhileSpeaking.splice(
               0,
@@ -552,7 +568,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         }
       }
 
-      // ✅ Speak all segments, and insert each assistant segment into transcripts
       async function speakScriptPayload(
         payload: Pick<ScriptPayload, 'segments'>
       ) {
@@ -616,7 +631,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         return totalMs;
       }
 
-      // ---- End-of-conversation detection + hangup ----
       function shouldEndConversation(text: string) {
         const t = (text || '').trim().toLowerCase();
 
@@ -671,10 +685,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         }
       }
 
-      // =====================================================================
-      // ✅ Unified end-of-call flow used by ALL branches to prevent repeats + cutoffs.
-      // Uses outboundByteCursor-based timing (bytesToMs) so we don't guess.
-      // =====================================================================
       async function endCallFlow(opts: {
         reason: string;
         status: 'completed' | 'user_hung_up' | 'failed';
@@ -687,7 +697,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         isEnding = true;
         busyGenerating = true;
 
-        // Once ending, discard any queued finals so we don't generate again after closing.
         finalsWhileSpeaking.length = 0;
 
         const getOutboundMs = () => bytesToMs(outboundByteCursor);
@@ -695,11 +704,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         let waitMs = 0;
 
         try {
-          // Speak provided segments first (e.g., medication reply + closing)
           if (opts.sayTextSegments?.length) {
             const startMs = getOutboundMs();
 
-            // IMPORTANT: use NoClear so we don't accidentally wipe Twilio's buffer at end-of-call.
             await speakScriptPayloadNoClearWithDuration({
               segments: opts.sayTextSegments.map((t) => ({
                 id: crypto.randomUUID(),
@@ -712,7 +719,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             waitMs += Math.max(0, endMs - startMs);
           }
 
-          // Optional AI closing (also measured by outbound bytes)
           if (opts.speakAiClosing && opts.context) {
             try {
               const startMs = getOutboundMs();
@@ -752,7 +758,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             }
           }
 
-          // Optional final goodbye line (only if non-empty) — measured by bytes
           if (opts.goodbyeText && opts.goodbyeText.trim().length) {
             try {
               const startMs = getOutboundMs();
@@ -782,7 +787,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           }
 
           const jitterMs = 350;
-          const extraPadMs = 1400; // fixed safety pad for Twilio drain
+          const extraPadMs = 1400;
           await sleep(Math.min(20000, waitMs + jitterMs + extraPadMs));
 
           await finalizeAndUpload(opts.status);
@@ -795,9 +800,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           // keep isEnding = true
         }
       }
-      // =====================================================================
 
-      // ---- Deepgram ----
       const deepgram = new DeepgramLiveTranscriber({
         apiKey: dgApiKey,
         model: 'nova-3',
@@ -892,7 +895,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         }
       }
 
-      // ✅ Streamlined buffer callback (med + appt reminders handled early; max-turn uses endCallFlow)
       const utteranceBuffer = new FinalUtteranceBuffer(
         300,
         async (finalUtterance) => {
@@ -907,7 +909,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             return;
           }
 
-          // Log user turn (best-effort)
           try {
             await ReassuranceCallTurnsRepository.createTurn({
               id: crypto.randomUUID(),
@@ -976,9 +977,10 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               callMode,
               companyName: companyName ?? undefined,
               callbackNumber: callbackNumber ?? undefined,
+              appointmentDetails:
+                mapAppointmentDetailsForContext(appointmentDetail),
             };
 
-            // User wants to end
             if (shouldEndConversation(finalUtterance)) {
               await endCallFlow({
                 reason: 'user_end_intent',
@@ -991,7 +993,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               return;
             }
 
-            // ✅ Medication reminders: SPEAK ONLY via endCallFlow so hangup waits correctly.
             if (callMode === 'medication_reminder') {
               const kind = classifyMedAnswer(finalUtterance);
               const ttsNumber = callbackNumber;
@@ -1009,7 +1010,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
                 ? `Thank you for your time, ${preferredName}. If you need to reach us, please call ${ttsNumber}. Have a great day!`
                 : `Thank you for your time, ${preferredName}. Have a great day!`;
 
-              // Log assistant text (best-effort)
               try {
                 await ReassuranceCallTurnsRepository.createTurn({
                   id: crypto.randomUUID(),
@@ -1024,7 +1024,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
                 } as any);
               } catch {}
 
-              // IMPORTANT: do not speak here. endCallFlow will speak + measure + wait + hang up.
               await endCallFlow({
                 reason: 'medication_reminder_done',
                 status: 'completed',
@@ -1035,10 +1034,38 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               return;
             }
 
-            // ✅ Appointment reminders: SPEAK ONLY via endCallFlow so hangup waits correctly.
             if (callMode === 'appointment_reminder') {
               const kind = classifyAppointmentAnswer(finalUtterance);
               const ttsNumber = callbackNumber;
+
+              try {
+                if (scheduleId) {
+                  if (kind === 'confirmed') {
+                    appointmentDetail =
+                      await AppointmentReminderDetailsRepository.updateStatus(
+                        Number(scheduleId),
+                        'confirmed'
+                      );
+                  } else if (kind === 'reschedule') {
+                    appointmentDetail =
+                      await AppointmentReminderDetailsRepository.updateStatus(
+                        Number(scheduleId),
+                        'reschedule_requested'
+                      );
+                  } else if (kind === 'cancel') {
+                    appointmentDetail =
+                      await AppointmentReminderDetailsRepository.updateStatus(
+                        Number(scheduleId),
+                        'cancelled'
+                      );
+                  }
+                }
+              } catch (err) {
+                app.log.warn(
+                  { err, scheduleId, kind },
+                  '[ReassuranceStream] failed to update appointment reminder status'
+                );
+              }
 
               let reply = '';
               if (kind === 'confirmed') {
@@ -1060,7 +1087,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
                     ? `If you need anything, please call ${ttsNumber}. Have a great day!`
                     : `Have a great day!`;
 
-              // Log assistant text (best-effort)
               try {
                 await ReassuranceCallTurnsRepository.createTurn({
                   id: crypto.randomUUID(),
@@ -1071,6 +1097,14 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
                     callSid,
                     streamSid,
                     intent: 'appointment_reminder_closing',
+                    appointment_status_result:
+                      kind === 'confirmed'
+                        ? 'confirmed'
+                        : kind === 'reschedule'
+                          ? 'reschedule_requested'
+                          : kind === 'cancel'
+                            ? 'cancelled'
+                            : 'unknown',
                   },
                 } as any);
               } catch {}
@@ -1078,14 +1112,17 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               await endCallFlow({
                 reason: 'appointment_reminder_done',
                 status: 'completed',
-                context,
+                context: {
+                  ...context,
+                  appointmentDetails:
+                    mapAppointmentDetailsForContext(appointmentDetail),
+                },
                 speakAiClosing: false,
                 sayTextSegments: [reply, closing],
               });
               return;
             }
 
-            // ---- reassurance normal flow ----
             const tAi = nowMs();
             const payload = await scriptAgent.generateFollowupScript({
               context,
@@ -1134,7 +1171,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
             assistantReplyCount += 1;
 
-            // ✅ MAX TURNS: unified end flow (prevents repeats + prevents cutoffs)
             if (assistantReplyCount >= MAX_ASSISTANT_REPLIES) {
               await endCallFlow({
                 reason: 'ai_max_turns',
@@ -1147,7 +1183,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               return;
             }
 
-            // embeddings + memory insert AFTER speaking (best effort)
             embedText(openai, finalUtterance)
               .then((userEmb) =>
                 ReassuranceContactMemoryChunksRepository.insert({
@@ -1240,7 +1275,13 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           (schedule as any)?.template
         );
 
-        // medication + appointment reminder calls are one-turn
+        if (callMode === 'appointment_reminder') {
+          appointmentDetail =
+            await AppointmentReminderDetailsRepository.findByScheduleId(
+              schedule.id
+            );
+        }
+
         MAX_ASSISTANT_REPLIES =
           callMode === 'medication_reminder' ||
           callMode === 'appointment_reminder'
@@ -1314,6 +1355,8 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           companyName: companyName ?? undefined,
           callbackNumber: callbackNumber ?? undefined,
           callMode,
+          appointmentDetails:
+            mapAppointmentDetailsForContext(appointmentDetail),
         };
 
         try {
@@ -1324,6 +1367,21 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             { err, sessionId, contactId: contact.id },
             '[ReassuranceStream] Failed to generate opening script; using fallback'
           );
+
+          const appointmentText =
+            callMode === 'appointment_reminder'
+              ? [
+                  appointmentDetail?.appointment_title
+                    ? `for your ${appointmentDetail.appointment_title}`
+                    : 'for your appointment',
+                  appointmentDetail?.provider_name
+                    ? `with ${appointmentDetail.provider_name}`
+                    : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')
+              : '';
+
           openingPayload = {
             intent:
               callMode === 'medication_reminder'
@@ -1338,7 +1396,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
                   callMode === 'medication_reminder'
                     ? `Hi ${preferredName || 'there'}, this is ${companyName ?? 'our team'}. This is a quick medication reminder. Have you taken your medication, or can you take it now?`
                     : callMode === 'appointment_reminder'
-                      ? `Hi ${preferredName || 'there'}, this is ${companyName ?? 'our team'}. This is a quick appointment reminder. Can you confirm you'll be able to make it, or do you need to reschedule?`
+                      ? `Hi ${preferredName || 'there'}, this is ${companyName ?? 'our team'}. This is a quick appointment reminder ${appointmentText}. Can you confirm you'll be able to make it, or do you need to reschedule?`
                       : `Hi ${preferredName || 'there'}, this is ${companyName ?? 'our team'}. This is a quick reassurance check-in. How are you feeling today?`,
                 tone: 'reassuring',
                 maxDurationSeconds: 12,
@@ -1355,7 +1413,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           };
         }
 
-        // Save assistant "turn" rows (existing behavior)
         for (const seg of openingPayload.segments) {
           await ReassuranceCallTurnsRepository.createTurn({
             id: crypto.randomUUID(),
@@ -1372,7 +1429,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           } as any);
         }
 
-        // Speak + insert assistant transcript rows
         await speakScriptPayload(openingPayload);
         openingDelivered = true;
         runningSummary = `Opening delivered.`;
@@ -1599,7 +1655,6 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             );
           } catch {}
 
-          // ---- rolling memory summary upsert ----
           try {
             const prior =
               await ReassuranceContactMemorySummaryRepository.getByContactId(
@@ -1781,8 +1836,5 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
     });
   }
 
-  // Existing route
   registerStreamRoute('/reassurance/stream');
-  // ✅ New appointment reminder route path (shares the same implementation)
-  registerStreamRoute('/appointment/stream');
 }
