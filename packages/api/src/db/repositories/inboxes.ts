@@ -359,7 +359,7 @@ export const InboxesRepository = {
             m.status::text AS status,
             NULL::integer AS duration,
             NULL::text AS "mediaUrl",
-            (m.meta)::json AS meta,
+            COALESCE(m.meta::jsonb, '{}'::jsonb) AS meta,
             NULL::text AS "callSid"
           FROM messages m
           WHERE m.contact_id = $1
@@ -377,7 +377,7 @@ export const InboxesRepository = {
             NULL::text AS status,
             c.duration,
             NULL::text AS "mediaUrl",
-            (c.meta)::json AS meta,
+            COALESCE(c.meta::jsonb, '{}'::jsonb) AS meta,
             c.call_sid AS "callSid"
           FROM calls c
           WHERE c.contact_id = $1
@@ -395,7 +395,7 @@ export const InboxesRepository = {
             f.status::text AS status,
             NULL::integer AS duration,
             f.media_url AS "mediaUrl",
-            (f.meta)::json AS meta,
+            COALESCE(f.meta::jsonb, '{}'::jsonb) AS meta,
             NULL::text AS "callSid"
           FROM faxes f
           WHERE f.contact_id = $1

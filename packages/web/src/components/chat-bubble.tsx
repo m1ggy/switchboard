@@ -26,6 +26,17 @@ type Voicemail = {
   created_at: string;
 };
 
+type CallRecording = {
+  sid?: string | null;
+  url?: string | null;
+  duration?: number | null;
+  channels?: string | null;
+  source?: string | null;
+  status?: string | null;
+  callSid?: string | null;
+  parentCallSid?: string | null;
+};
+
 type UIReaction = {
   emoji: string;
   from?: string;
@@ -41,11 +52,11 @@ type ChatBubbleProps = {
     message?: string;
     status?: 'sent' | 'draft' | 'delivered' | 'failed';
     duration?: number;
-    meta?: Record<string, string>;
+    meta?: Record<string, any>;
     attachments?: Attachment[];
     pages?: number;
     faxStatus?: 'completed' | 'failed' | 'in-progress';
-    mediaUrl?: string; // for faxes
+    mediaUrl?: string;
     callSid?: string;
     voicemails?: Voicemail[];
   };
@@ -66,11 +77,6 @@ function secondsToMMSS(s: number) {
   return `${mm}:${ss}`;
 }
 
-function normalizeUrl(url: string) {
-  if (/^https?:\/\//i.test(url)) return url;
-  return `https://${url}`;
-}
-
 function renderTextWithLinks(text?: string) {
   if (!text) return null;
 
@@ -85,7 +91,6 @@ function renderTextWithLinks(text?: string) {
       return <Fragment key={`text-${index}`}>{part}</Fragment>;
     }
 
-    // remove trailing punctuation ONLY
     const cleaned = part.replace(/[.,!?)]*$/, '');
 
     return (
@@ -105,22 +110,29 @@ function renderTextWithLinks(text?: string) {
   });
 }
 
-/** --- Pretty Voicemail Card ------------------------------------------------ */
-function VoicemailCard({
-  vm,
+function AudioCard({
+  url,
+  title,
+  createdAt,
+  durationSeconds,
+  transcription,
   subtle,
+  icon,
 }: {
-  vm: Voicemail;
-  subtle?: boolean; // use light bg when bubble is outbound
+  url: string;
+  title: string;
+  createdAt: string;
+  durationSeconds?: number | null;
+  transcription?: string | null;
+  subtle?: boolean;
+  icon?: React.ReactNode;
 }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [progress, setProgress] = useState(0); // 0..1
-  const [elapsed, setElapsed] = useState(0); // seconds
-  const total = vm.duration ?? 0;
-
-  // load metadata to know duration when server doesn't include it
-  const [duration, setDuration] = useState<number>(total);
+  const [progress, setProgress] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+  const initialDuration = durationSeconds ?? 0;
+  const [duration, setDuration] = useState<number>(initialDuration);
 
   useEffect(() => {
     const a = audioRef.current;
@@ -128,95 +140,116 @@ function VoicemailCard({
 
     const onTime = () => {
       setElapsed(a.currentTime);
-      const d = a.duration || duration || total || 1;
+      const d = a.duration || duration || initialDuration || 1;
       setProgress(a.currentTime / d);
     };
-    const onLoaded = () => setDuration(a.duration || duration || total);
+
+    const onLoaded = () => {
+      setDuration(a.duration || duration || initialDuration);
+    };
+
     const onEnd = () => {
       setIsPlaying(false);
       setProgress(0);
       setElapsed(0);
     };
 
+    const onPause = () => setIsPlaying(false);
+    const onPlay = () => setIsPlaying(true);
+
     a.addEventListener('timeupdate', onTime);
     a.addEventListener('loadedmetadata', onLoaded);
     a.addEventListener('ended', onEnd);
+    a.addEventListener('pause', onPause);
+    a.addEventListener('play', onPlay);
+
     return () => {
       a.removeEventListener('timeupdate', onTime);
       a.removeEventListener('loadedmetadata', onLoaded);
       a.removeEventListener('ended', onEnd);
+      a.removeEventListener('pause', onPause);
+      a.removeEventListener('play', onPlay);
     };
-  }, [duration, total]);
+  }, [duration, initialDuration]);
 
   const toggle = async () => {
     const a = audioRef.current;
     if (!a) return;
+
     if (isPlaying) {
       a.pause();
-      setIsPlaying(false);
-    } else {
+      return;
+    }
+
+    try {
       await a.play();
-      setIsPlaying(true);
+    } catch (err) {
+      console.error('Failed to play audio', err);
     }
   };
 
   const onSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const a = audioRef.current;
     if (!a) return;
+
     const pct = Number(e.target.value);
-    const d = a.duration || duration || total || 1;
+    const d = a.duration || duration || initialDuration || 1;
     a.currentTime = (pct / 100) * d;
     setProgress(pct / 100);
   };
 
   const stamp = useMemo(
     () =>
-      new Date(vm.created_at).toLocaleString([], {
+      new Date(createdAt).toLocaleString([], {
         hour: '2-digit',
         minute: '2-digit',
         month: 'short',
         day: '2-digit',
       }),
-    [vm.created_at]
+    [createdAt]
   );
 
   const cardBg = subtle ? 'bg-white/10' : 'bg-gray-50';
   const ringColor = subtle ? 'ring-white/20' : 'ring-black/5';
   const textMuted = subtle ? 'text-white/70' : 'text-gray-500';
+  const buttonBg = subtle
+    ? 'bg-white/90 hover:bg-white'
+    : 'bg-white/70 hover:bg-white';
 
   return (
     <div className={`rounded-xl p-3 ${cardBg} ring-1 ${ringColor}`}>
-      {/* Header */}
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-black/10">
-            <VoicemailIcon className="w-3.5 h-3.5" />
+      <div className="flex items-center justify-between mb-2 gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-black/10 shrink-0">
+            {icon ?? <Phone className="w-3.5 h-3.5" />}
           </span>
-          <span className="font-semibold">Voicemail</span>
+          <span className="font-semibold truncate">{title}</span>
           <span
-            className={`ml-2 px-1.5 py-0.5 text-[11px] rounded bg-black/10 ${textMuted}`}
+            className={`ml-1 px-1.5 py-0.5 text-[11px] rounded bg-black/10 ${textMuted} shrink-0`}
             title="Duration"
           >
-            {secondsToMMSS(duration || total || 0)}
+            {secondsToMMSS(duration || initialDuration || 0)}
           </span>
         </div>
+
         <a
-          href={vm.media_url}
+          href={url}
           download
-          className={`inline-flex items-center gap-1 text-xs ${textMuted} hover:opacity-80`}
+          className={`inline-flex items-center gap-1 text-xs ${textMuted} hover:opacity-80 shrink-0`}
           title="Download"
+          onClick={(e) => e.stopPropagation()}
         >
           <Download className="w-3.5 h-3.5" />
           Download
         </a>
       </div>
 
-      {/* Player */}
       <div className="flex items-center gap-3">
         <button
           onClick={toggle}
-          className={`h-9 w-9 rounded-full flex items-center justify-center ring-1 ${ringColor} bg-white/70 hover:bg-white transition`}
+          className={`h-9 w-9 rounded-full flex items-center justify-center ring-1 ${ringColor} ${buttonBg} transition shrink-0`}
           aria-label={isPlaying ? 'Pause' : 'Play'}
+          type="button"
         >
           {isPlaying ? (
             <Pause className="w-4 h-4" />
@@ -236,24 +269,59 @@ function VoicemailCard({
         />
 
         <div className={`w-20 text-right text-xs tabular-nums ${textMuted}`}>
-          {secondsToMMSS(elapsed)} / {secondsToMMSS(duration || total || 0)}
+          {secondsToMMSS(elapsed)} /{' '}
+          {secondsToMMSS(duration || initialDuration || 0)}
         </div>
 
-        {/* Hidden native element */}
-        <audio ref={audioRef} preload="none" src={vm.media_url} />
+        <audio ref={audioRef} preload="none" src={url} />
       </div>
 
-      {/* Footer */}
       <div className={`mt-2 text-xs ${textMuted}`}>{stamp}</div>
 
-      {vm.transcription && (
-        <p className="mt-2 text-sm leading-snug">{vm.transcription}</p>
+      {transcription && (
+        <p className="mt-2 text-sm leading-snug">{transcription}</p>
       )}
     </div>
   );
 }
 
-/** --- Main bubble ---------------------------------------------------------- */
+function VoicemailCard({ vm, subtle }: { vm: Voicemail; subtle?: boolean }) {
+  return (
+    <AudioCard
+      url={vm.media_url}
+      title="Voicemail"
+      createdAt={vm.created_at}
+      durationSeconds={vm.duration}
+      transcription={vm.transcription}
+      subtle={subtle}
+      icon={<VoicemailIcon className="w-3.5 h-3.5" />}
+    />
+  );
+}
+
+function CallRecordingCard({
+  recording,
+  createdAt,
+  subtle,
+}: {
+  recording: CallRecording;
+  createdAt: string;
+  subtle?: boolean;
+}) {
+  if (!recording?.url) return null;
+
+  return (
+    <AudioCard
+      url={recording.url}
+      title="Call Recording"
+      createdAt={createdAt}
+      durationSeconds={recording.duration}
+      subtle={subtle}
+      icon={<Phone className="w-3.5 h-3.5" />}
+    />
+  );
+}
+
 function ChatBubble({
   item,
   setFiles,
@@ -277,11 +345,15 @@ function ChatBubble({
   const previewImages = imageAttachments.slice(0, 3);
   const remainingCount = imageAttachments.length - 3;
 
+  const recording = (item.meta?.recording ?? null) as CallRecording | null;
+  const hasCallRecording = Boolean(recording?.url);
+
   const [loadingMap, setLoadingMap] = useState<Record<string, boolean>>({});
 
   const handleImageLoad = (id: string) => {
     setLoadingMap((prev) => ({ ...prev, [id]: false }));
   };
+
   const handleImageStart = (id: string) => {
     setLoadingMap((prev) => ({ ...prev, [id]: true }));
   };
@@ -298,6 +370,7 @@ function ChatBubble({
         return '';
     }
   };
+
   const getFaxStatusText = (status?: string) => {
     switch (status) {
       case 'completed':
@@ -321,7 +394,6 @@ function ChatBubble({
           hasReactions ? 'pb-5' : ''
         }`}
       >
-        {/* image previews */}
         {previewImages.length > 0 && (
           <div className="flex gap-2 mt-1 mb-2">
             {previewImages.map((img, index) => (
@@ -358,14 +430,12 @@ function ChatBubble({
           </div>
         )}
 
-        {/* text message */}
         {item.type === 'message' && (
           <span className="break-words whitespace-pre-wrap">
             {renderTextWithLinks(item.message)}
           </span>
         )}
 
-        {/* dangling reactions (Messenger-style) */}
         {hasReactions ? (
           <div
             className={`absolute -bottom-3 ${reactionDock} flex items-center gap-1 px-2 py-1 rounded-full shadow-sm ring-1 ${
@@ -396,22 +466,6 @@ function ChatBubble({
           </div>
         ) : null}
 
-        {/* plain call (no voicemail) */}
-        {item.type === 'call' && !item.voicemails?.length && (
-          <span className="break-words whitespace-pre-wrap flex gap-1 items-center font-bold">
-            <Phone className="w-4 h-4" /> Call{' '}
-            {typeof item.duration === 'number' && (
-              <>— {formatDurationWithDateFns(item.duration ?? 0)}</>
-            )}
-            {item.meta?.status && (
-              <span className="text-xs font-normal opacity-75 ml-2">
-                ({item.meta.status})
-              </span>
-            )}
-          </span>
-        )}
-
-        {/* pretty voicemails */}
         {item.type === 'call' && item.voicemails?.length ? (
           <div className="flex flex-col gap-3">
             {item.voicemails.map((vm) => (
@@ -420,7 +474,49 @@ function ChatBubble({
           </div>
         ) : null}
 
-        {/* fax */}
+        {item.type === 'call' &&
+        !item.voicemails?.length &&
+        hasCallRecording ? (
+          <div className="flex flex-col gap-2">
+            <span className="break-words whitespace-pre-wrap flex gap-1 items-center font-bold">
+              <Phone className="w-4 h-4" />
+              Call
+              {typeof item.duration === 'number' && (
+                <span className="font-normal">
+                  — {formatDurationWithDateFns(item.duration ?? 0)}
+                </span>
+              )}
+              {item.meta?.status && (
+                <span className="text-xs font-normal opacity-75 ml-2">
+                  ({item.meta.status})
+                </span>
+              )}
+            </span>
+
+            <CallRecordingCard
+              recording={recording as CallRecording}
+              createdAt={item.createdAt}
+              subtle={isOutbound}
+            />
+          </div>
+        ) : null}
+
+        {item.type === 'call' &&
+          !item.voicemails?.length &&
+          !hasCallRecording && (
+            <span className="break-words whitespace-pre-wrap flex gap-1 items-center font-bold">
+              <Phone className="w-4 h-4" /> Call{' '}
+              {typeof item.duration === 'number' && (
+                <>— {formatDurationWithDateFns(item.duration ?? 0)}</>
+              )}
+              {item.meta?.status && (
+                <span className="text-xs font-normal opacity-75 ml-2">
+                  ({item.meta.status})
+                </span>
+              )}
+            </span>
+          )}
+
         {item.type === 'fax' && (
           <div className="flex flex-col gap-2">
             <span className="break-words whitespace-pre-wrap flex gap-1 items-center font-bold">

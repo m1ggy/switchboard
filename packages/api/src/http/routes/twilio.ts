@@ -46,13 +46,11 @@ function fullUrl(req: FastifyRequest) {
 }
 
 function getScriptForSchedule(schedule: any): string {
-  // 1) If there is a non-empty custom script, use that
   const custom = schedule.script_content?.toString().trim();
   if (custom && custom.length > 0) {
     return custom;
   }
 
-  // 2) Otherwise, build from template if available
   const template = schedule.template as
     | 'wellness'
     | 'safety'
@@ -81,7 +79,6 @@ function getScriptForSchedule(schedule: any): string {
     case 'social':
       return `Hello ${nameToUse}, this is an automated reassurance call just to say hello and see how you're doing today.`;
     default:
-      // 3) Fallback if template is not set
       return `Hello ${nameToUse}, this is your reassurance call. We are just checking in to see how you are doing.`;
   }
 }
@@ -109,7 +106,7 @@ export async function verifyTwilioRequest(
   req: FastifyRequest,
   reply: FastifyReply
 ) {
-  if (process.env.SKIP_TWILIO_VERIFY === 'true') return; // dev shortcut
+  if (process.env.SKIP_TWILIO_VERIFY === 'true') return;
 
   const sig = req.headers['x-twilio-signature'] as string | undefined;
   if (!sig) return reply.code(403).send('Missing Twilio signature');
@@ -129,7 +126,6 @@ async function getTransferableCallSid(
     const leg = await twilioClient.client.calls(childOrParentSid).fetch();
     const parentSid = (leg as any).parentCallSid as string | undefined;
 
-    // 🔹 Prefer parent (usually the original inbound caller leg)
     if (parentSid) {
       try {
         const parent = await twilioClient.client.calls(parentSid).fetch();
@@ -144,16 +140,13 @@ async function getTransferableCallSid(
       }
     }
 
-    // 🔹 Fall back to the leg we were given if it’s alive
     if (leg.status === 'in-progress') {
       return leg.sid;
     }
   }
 
-  // 🔹 Fallback: use your own store to find the caller leg for this agent
   if (agentIdentity && typeof activeCallStore.findByAgent === 'function') {
     const recs = activeCallStore.findByAgent(agentIdentity);
-    // pick any in-progress sid here if you want to be smarter
     const rec = recs[0];
     if (rec?.sid) return rec.sid;
   }
@@ -163,6 +156,22 @@ async function getTransferableCallSid(
 
 function warmConferenceNameForCall(callSid: string) {
   return `warm-${callSid}`;
+}
+
+function buildDialRecordingOptions(callSid?: string) {
+  return {
+    record: 'record-from-answer-dual' as const,
+    recordingStatusCallback: `${SERVER_DOMAIN}/twilio/voice/recording-status`,
+    recordingStatusCallbackMethod: 'POST' as const,
+    recordingStatusCallbackEvent: ['completed'] as Array<'completed'>,
+    ...(callSid
+      ? {
+          recordingStatusCallbackParameters: {
+            parentCallSid: callSid,
+          },
+        }
+      : {}),
+  };
 }
 
 async function notifyEmergencyContact({
@@ -221,7 +230,6 @@ async function notifyEmergencyContact({
 }
 
 async function routes(app: FastifyInstance) {
-  // 🔹 Voice Entry Point (UPDATED: Option 1 - ring client first)
   app.post(
     '/voice',
     { preHandler: verifyTwilioRequest },
@@ -244,7 +252,6 @@ async function routes(app: FastifyInstance) {
       const isToPSTN = To.startsWith('+');
       const isOutboundToPSTN = isFromClient && isToPSTN && !numberRecord;
 
-      // Existing outbound-to-PSTN behavior
       if (isOutboundToPSTN) {
         const selectedNumber = callerId
           ? await NumbersRepository.findByNumber(callerId)
@@ -257,6 +264,7 @@ async function routes(app: FastifyInstance) {
           answerOnBridge: true,
           action: `${SERVER_DOMAIN}/twilio/voice/outbound-after-dial`,
           method: 'POST',
+          ...buildDialRecordingOptions(CallSid),
         });
 
         dial.number(To);
@@ -269,16 +277,14 @@ async function routes(app: FastifyInstance) {
         return reply.type('text/xml').status(200).send(response.toString());
       }
 
-      const agentIdentity = numberRecord.number; // your chosen client identity (E.164)
+      const agentIdentity = numberRecord.number;
 
-      // Prevent dial loop (existing)
       const isDialLoop = isInbound && ParentCallSid;
       if (isDialLoop) {
         response.say('Sorry, we could not connect your call.');
         return reply.type('text/xml').send(response.toString());
       }
 
-      // Persist inbound call record (existing)
       if (isInbound) {
         const existing = await CallsRepository.findBySID(CallSid);
         if (!existing) {
@@ -303,7 +309,6 @@ async function routes(app: FastifyInstance) {
           await InboxesRepository.updateLastCall(inbox.id, call.id);
         }
 
-        // Track active call (initiated)
         activeCallStore.add({
           sid: CallSid,
           from: From,
@@ -314,7 +319,6 @@ async function routes(app: FastifyInstance) {
         });
       }
 
-      // Keep your notification (optional but fine)
       await notifyIncomingCall({
         callerId,
         toNumber: To,
@@ -322,10 +326,6 @@ async function routes(app: FastifyInstance) {
         app,
       });
 
-      /**
-       * ✅ OPTION 1: Always ring the browser first.
-       * This is what triggers Twilio Voice SDK "incoming" in the UI.
-       */
       const dial = response.dial({
         timeout: 20,
         answerOnBridge: true,
@@ -333,6 +333,7 @@ async function routes(app: FastifyInstance) {
           agentIdentity
         )}&to=${encodeURIComponent(To)}&from=${encodeURIComponent(callerId)}`,
         method: 'POST',
+        ...buildDialRecordingOptions(CallSid),
       });
 
       dial.client(agentIdentity);
@@ -383,7 +384,69 @@ async function routes(app: FastifyInstance) {
     }
   );
 
-  // 🔹 Fallback when client did not answer / is offline / rejected
+  app.post(
+    '/voice/recording-status',
+    { preHandler: verifyTwilioRequest },
+    async (req, reply) => {
+      const {
+        RecordingSid,
+        RecordingUrl,
+        RecordingStatus,
+        RecordingDuration,
+        RecordingChannels,
+        RecordingSource,
+        CallSid,
+        ParentCallSid,
+      } = req.body as Record<string, string>;
+
+      try {
+        const lookupSid = ParentCallSid || CallSid;
+        if (!lookupSid) {
+          req.log.warn(
+            { body: req.body },
+            '[Recording Status] Missing CallSid/ParentCallSid'
+          );
+          return reply.status(204).send();
+        }
+
+        const existingCall = await CallsRepository.findBySID(lookupSid);
+
+        if (!existingCall) {
+          req.log.warn(
+            { lookupSid, body: req.body },
+            '[Recording Status] Call not found'
+          );
+          return reply.status(204).send();
+        }
+
+        const recordingUrl = RecordingUrl ? `${RecordingUrl}.mp3` : null;
+
+        await CallsRepository.update(lookupSid, {
+          meta: {
+            recording: {
+              sid: RecordingSid ?? null,
+              url: recordingUrl,
+              duration: RecordingDuration ? Number(RecordingDuration) : null,
+              channels: RecordingChannels ?? null,
+              source: RecordingSource ?? null,
+              status: RecordingStatus ?? null,
+              callSid: CallSid ?? null,
+              parentCallSid: ParentCallSid ?? null,
+            },
+          },
+        });
+
+        return reply.status(204).send();
+      } catch (err) {
+        req.log.error(
+          { err, body: req.body },
+          '[Recording Status] Failed to save call recording'
+        );
+        return reply.status(500).send();
+      }
+    }
+  );
+
   app.post(
     '/voice/no-answer',
     { preHandler: verifyTwilioRequest },
@@ -395,8 +458,6 @@ async function routes(app: FastifyInstance) {
       const To = to;
       const callerId = from;
 
-      // If the dial somehow "worked", do nothing else
-      // DialCallStatus values: completed, answered, no-answer, busy, failed, canceled
       if (DialCallStatus === 'completed' || DialCallStatus === 'answered') {
         const r = new twiml.VoiceResponse();
         return reply.type('text/xml').status(200).send(r.toString());
@@ -404,7 +465,6 @@ async function routes(app: FastifyInstance) {
 
       const response = new twiml.VoiceResponse();
 
-      // Re-load numberRecord/company for hold music + notifications (same as your old branch)
       const numberRecord = await NumbersRepository.findByNumber(To);
       if (!numberRecord) {
         response.say('We could not route your call at this time.');
@@ -412,7 +472,6 @@ async function routes(app: FastifyInstance) {
         return reply.type('text/xml').status(200).send(response.toString());
       }
 
-      // Enqueue caller
       const queueRoom = `queue-${agentIdentity}`;
 
       callQueueManager.enqueue(agentIdentity, {
@@ -424,7 +483,6 @@ async function routes(app: FastifyInstance) {
         companyId: numberRecord.company_id,
       });
 
-      // Slack formatting logic (copied from your existing else branch)
       let slackMessageToFormatted = To;
       let slackMessageFromFormatted = callerId;
 
@@ -471,7 +529,6 @@ async function routes(app: FastifyInstance) {
         `Welcome to ${company?.name ?? 'our'} Hotline, please wait while we connect you to an agent`
       );
 
-      // Push notification (copied from your else branch)
       const userCompany = await UserCompaniesRepository.findUserIdById(
         company?.id as string
       );
@@ -491,7 +548,6 @@ async function routes(app: FastifyInstance) {
         }
       }
 
-      // Put caller into conference queue (same as your else branch)
       response.dial().conference(
         {
           startConferenceOnEnter: false,
@@ -507,15 +563,13 @@ async function routes(app: FastifyInstance) {
         queueRoom
       );
 
-      // Voicemail timeout logic (same as your else branch)
-      const VOICEMAIL_TIMEOUT_MS = 120_000; // 2 minutes
+      const VOICEMAIL_TIMEOUT_MS = 120_000;
 
       const timerId = setTimeout(async () => {
         try {
           const held = activeCallStore.isHeld(CallSid);
           if (!held) return;
 
-          // Recheck presence (optional; still in-memory)
           const stillBusy = !presenceStore.isAvailable(agentIdentity);
           if (!stillBusy) return;
 
@@ -540,13 +594,11 @@ async function routes(app: FastifyInstance) {
     const r = new twiml.VoiceResponse();
 
     if (!companyId) {
-      // Fallback if query is missing
       r.play({ loop: 1 }, `${SERVER_DOMAIN}/audio/marketing_audio.mp3`);
       r.play({ loop: 1 }, `${SERVER_DOMAIN}/audio/music1.mp3`);
       return reply.type('text/xml').status(200).send(r.toString());
     }
 
-    // Fetch the company and use its hold_audio_url if present
     const company = await UserCompaniesRepository.findCompanyById(companyId);
     const customUrl = (company as any)?.hold_audio_url as
       | string
@@ -558,11 +610,7 @@ async function routes(app: FastifyInstance) {
       firstTrack = customUrl;
     }
 
-    // 1) Play the custom (or default) greeting/marketing audio once
     r.play({ loop: 1 }, firstTrack);
-
-    // 2) Then play your bed music (once, same as your current behavior)
-    //    If you prefer infinite loop here, change loop: 1 -> loop: 0
     r.play({ loop: 1 }, `${SERVER_DOMAIN}/audio/music1.mp3`);
 
     return reply.type('text/xml').status(200).send(r.toString());
@@ -588,16 +636,9 @@ async function routes(app: FastifyInstance) {
   });
 
   app.post('/voice/voicemail-done', async (req, reply) => {
-    const {
-      RecordingSid,
-      RecordingUrl, // Twilio gives URL w/o extension
-      RecordingDuration,
-      From,
-      To,
-      CallSid,
-    } = req.body as Record<string, string>;
+    const { RecordingSid, RecordingUrl, RecordingDuration, From, To, CallSid } =
+      req.body as Record<string, string>;
 
-    // Resolve number/company/contact for persistence
     const numberRecord = await NumbersRepository.findByNumber(To);
     if (!numberRecord) {
       console.warn('❌ voicemail-done: no number for To:', To);
@@ -611,31 +652,24 @@ async function routes(app: FastifyInstance) {
       numberRecord.company_id
     );
 
-    // (Optional) contact + call linkage if you have them
     const contact = await ContactsRepository.findByNumber(From, company?.id);
 
-    // Build Twilio media URL with extension (mp3 is small & convenient)
     const twilioMp3Url = `${RecordingUrl}.mp3`;
 
-    // 1) Download from Twilio, 2) Upload to GCS
     let gcsUrl: string | null = null;
     try {
       const axRes = await axios.get<ArrayBuffer>(twilioMp3Url, {
         responseType: 'arraybuffer',
-        // Twilio recordings require Basic Auth unless you’ve made them public
         auth: {
           username: TWILIO_ACCOUNT_SID,
           password: TWILIO_AUTH_TOKEN,
         },
-        // You can bump this if you expect long recordings
         timeout: 25_000,
-        // Follow redirects just in case
         maxRedirects: 3,
       });
 
       const buffer = Buffer.from(axRes.data as ArrayBuffer);
 
-      // Example filename: vm-{company}-{YYYYMMDD}-{RecordingSid}.mp3
       const yyyymmdd = new Date().toISOString().slice(0, 10).replace(/-/g, '');
       const safeCompany = (company?.name || 'company')
         .toLowerCase()
@@ -645,14 +679,10 @@ async function routes(app: FastifyInstance) {
       gcsUrl = await uploadAttachmentBuffer(buffer, filename);
     } catch (err) {
       console.error('❌ Failed to download/upload voicemail recording:', err);
-      // You can still continue and store the Twilio URL so nothing is lost
     }
 
-    // Choose what you persist as primary URL:
-    // Prefer the GCS copy if available; fall back to Twilio URL
     const primaryUrl = gcsUrl ?? twilioMp3Url;
 
-    // Save voicemail
     const voicemail = await VoicemailsRepository.create({
       companyId: numberRecord.company_id,
       numberId: numberRecord.id,
@@ -667,7 +697,6 @@ async function routes(app: FastifyInstance) {
       transcriptionStatus: 'pending',
     });
 
-    // Notify UI
     await notifyNewVoicemail({
       from: From,
       toNumber: To,
@@ -684,14 +713,12 @@ async function routes(app: FastifyInstance) {
       },
     });
 
-    // Close out the call nicely
     const response = new twiml.VoiceResponse();
     response.say('Thanks. Your message has been recorded. Goodbye.');
     response.hangup();
     return reply.type('text/xml').status(200).send(response.toString());
   });
 
-  // POST /twilio/voice/voicemail-status (fires on completed recording)
   app.post('/voice/voicemail-status', async (req, reply) => {
     const { RecordingSid, RecordingUrl, RecordingDuration, CallSid, From, To } =
       req.body as Record<string, string>;
@@ -718,7 +745,6 @@ async function routes(app: FastifyInstance) {
     const response = new twiml.VoiceResponse();
 
     if (Digits === '1') {
-      // Caller chose voice support — redirect to main logic, mark IVR passed
       response.redirect({ method: 'POST' }, `/twilio/voice?ivr=1`);
     } else {
       await FaxForwardLogRepository.create({
@@ -735,11 +761,29 @@ async function routes(app: FastifyInstance) {
     return reply.type('text/xml').status(200).send(response.toString());
   });
 
-  // 🔹 Call Status Updates (e.g., when a call ends)
   app.post('/voice/status', async (req, res) => {
-    const { CallSid, CallStatus, To } = req.body as Record<string, string>;
+    const { CallSid, CallStatus, To, CallDuration } = req.body as Record<
+      string,
+      string
+    >;
 
     activeCallStore.remove(CallSid);
+
+    if (CallSid) {
+      try {
+        await CallsRepository.update(CallSid, {
+          ...(CallDuration ? { duration: Number(CallDuration) } : {}),
+          meta: {
+            status: CallStatus,
+          },
+        });
+      } catch (err) {
+        req.log.error(
+          { err, CallSid, body: req.body },
+          '[Voice Status] Failed to update call'
+        );
+      }
+    }
 
     if (CallStatus === 'completed') {
       const normalize = (s?: string) =>
@@ -765,7 +809,6 @@ async function routes(app: FastifyInstance) {
     res.status(200).send('OK');
   });
 
-  // 🔹 Bridge Logic
   app.post('/voice/bridge', async (req, reply) => {
     let { client } = req.query as Record<string, string>;
     if (client.startsWith('client:')) {
@@ -786,7 +829,7 @@ async function routes(app: FastifyInstance) {
       StatusCallbackEvent,
       CallSid,
       ConferenceSid: UpperCaseSid,
-      conferenceSid: LowerCaseSid, // fallback in case it's lowercase
+      conferenceSid: LowerCaseSid,
     } = req.body as Record<string, string>;
 
     const ConferenceSid = UpperCaseSid || LowerCaseSid;
@@ -893,7 +936,7 @@ async function routes(app: FastifyInstance) {
         });
 
         const buffer = Buffer.from(mediaResp.data);
-        const extension = contentType.split('/')[1]; // crude fallback
+        const extension = contentType.split('/')[1];
         const gcsFilename = `${crypto.randomUUID()}.${extension}`;
 
         const gcsUrl = await uploadAttachmentBuffer(buffer, gcsFilename);
@@ -966,7 +1009,7 @@ async function routes(app: FastifyInstance) {
           apiKeySecret: process.env.TWILIO_API_KEY_SECRET as string,
           outgoingApplicationSid: process.env.TWILIO_TWIMIL_APP_SID as string,
           identity: identity ?? 'client',
-          ttl: 86400, // Optional: 24 hours
+          ttl: 86400,
         });
 
         return reply.send({ token: jwt });
@@ -977,8 +1020,6 @@ async function routes(app: FastifyInstance) {
     }
   );
 
-  // TRANSFER CALLS
-  // Cold transfer: redirect a live call to a new number
   app.post(
     '/transfer/cold',
     { preHandler: authMiddleware },
@@ -1009,12 +1050,10 @@ async function routes(app: FastifyInstance) {
     }
   );
 
-  // TwiML responder that actually performs the dial
   app.post('/twiml/forward', async (req, reply) => {
     const { to } = req.query as { to: string };
     const r = new twiml.VoiceResponse();
 
-    // Look up whether "to" is one of our Twilio numbers
     let isInternal = false;
     try {
       const n = await NumbersRepository.findByNumber(to);
@@ -1024,7 +1063,6 @@ async function routes(app: FastifyInstance) {
     }
 
     if (isInternal) {
-      // INTERNAL TRANSFER: do not dial E.164 — redirect into our own TwiML that bypasses IVR
       r.redirect(
         { method: 'POST' },
         `${SERVER_DOMAIN}/twilio/voice/transfer-direct?to=${encodeURIComponent(to)}`
@@ -1032,7 +1070,6 @@ async function routes(app: FastifyInstance) {
       return reply.type('text/xml').send(r.toString());
     }
 
-    // EXTERNAL TRANSFER: normal PSTN dial
     r.say('Transferring your call, please hold.');
 
     const dial = r.dial({
@@ -1040,8 +1077,11 @@ async function routes(app: FastifyInstance) {
         req.body?.To || req.body?.Called || process.env.TWILIO_CALLER_ID,
       timeout: 30,
       answerOnBridge: true,
-      action: `${SERVER_DOMAIN}/twilio/transfer/after-dial`, // handle failures cleanly
+      action: `${SERVER_DOMAIN}/twilio/transfer/after-dial`,
       method: 'POST',
+      ...buildDialRecordingOptions(
+        (req.body?.CallSid as string) || (req.body?.ParentCallSid as string)
+      ),
     });
 
     if (to.startsWith('sip:')) {
@@ -1049,13 +1089,12 @@ async function routes(app: FastifyInstance) {
     } else if (to.startsWith('client:')) {
       dial.client(to.replace(/^client:/, ''));
     } else {
-      dial.number(to); // external PSTN number
+      dial.number(to);
     }
 
     return reply.type('text/xml').send(r.toString());
   });
 
-  // Caller is already live on this leg; skip IVR and bridge immediately
   app.post('/voice/transfer-direct', async (req, reply) => {
     const { to } = req.query as { to: string };
 
@@ -1068,6 +1107,9 @@ async function routes(app: FastifyInstance) {
       answerOnBridge: true,
       action: `${SERVER_DOMAIN}/twilio/transfer/after-dial`,
       method: 'POST',
+      ...buildDialRecordingOptions(
+        (req.body?.CallSid as string) || (req.body?.ParentCallSid as string)
+      ),
     });
     dial.number(to);
 
@@ -1082,20 +1124,17 @@ async function routes(app: FastifyInstance) {
       return reply.type('text/xml').send(r.toString());
     }
 
-    // fallback on failure/no-answer/busy
     r.say('Sorry, the transfer could not be completed.');
     r.redirect({ method: 'POST' }, `${SERVER_DOMAIN}/twilio/voice/voicemail`);
     return reply.type('text/xml').send(r.toString());
   });
 
-  // Join a call leg into a named warm-transfer conference
   app.post('/voice/warm-join-conference', async (req, reply) => {
     const { name } = req.query as { name: string };
 
     const r = new twiml.VoiceResponse();
 
     const dial = r.dial({
-      // Keep it generic; Twilio will already know callerId for this leg
       callerId:
         (req.body?.To as string) ||
         (req.body?.Called as string) ||
@@ -1118,7 +1157,6 @@ async function routes(app: FastifyInstance) {
     return reply.type('text/xml').status(200).send(r.toString());
   });
 
-  // WARM TRANSFER (step 1): upgrade current call to a conference
   app.post(
     '/transfer/warm/create',
     { preHandler: authMiddleware },
@@ -1132,7 +1170,6 @@ async function routes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'Missing "agentIdentity"' });
       }
 
-      // ✅ now returns the parent (caller) leg when possible
       const callerSid = await getTransferableCallSid(callSid, agentIdentity);
       if (!callerSid) {
         return reply
@@ -1143,7 +1180,6 @@ async function routes(app: FastifyInstance) {
       const conferenceName = warmConferenceNameForCall(callerSid);
 
       try {
-        // Fetch caller leg to derive fromNumber
         const leg = await twilioClient.client.calls(callerSid).fetch();
 
         let fromNumber = '';
@@ -1156,7 +1192,6 @@ async function routes(app: FastifyInstance) {
           fromNumber = agentIdentity;
         }
 
-        // 1) Move caller into conference
         await twilioClient.client.calls(callerSid).update({
           method: 'POST',
           url: `${SERVER_DOMAIN}/twilio/voice/warm-join-conference?name=${encodeURIComponent(
@@ -1164,7 +1199,6 @@ async function routes(app: FastifyInstance) {
           )}`,
         });
 
-        // 2) Call the agent back into the same conference as a Client
         await twilioClient.client.calls.create({
           from: fromNumber || undefined,
           to: `client:${agentIdentity}`,
@@ -1185,14 +1219,13 @@ async function routes(app: FastifyInstance) {
     }
   );
 
-  // WARM TRANSFER (step 2): add a new party into the existing warm conference
   app.post(
     '/transfer/warm/add-party',
     { preHandler: authMiddleware },
     async (req, reply) => {
       const { callSid, to } = req.body as {
-        callSid: string; // original caller/transferable CallSid
-        to: string; // '+E164', 'sip:..', 'client:identity', or internal number
+        callSid: string;
+        to: string;
       };
 
       if (!callSid || !to) {
@@ -1204,11 +1237,8 @@ async function routes(app: FastifyInstance) {
       const conferenceName = warmConferenceNameForCall(callSid);
 
       try {
-        // 🔹 Fetch the existing call leg to determine a valid callerId
         const leg = await twilioClient.client.calls(callSid).fetch();
 
-        // For inbound calls: leg.to is your Twilio number
-        // For outbound-from-client: leg.from is your Twilio number (usually)
         let fromNumber = '';
 
         if (typeof leg.to === 'string' && leg.to.startsWith('+')) {
@@ -1228,7 +1258,7 @@ async function routes(app: FastifyInstance) {
         }
 
         await twilioClient.client.calls.create({
-          from: fromNumber, // ✅ now we always send a valid "from"
+          from: fromNumber,
           to,
           url: `${SERVER_DOMAIN}/twilio/voice/warm-join-conference?name=${encodeURIComponent(
             conferenceName
@@ -1245,14 +1275,13 @@ async function routes(app: FastifyInstance) {
     }
   );
 
-  // WARM TRANSFER (step 3): drop the current agent from the conference
   app.post(
     '/transfer/warm/complete',
     { preHandler: authMiddleware },
     async (req, reply) => {
       const { agentIdentity, callSid } = req.body as {
         agentIdentity: string;
-        callSid: string; // original caller callSid used to build conferenceName
+        callSid: string;
       };
 
       if (!agentIdentity || !callSid) {
@@ -1262,10 +1291,8 @@ async function routes(app: FastifyInstance) {
       }
 
       try {
-        // We expect conferenceSid to have been captured in /voice/conference-events
         const conferenceName = warmConferenceNameForCall(callSid);
 
-        // Look up the conference by friendlyName
         const conferences = await twilioClient.client.conferences.list({
           friendlyName: conferenceName,
           status: 'in-progress',
@@ -1283,10 +1310,7 @@ async function routes(app: FastifyInstance) {
           .conferences(conference.sid)
           .participants.list({ limit: 50 });
 
-        // Heuristic: the agent leg is usually the one whose "to" is client:agentIdentity
         const agentParticipant = participants.find((p) => {
-          // p.callSid can be fetched in more detail, but Twilio doesn't expose "to" directly here.
-          // If you label your participants on create, you can match that label instead.
           return (p.label && p.label === agentIdentity) || false;
         });
 
@@ -1305,7 +1329,6 @@ async function routes(app: FastifyInstance) {
           .participants(agentParticipant.accountSid)
           .update(() => ({ status: 'completed' }));
 
-        // Mark the original agent idle again
         presenceStore.setStatus(agentIdentity, 'idle');
 
         return reply.send({ ok: true });
@@ -1334,14 +1357,12 @@ async function routes(app: FastifyInstance) {
 
       const r = new twiml.VoiceResponse();
 
-      // If scheduleId missing, you can still stream, but logging will be hard
       if (!scheduleId) {
         r.say('Sorry, this reassurance call is missing schedule details.');
         r.hangup();
         return reply.type('text/xml').status(200).send(r.toString());
       }
 
-      // 1) Load schedule so we can get company_id + number_id + contact label
       const schedule = await ReassuranceSchedulesRepository.find(
         Number(scheduleId)
       );
@@ -1351,17 +1372,14 @@ async function routes(app: FastifyInstance) {
         return reply.type('text/xml').status(200).send(r.toString());
       }
 
-      // 2) Resolve (or create) contact (callee)
       const contactLabel =
         schedule.name || schedule.phone_number || To || 'Unknown';
       const contact = await ContactsRepository.findOrCreate({
-        number: schedule.phone_number, // or To (should match)
+        number: schedule.phone_number,
         companyId: schedule.company_id,
         label: contactLabel,
       });
 
-      // 3) Create call log (guard against duplicate webhook retries)
-      // Twilio can occasionally hit your TwiML url more than once.
       let callRow = await CallsRepository.findBySID(CallSid);
       if (!callRow) {
         callRow = await CallsRepository.create({
@@ -1381,7 +1399,6 @@ async function routes(app: FastifyInstance) {
         });
       }
 
-      // 4) Stream (NO query strings). Pass params via <Parameter>.
       const wsUrl = `wss://api.calliya.com/twilio/reassurance/stream`;
       const stream = r.connect().stream({ url: wsUrl });
 
@@ -1402,9 +1419,6 @@ async function routes(app: FastifyInstance) {
       const { scheduleId } = req.query as { scheduleId?: string };
 
       const r = new twiml.VoiceResponse();
-
-      // You can persist this somewhere: job result, schedule stats, etc.
-      // e.g. ReassuranceResponsesRepository.create({ scheduleId, from: From, digits: Digits, callSid: CallSid })
 
       if (Digits === '1') {
         r.say(
@@ -1471,18 +1485,14 @@ async function routes(app: FastifyInstance) {
               );
 
               if (CallStatus === 'completed') {
-                // Success: mark completed, no retries
                 await ReassuranceCallJobsRepository.markCompleted(jobId);
               } else {
-                // Failure / no-answer / busy
                 if (currentAttempt >= maxAttempts) {
-                  // Final failed attempt → mark failed + SMS emergency contact
                   await ReassuranceCallJobsRepository.markFailed(
                     jobId,
                     `Twilio call status: ${CallStatus}`
                   );
 
-                  // Resolve from-number for SMS
                   const numberEntry = await NumbersRepository.findById(
                     schedule.number_id
                   );
@@ -1507,11 +1517,10 @@ async function routes(app: FastifyInstance) {
                     );
                   }
                 } else {
-                  // Not yet at max attempts → reschedule
                   const retryMinutes =
                     typeof schedule.retry_interval === 'number'
                       ? schedule.retry_interval
-                      : 5; // fallback
+                      : 5;
 
                   const nextRunAt = new Date(
                     Date.now() + retryMinutes * 60 * 1000
@@ -1519,11 +1528,10 @@ async function routes(app: FastifyInstance) {
 
                   const nextAttempt = currentAttempt + 1;
 
-                  const updatedJob =
-                    await ReassuranceCallJobsRepository.reschedule(jobId, {
-                      run_at: nextRunAt,
-                      attempt: nextAttempt,
-                    });
+                  await ReassuranceCallJobsRepository.reschedule(jobId, {
+                    run_at: nextRunAt,
+                    attempt: nextAttempt,
+                  });
 
                   app.log.info(
                     {
@@ -1549,12 +1557,10 @@ async function routes(app: FastifyInstance) {
         }
       }
 
-      // Update call record with duration/status (your existing logic)
       try {
-        if (CallSid && CallDuration) {
-          const durationSeconds = Number(CallDuration);
+        if (CallSid) {
           await CallsRepository.update(CallSid, {
-            duration: durationSeconds,
+            ...(CallDuration ? { duration: Number(CallDuration) } : {}),
             meta: { status: CallStatus },
           });
         }
@@ -1582,7 +1588,6 @@ async function routes(app: FastifyInstance) {
         return reply.type('text/xml').status(200).send(r.toString());
       }
 
-      // ✅ scheduleId derived strictly from FROM number using DB join
       const sched =
         await ReassuranceSchedulesRepository.findByFromNumber('+13094855324');
 
@@ -1594,7 +1599,6 @@ async function routes(app: FastifyInstance) {
       const q = (request.query ?? {}) as Record<string, any>;
       const b = (request.body ?? {}) as Record<string, any>;
 
-      // ✅ correlate with Twilio call
       const callId = '678437c8-c926-4c86-8c66-0a4c52550f00';
       const jobId = '37c1737e-2100-482a-9368-9210e55245f8';
 

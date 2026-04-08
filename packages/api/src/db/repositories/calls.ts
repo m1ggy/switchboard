@@ -33,8 +33,8 @@ export const CallsRepository = {
         number_id,
         contact_id,
         initiated_at?.toISOString() || new Date().toISOString(),
-        duration || null,
-        meta || null,
+        duration ?? null,
+        meta ?? null,
         call_sid,
       ]
     );
@@ -71,7 +71,9 @@ export const CallsRepository = {
    */
   async findByNumber(numberId: string): Promise<Call[]> {
     const res = await pool.query<Call>(
-      `SELECT * FROM calls WHERE number_id = $1 ORDER BY initiated_at DESC`,
+      `SELECT * FROM calls
+       WHERE number_id = $1
+       ORDER BY initiated_at DESC`,
       [numberId]
     );
     return res.rows;
@@ -85,20 +87,20 @@ export const CallsRepository = {
   ): Promise<(Call & { contact: Contact })[]> {
     const res = await pool.query(
       `
-    SELECT 
-      calls.*,
-      jsonb_build_object(
-        'id', contacts.id,
-        'number', contacts.number,
-        'created_at', contacts.created_at,
-        'company_id', contacts.company_id,
-        'label', contacts.label
-      ) AS contact
-    FROM calls
-    JOIN contacts ON calls.contact_id = contacts.id
-    WHERE calls.number_id = $1
-    ORDER BY calls.initiated_at DESC
-    `,
+      SELECT
+        calls.*,
+        jsonb_build_object(
+          'id', contacts.id,
+          'number', contacts.number,
+          'created_at', contacts.created_at,
+          'company_id', contacts.company_id,
+          'label', contacts.label
+        ) AS contact
+      FROM calls
+      JOIN contacts ON calls.contact_id = contacts.id
+      WHERE calls.number_id = $1
+      ORDER BY calls.initiated_at DESC
+      `,
       [numberId]
     );
 
@@ -116,28 +118,32 @@ export const CallsRepository = {
   },
 
   async findBySID(sid: string): Promise<Call | null> {
-    const res = await pool.query('SELECT * FROM calls WHERE call_sid = $1', [
-      sid,
-    ]);
+    const res = await pool.query<Call>(
+      `SELECT * FROM calls WHERE call_sid = $1`,
+      [sid]
+    );
 
-    return res.rows?.[0] ?? null;
+    return res.rows[0] || null;
   },
 
   async update(sid: string, updates: Partial<Call>): Promise<Call | null> {
     const fields: string[] = [];
-    const values: any[] = [];
+    const values: unknown[] = [];
     let paramIndex = 1;
 
     for (const [key, value] of Object.entries(updates)) {
+      if (typeof value === 'undefined') continue;
+
       if (key === 'meta' && value && typeof value === 'object') {
         fields.push(
-          `meta = COALESCE(meta, '{}'::json) || $${paramIndex}::json`
+          `meta = COALESCE(meta, '{}'::jsonb) || $${paramIndex}::jsonb`
         );
         values.push(JSON.stringify(value));
       } else {
         fields.push(`${key} = $${paramIndex}`);
         values.push(value);
       }
+
       paramIndex++;
     }
 
@@ -145,13 +151,13 @@ export const CallsRepository = {
       throw new Error('No fields provided to update.');
     }
 
-    values.push(sid); // last value is the call_sid
+    values.push(sid);
 
     const res = await pool.query<Call>(
       `UPDATE calls
-     SET ${fields.join(', ')}
-     WHERE call_sid = $${paramIndex}
-     RETURNING *`,
+       SET ${fields.join(', ')}
+       WHERE call_sid = $${paramIndex}
+       RETURNING *`,
       values
     );
 
