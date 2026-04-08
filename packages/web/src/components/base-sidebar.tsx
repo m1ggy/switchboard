@@ -63,6 +63,7 @@ type SidebarNavItem = {
   onClick?: () => void;
   restricted?: boolean;
   feature?: Parameters<typeof hasFeature>[1];
+  allowedEmails?: string[];
 };
 
 // PWA: beforeinstallprompt event
@@ -133,6 +134,7 @@ const callsItems: SidebarNavItem[] = [
     url: '/dashboard/automated-calls',
     icon: BotMessageSquare,
     restricted: true,
+    allowedEmails: ['ctkadvisorsinc@gmail.com'],
   },
 ];
 
@@ -176,23 +178,24 @@ function BaseSidebar() {
     items.filter((item) => {
       if (item.title === 'Video Call') return canVideoCall;
       if (!item.restricted) return true;
+      if (item.allowedEmails?.includes(user?.email ?? '')) return true;
       if (!item.feature || !selectedPlan) return false;
       return hasFeature(selectedPlan, item.feature);
     });
 
   const visibleSmsItems = useMemo(
     () => filterRestrictedItems(smsItems),
-    [selectedPlan]
+    [selectedPlan, user?.email]
   );
 
   const visibleCallsItems = useMemo(
     () => filterRestrictedItems(callsItems),
-    [selectedPlan, canVideoCall]
+    [selectedPlan, user?.email, canVideoCall]
   );
 
   const visibleContactsItems = useMemo(
     () => filterRestrictedItems(contactsItems),
-    [selectedPlan]
+    [selectedPlan, user?.email]
   );
 
   const { data: companies, isFetching: companiesLoading } = useQuery({
@@ -415,7 +418,6 @@ function BaseSidebar() {
           </SidebarMenuItem>
         </SidebarMenu>
 
-        {/* Messages */}
         {visibleSmsItems.map((item) => (
           <SidebarMenuItem key={item.title}>
             <SidebarMenuButton
@@ -455,7 +457,6 @@ function BaseSidebar() {
           </SidebarMenuItem>
         ))}
 
-        {/* Calls */}
         {visibleCallsItems.length > 0 && (
           <SidebarGroup>
             <SidebarGroupLabel>Calls</SidebarGroupLabel>
@@ -505,7 +506,6 @@ function BaseSidebar() {
           </SidebarGroup>
         )}
 
-        {/* Contacts */}
         {visibleContactsItems.length > 0 && (
           <SidebarGroup>
             <SidebarGroupLabel>Contacts</SidebarGroupLabel>
@@ -543,7 +543,6 @@ function BaseSidebar() {
           </SidebarGroup>
         )}
 
-        {/* Fax */}
         {canFax && (
           <SidebarGroup>
             <SidebarGroupLabel>Fax</SidebarGroupLabel>
@@ -620,5 +619,4 @@ function BaseSidebar() {
     </Sidebar>
   );
 }
-
 export default BaseSidebar;
