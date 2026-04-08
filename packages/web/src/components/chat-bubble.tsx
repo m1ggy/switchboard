@@ -10,6 +10,7 @@ import {
   Voicemail as VoicemailIcon,
 } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import CallRecordingCard from './call-recording-card';
 
 type Attachment = {
   file_name: string;
@@ -68,10 +69,11 @@ type ChatBubbleProps = {
 };
 
 function secondsToMMSS(s: number) {
-  const mm = Math.floor(s / 60)
+  const safe = Number.isFinite(s) && s >= 0 ? s : 0;
+  const mm = Math.floor(safe / 60)
     .toString()
     .padStart(2, '0');
-  const ss = Math.floor(s % 60)
+  const ss = Math.floor(safe % 60)
     .toString()
     .padStart(2, '0');
   return `${mm}:${ss}`;
@@ -139,13 +141,23 @@ function AudioCard({
     if (!a) return;
 
     const onTime = () => {
-      setElapsed(a.currentTime);
-      const d = a.duration || duration || initialDuration || 1;
-      setProgress(a.currentTime / d);
+      const current = Number.isFinite(a.currentTime) ? a.currentTime : 0;
+      setElapsed(current);
+
+      const d =
+        typeof a.duration === 'number' && Number.isFinite(a.duration)
+          ? a.duration
+          : duration || initialDuration || 1;
+
+      setProgress(current / d);
     };
 
     const onLoaded = () => {
-      setDuration(a.duration || duration || initialDuration);
+      const d =
+        typeof a.duration === 'number' && Number.isFinite(a.duration)
+          ? a.duration
+          : duration || initialDuration || 0;
+      setDuration(d);
     };
 
     const onEnd = () => {
@@ -159,6 +171,7 @@ function AudioCard({
 
     a.addEventListener('timeupdate', onTime);
     a.addEventListener('loadedmetadata', onLoaded);
+    a.addEventListener('durationchange', onLoaded);
     a.addEventListener('ended', onEnd);
     a.addEventListener('pause', onPause);
     a.addEventListener('play', onPlay);
@@ -166,6 +179,7 @@ function AudioCard({
     return () => {
       a.removeEventListener('timeupdate', onTime);
       a.removeEventListener('loadedmetadata', onLoaded);
+      a.removeEventListener('durationchange', onLoaded);
       a.removeEventListener('ended', onEnd);
       a.removeEventListener('pause', onPause);
       a.removeEventListener('play', onPlay);
@@ -193,7 +207,13 @@ function AudioCard({
     if (!a) return;
 
     const pct = Number(e.target.value);
-    const d = a.duration || duration || initialDuration || 1;
+    if (!Number.isFinite(pct)) return;
+
+    const d =
+      typeof a.duration === 'number' && Number.isFinite(a.duration)
+        ? a.duration
+        : duration || initialDuration || 1;
+
     a.currentTime = (pct / 100) * d;
     setProgress(pct / 100);
   };
@@ -273,7 +293,7 @@ function AudioCard({
           {secondsToMMSS(duration || initialDuration || 0)}
         </div>
 
-        <audio ref={audioRef} preload="none" src={url} />
+        <audio ref={audioRef} preload="metadata" src={url} />
       </div>
 
       <div className={`mt-2 text-xs ${textMuted}`}>{stamp}</div>
@@ -295,29 +315,6 @@ function VoicemailCard({ vm, subtle }: { vm: Voicemail; subtle?: boolean }) {
       transcription={vm.transcription}
       subtle={subtle}
       icon={<VoicemailIcon className="w-3.5 h-3.5" />}
-    />
-  );
-}
-
-function CallRecordingCard({
-  recording,
-  createdAt,
-  subtle,
-}: {
-  recording: CallRecording;
-  createdAt: string;
-  subtle?: boolean;
-}) {
-  if (!recording?.url) return null;
-
-  return (
-    <AudioCard
-      url={recording.url}
-      title="Call Recording"
-      createdAt={createdAt}
-      durationSeconds={recording.duration}
-      subtle={subtle}
-      icon={<Phone className="w-3.5 h-3.5" />}
     />
   );
 }
@@ -390,7 +387,7 @@ function ChatBubble({
       className={`flex flex-col ${alignClass} ${hasReactions ? 'gap-3' : 'gap-1'}`}
     >
       <div
-        className={`relative max-w-xs px-4 py-3 rounded-2xl ${bubbleClass} ${
+        className={`relative max-w-sm px-4 py-3 rounded-2xl ${bubbleClass} ${
           hasReactions ? 'pb-5' : ''
         }`}
       >
@@ -494,7 +491,7 @@ function ChatBubble({
             </span>
 
             <CallRecordingCard
-              recording={recording as CallRecording}
+              recording={recording}
               createdAt={item.createdAt}
               subtle={isOutbound}
             />

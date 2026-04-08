@@ -72,7 +72,7 @@ export const CallsRepository = {
   ): Promise<(Call & { contact: Contact })[]> {
     const res = await pool.query(
       `
-      SELECT 
+      SELECT
         calls.*,
         jsonb_build_object(
           'id', contacts.id,
