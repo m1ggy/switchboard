@@ -2,9 +2,15 @@
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Calendar } from '@/components/ui/calendar';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import {
   Select,
   SelectContent,
@@ -13,7 +19,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { scheduleSchema } from '@/lib/schemas';
-import { AlertCircle } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { format } from 'date-fns';
+import { AlertCircle, CalendarIcon } from 'lucide-react';
 import type React from 'react';
 import { useMemo, useState } from 'react';
 import { ZodError } from 'zod';
@@ -46,6 +54,25 @@ const days = [
   'Sunday',
 ] as const;
 
+const appointmentTimezones = [
+  'America/Chicago',
+  'America/New_York',
+  'America/Los_Angeles',
+  'America/Denver',
+  'America/Phoenix',
+  'America/Indiana/Indianapolis',
+  'Pacific/Honolulu',
+  'UTC',
+] as const;
+
+const reminderOffsets = [
+  { label: '15 minutes before', value: 15 },
+  { label: '30 minutes before', value: 30 },
+  { label: '1 hour before', value: 60 },
+  { label: '2 hours before', value: 120 },
+  { label: '1 day before', value: 1440 },
+] as const;
+
 const frequencyHelpText: Record<(typeof frequencies)[number], string> = {
   daily: 'Calls happen every day at the selected time.',
   weekly: 'Calls happen on the selected days every week.',
@@ -62,6 +89,37 @@ interface ScheduleFormProps {
   onCancel?: () => void;
 }
 
+function getDatePart(dateTime?: string) {
+  if (!dateTime) return undefined;
+  const parsed = new Date(dateTime);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
+
+function getTimePart(dateTime?: string) {
+  if (!dateTime) return '';
+  const raw = String(dateTime);
+  if (raw.includes('T')) {
+    const timePart = raw.split('T')[1]?.slice(0, 5);
+    return timePart || '';
+  }
+  return '';
+}
+
+function combineDateAndTime(date?: Date, time?: string) {
+  if (!date || !time) return '';
+  const [hours, minutes] = time.split(':').map(Number);
+  const next = new Date(date);
+  next.setHours(hours || 0, minutes || 0, 0, 0);
+
+  const year = next.getFullYear();
+  const month = String(next.getMonth() + 1).padStart(2, '0');
+  const day = String(next.getDate()).padStart(2, '0');
+  const hh = String(next.getHours()).padStart(2, '0');
+  const mm = String(next.getMinutes()).padStart(2, '0');
+
+  return `${year}-${month}-${day}T${hh}:${mm}`;
+}
+
 export default function ScheduleForm({
   contactId,
   numberId,
@@ -71,6 +129,16 @@ export default function ScheduleForm({
 }: ScheduleFormProps) {
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const initialAppointmentDateTime =
+    initialData?.appointmentDetails?.appointment_datetime || '';
+
+  const [appointmentDate, setAppointmentDate] = useState<Date | undefined>(
+    getDatePart(initialAppointmentDateTime)
+  );
+  const [appointmentTime, setAppointmentTime] = useState(
+    getTimePart(initialAppointmentDateTime)
+  );
 
   const [formData, setFormData] = useState({
     contact_id: contactId,
@@ -121,10 +189,10 @@ export default function ScheduleForm({
     appointmentDetails: {
       appointment_title:
         initialData?.appointmentDetails?.appointment_title || '',
-      appointment_datetime:
-        initialData?.appointmentDetails?.appointment_datetime || '',
+      appointment_datetime: initialAppointmentDateTime,
       appointment_timezone:
-        initialData?.appointmentDetails?.appointment_timezone || '',
+        initialData?.appointmentDetails?.appointment_timezone ||
+        'America/Chicago',
       provider_name: initialData?.appointmentDetails?.provider_name || '',
       provider_phone: initialData?.appointmentDetails?.provider_phone || '',
       location_name: initialData?.appointmentDetails?.location_name || '',
@@ -165,6 +233,18 @@ export default function ScheduleForm({
         : [...prev.selected_days, day],
     }));
     clearError('selected_days');
+  };
+
+  const updateAppointmentDateTime = (nextDate?: Date, nextTime?: string) => {
+    const combined = combineDateAndTime(nextDate, nextTime);
+    setFormData((prev) => ({
+      ...prev,
+      appointmentDetails: {
+        ...prev.appointmentDetails,
+        appointment_datetime: combined,
+      },
+    }));
+    clearError('appointmentDetails.appointment_datetime');
   };
 
   const buildPayload = () => {
@@ -463,20 +543,93 @@ export default function ScheduleForm({
             </div>
 
             <div className="space-y-2">
-              <Label>Appointment Date & Time</Label>
-              <Input
-                type="datetime-local"
-                value={formData.appointmentDetails.appointment_datetime}
-                onChange={(e) => {
+              <Label>Appointment Timezone</Label>
+              <Select
+                value={formData.appointmentDetails.appointment_timezone}
+                onValueChange={(value) => {
                   setFormData((prev) => ({
                     ...prev,
                     appointmentDetails: {
                       ...prev.appointmentDetails,
-                      appointment_datetime: e.target.value,
+                      appointment_timezone: value,
                     },
                   }));
-                  clearError('appointmentDetails.appointment_datetime');
+                  clearError('appointmentDetails.appointment_timezone');
                 }}
+              >
+                <SelectTrigger
+                  className={
+                    errors['appointmentDetails.appointment_timezone']
+                      ? 'border-destructive focus:ring-destructive'
+                      : ''
+                  }
+                >
+                  <SelectValue placeholder="Select timezone" />
+                </SelectTrigger>
+                <SelectContent>
+                  {appointmentTimezones.map((timezone) => (
+                    <SelectItem key={timezone} value={timezone}>
+                      {timezone}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {errors['appointmentDetails.appointment_timezone'] && (
+                <p className="text-sm text-destructive">
+                  {errors['appointmentDetails.appointment_timezone']}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Appointment Date</Label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={cn(
+                      'w-full justify-start text-left font-normal',
+                      !appointmentDate && 'text-muted-foreground',
+                      errors['appointmentDetails.appointment_datetime'] &&
+                        'border-destructive'
+                    )}
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {appointmentDate
+                      ? format(appointmentDate, 'PPP')
+                      : 'Pick a date'}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={appointmentDate}
+                    onSelect={(date) => {
+                      setAppointmentDate(date);
+                      updateAppointmentDateTime(date, appointmentTime);
+                    }}
+                    autoFocus
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Appointment Time</Label>
+              <Input
+                type="time"
+                value={appointmentTime}
+                onChange={(e) => {
+                  const nextTime = e.target.value;
+                  setAppointmentTime(nextTime);
+                  updateAppointmentDateTime(appointmentDate, nextTime);
+                }}
+                className={
+                  errors['appointmentDetails.appointment_datetime']
+                    ? 'border-destructive focus-visible:ring-destructive'
+                    : ''
+                }
               />
               {errors['appointmentDetails.appointment_datetime'] && (
                 <p className="text-sm text-destructive">
@@ -486,52 +639,72 @@ export default function ScheduleForm({
             </div>
 
             <div className="space-y-2">
-              <Label>Appointment Timezone</Label>
-              <Input
-                placeholder="e.g., America/Chicago"
-                value={formData.appointmentDetails.appointment_timezone}
-                onChange={(e) => {
+              <Label>Reminder Offset</Label>
+              <Select
+                value={String(
+                  formData.appointmentDetails.reminder_offset_minutes
+                )}
+                onValueChange={(value) => {
                   setFormData((prev) => ({
                     ...prev,
                     appointmentDetails: {
                       ...prev.appointmentDetails,
-                      appointment_timezone: e.target.value,
-                    },
-                  }));
-                  clearError('appointmentDetails.appointment_timezone');
-                }}
-              />
-              {errors['appointmentDetails.appointment_timezone'] && (
-                <p className="text-sm text-destructive">
-                  {errors['appointmentDetails.appointment_timezone']}
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label>Reminder Offset (minutes)</Label>
-              <Input
-                type="number"
-                min="0"
-                value={formData.appointmentDetails.reminder_offset_minutes}
-                onChange={(e) => {
-                  setFormData((prev) => ({
-                    ...prev,
-                    appointmentDetails: {
-                      ...prev.appointmentDetails,
-                      reminder_offset_minutes: Number.parseInt(
-                        e.target.value || '0'
-                      ),
+                      reminder_offset_minutes: Number(value),
                     },
                   }));
                   clearError('appointmentDetails.reminder_offset_minutes');
                 }}
-              />
+              >
+                <SelectTrigger
+                  className={
+                    errors['appointmentDetails.reminder_offset_minutes']
+                      ? 'border-destructive focus:ring-destructive'
+                      : ''
+                  }
+                >
+                  <SelectValue placeholder="Select reminder timing" />
+                </SelectTrigger>
+                <SelectContent>
+                  {reminderOffsets.map((option) => (
+                    <SelectItem key={option.value} value={String(option.value)}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {errors['appointmentDetails.reminder_offset_minutes'] && (
                 <p className="text-sm text-destructive">
                   {errors['appointmentDetails.reminder_offset_minutes']}
                 </p>
               )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Requires Confirmation</Label>
+              <Select
+                value={
+                  formData.appointmentDetails.requires_confirmation
+                    ? 'yes'
+                    : 'no'
+                }
+                onValueChange={(value) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    appointmentDetails: {
+                      ...prev.appointmentDetails,
+                      requires_confirmation: value === 'yes',
+                    },
+                  }));
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select option" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="yes">Yes</SelectItem>
+                  <SelectItem value="no">No</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">
@@ -615,24 +788,6 @@ export default function ScheduleForm({
                 }));
               }}
             />
-          </div>
-
-          <div className="flex items-center gap-2 mt-4">
-            <input
-              type="checkbox"
-              checked={formData.appointmentDetails.requires_confirmation}
-              onChange={(e) => {
-                setFormData((prev) => ({
-                  ...prev,
-                  appointmentDetails: {
-                    ...prev.appointmentDetails,
-                    requires_confirmation: e.target.checked,
-                  },
-                }));
-              }}
-              className="w-4 h-4 rounded border-border"
-            />
-            <Label>Requires Confirmation</Label>
           </div>
         </Card>
       )}
