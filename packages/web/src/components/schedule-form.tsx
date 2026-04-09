@@ -55,14 +55,13 @@ const days = [
 ] as const;
 
 const appointmentTimezones = [
-  'America/Chicago',
-  'America/New_York',
-  'America/Los_Angeles',
-  'America/Denver',
-  'America/Phoenix',
-  'America/Indiana/Indianapolis',
-  'Pacific/Honolulu',
-  'UTC',
+  { label: 'Eastern Time (ET)', value: 'America/New_York' },
+  { label: 'Central Time (CT)', value: 'America/Chicago' },
+  { label: 'Mountain Time (MT)', value: 'America/Denver' },
+  { label: 'Mountain Time (MT)', value: 'America/Phoenix' },
+  { label: 'Pacific Time (PT)', value: 'America/Los_Angeles' },
+  { label: 'Alaska Time (AKT)', value: 'America/Anchorage' },
+  { label: 'Hawaii Time (HST)', value: 'Pacific/Honolulu' },
 ] as const;
 
 const reminderOffsets = [
@@ -91,33 +90,63 @@ interface ScheduleFormProps {
 
 function getDatePart(dateTime?: string) {
   if (!dateTime) return undefined;
-  const parsed = new Date(dateTime);
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+
+  const [datePart] = dateTime.split('T');
+  if (!datePart) return undefined;
+
+  const [year, month, day] = datePart.split('-').map(Number);
+  if (!year || !month || !day) return undefined;
+
+  return new Date(year, month - 1, day);
 }
 
 function getTimePart(dateTime?: string) {
   if (!dateTime) return '';
-  const raw = String(dateTime);
-  if (raw.includes('T')) {
-    const timePart = raw.split('T')[1]?.slice(0, 5);
-    return timePart || '';
-  }
-  return '';
+  if (!dateTime.includes('T')) return '';
+  return dateTime.split('T')[1]?.slice(0, 5) || '';
 }
 
 function combineDateAndTime(date?: Date, time?: string) {
   if (!date || !time) return '';
-  const [hours, minutes] = time.split(':').map(Number);
-  const next = new Date(date);
-  next.setHours(hours || 0, minutes || 0, 0, 0);
 
-  const year = next.getFullYear();
-  const month = String(next.getMonth() + 1).padStart(2, '0');
-  const day = String(next.getDate()).padStart(2, '0');
-  const hh = String(next.getHours()).padStart(2, '0');
-  const mm = String(next.getMinutes()).padStart(2, '0');
+  const [hours, minutes] = time.split(':').map(Number);
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hh = String(hours || 0).padStart(2, '0');
+  const mm = String(minutes || 0).padStart(2, '0');
 
   return `${year}-${month}-${day}T${hh}:${mm}`;
+}
+
+function parseLocalDateTime(dateTime?: string) {
+  if (!dateTime || !dateTime.includes('T')) return null;
+
+  const [datePart, timePart] = dateTime.split('T');
+  if (!datePart || !timePart) return null;
+
+  const [year, month, day] = datePart.split('-').map(Number);
+  const [hours, minutes] = timePart.split(':').map(Number);
+
+  if (!year || !month || !day || Number.isNaN(hours) || Number.isNaN(minutes)) {
+    return null;
+  }
+
+  return new Date(year, month - 1, day, hours, minutes, 0, 0);
+}
+
+function formatReminderDateTime(
+  appointmentDateTime?: string,
+  offsetMinutes?: number
+) {
+  const parsed = parseLocalDateTime(appointmentDateTime);
+  if (!parsed || offsetMinutes === undefined || Number.isNaN(offsetMinutes)) {
+    return '';
+  }
+
+  const reminderDate = new Date(parsed.getTime() - offsetMinutes * 60 * 1000);
+  return format(reminderDate, 'PPP p');
 }
 
 export default function ScheduleForm({
@@ -136,6 +165,7 @@ export default function ScheduleForm({
   const [appointmentDate, setAppointmentDate] = useState<Date | undefined>(
     getDatePart(initialAppointmentDateTime)
   );
+
   const [appointmentTime, setAppointmentTime] = useState(
     getTimePart(initialAppointmentDateTime)
   );
@@ -225,6 +255,20 @@ export default function ScheduleForm({
     );
   }, [formData.script_type, formData.template]);
 
+  const computedAppointmentDateTime = useMemo(() => {
+    return combineDateAndTime(appointmentDate, appointmentTime);
+  }, [appointmentDate, appointmentTime]);
+
+  const computedReminderTimeLabel = useMemo(() => {
+    return formatReminderDateTime(
+      computedAppointmentDateTime,
+      formData.appointmentDetails.reminder_offset_minutes
+    );
+  }, [
+    computedAppointmentDateTime,
+    formData.appointmentDetails.reminder_offset_minutes,
+  ]);
+
   const toggleDay = (day: (typeof days)[number]) => {
     setFormData((prev) => ({
       ...prev,
@@ -235,25 +279,14 @@ export default function ScheduleForm({
     clearError('selected_days');
   };
 
-  const updateAppointmentDateTime = (nextDate?: Date, nextTime?: string) => {
-    const combined = combineDateAndTime(nextDate, nextTime);
-    setFormData((prev) => ({
-      ...prev,
-      appointmentDetails: {
-        ...prev.appointmentDetails,
-        appointment_datetime: combined,
-      },
-    }));
-    clearError('appointmentDetails.appointment_datetime');
-  };
-
   const buildPayload = () => {
-    const should_send_selected_days = ['weekly', 'biweekly'].includes(
-      formData.frequency
-    );
+    const should_send_selected_days =
+      !showAppointmentFields &&
+      ['weekly', 'biweekly'].includes(formData.frequency);
 
-    const computed_frequency_days =
-      formData.frequency === 'custom'
+    const computed_frequency_days = showAppointmentFields
+      ? null
+      : formData.frequency === 'custom'
         ? (formData.frequency_days ?? null)
         : formData.frequency === 'monthly'
           ? 30
@@ -294,8 +327,7 @@ export default function ScheduleForm({
         ? {
             appointment_title:
               formData.appointmentDetails.appointment_title || '',
-            appointment_datetime:
-              formData.appointmentDetails.appointment_datetime || '',
+            appointment_datetime: computedAppointmentDateTime,
             appointment_timezone:
               formData.appointmentDetails.appointment_timezone || '',
             provider_name: formData.appointmentDetails.provider_name || null,
@@ -348,7 +380,7 @@ export default function ScheduleForm({
         </Alert>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div className="space-y-2">
           <Label htmlFor="name">Schedule Name</Label>
           <Input
@@ -394,10 +426,10 @@ export default function ScheduleForm({
         </div>
       </div>
 
-      <Card className="p-4 bg-muted/50">
-        <h3 className="font-semibold mb-4">Script Settings</h3>
+      <Card className="bg-muted/50 p-4">
+        <h3 className="mb-4 font-semibold">Script Settings</h3>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <div className="space-y-2">
             <Label>Script Type</Label>
             <Select
@@ -487,10 +519,10 @@ export default function ScheduleForm({
         </div>
 
         {formData.script_type === 'custom' && (
-          <div className="space-y-2 mt-4">
+          <div className="mt-4 space-y-2">
             <Label>Custom Script</Label>
             <textarea
-              className="w-full min-h-[120px] rounded-md border bg-background px-3 py-2 text-sm"
+              className="min-h-[120px] w-full rounded-md border bg-background px-3 py-2 text-sm"
               value={formData.script_content}
               onChange={(e) => {
                 setFormData((prev) => ({
@@ -510,421 +542,448 @@ export default function ScheduleForm({
       </Card>
 
       {showAppointmentFields && (
-        <Card className="p-4 bg-muted/50">
-          <h3 className="font-semibold mb-4">Appointment Details</h3>
+        <>
+          <Card className="bg-muted/50 p-4">
+            <h3 className="mb-4 font-semibold">Appointment Details</h3>
 
-          {errors.appointmentDetails && (
-            <p className="text-sm text-destructive mb-3">
-              {errors.appointmentDetails}
-            </p>
-          )}
+            {errors.appointmentDetails && (
+              <p className="mb-3 text-sm text-destructive">
+                {errors.appointmentDetails}
+              </p>
+            )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Appointment Title</Label>
-              <Input
-                value={formData.appointmentDetails.appointment_title}
-                onChange={(e) => {
-                  setFormData((prev) => ({
-                    ...prev,
-                    appointmentDetails: {
-                      ...prev.appointmentDetails,
-                      appointment_title: e.target.value,
-                    },
-                  }));
-                  clearError('appointmentDetails.appointment_title');
-                }}
-              />
-              {errors['appointmentDetails.appointment_title'] && (
-                <p className="text-sm text-destructive">
-                  {errors['appointmentDetails.appointment_title']}
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label>Appointment Timezone</Label>
-              <Select
-                value={formData.appointmentDetails.appointment_timezone}
-                onValueChange={(value) => {
-                  setFormData((prev) => ({
-                    ...prev,
-                    appointmentDetails: {
-                      ...prev.appointmentDetails,
-                      appointment_timezone: value,
-                    },
-                  }));
-                  clearError('appointmentDetails.appointment_timezone');
-                }}
-              >
-                <SelectTrigger
-                  className={
-                    errors['appointmentDetails.appointment_timezone']
-                      ? 'border-destructive focus:ring-destructive'
-                      : ''
-                  }
-                >
-                  <SelectValue placeholder="Select timezone" />
-                </SelectTrigger>
-                <SelectContent>
-                  {appointmentTimezones.map((timezone) => (
-                    <SelectItem key={timezone} value={timezone}>
-                      {timezone}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {errors['appointmentDetails.appointment_timezone'] && (
-                <p className="text-sm text-destructive">
-                  {errors['appointmentDetails.appointment_timezone']}
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label>Appointment Date</Label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className={cn(
-                      'w-full justify-start text-left font-normal',
-                      !appointmentDate && 'text-muted-foreground',
-                      errors['appointmentDetails.appointment_datetime'] &&
-                        'border-destructive'
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {appointmentDate
-                      ? format(appointmentDate, 'PPP')
-                      : 'Pick a date'}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={appointmentDate}
-                    onSelect={(date) => {
-                      setAppointmentDate(date);
-                      updateAppointmentDateTime(date, appointmentTime);
-                    }}
-                    autoFocus
-                  />
-                </PopoverContent>
-              </Popover>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Appointment Time</Label>
-              <Input
-                type="time"
-                value={appointmentTime}
-                onChange={(e) => {
-                  const nextTime = e.target.value;
-                  setAppointmentTime(nextTime);
-                  updateAppointmentDateTime(appointmentDate, nextTime);
-                }}
-                className={
-                  errors['appointmentDetails.appointment_datetime']
-                    ? 'border-destructive focus-visible:ring-destructive'
-                    : ''
-                }
-              />
-              {errors['appointmentDetails.appointment_datetime'] && (
-                <p className="text-sm text-destructive">
-                  {errors['appointmentDetails.appointment_datetime']}
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label>Reminder Offset</Label>
-              <Select
-                value={String(
-                  formData.appointmentDetails.reminder_offset_minutes
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Appointment Title</Label>
+                <Input
+                  value={formData.appointmentDetails.appointment_title}
+                  onChange={(e) => {
+                    setFormData((prev) => ({
+                      ...prev,
+                      appointmentDetails: {
+                        ...prev.appointmentDetails,
+                        appointment_title: e.target.value,
+                      },
+                    }));
+                    clearError('appointmentDetails.appointment_title');
+                  }}
+                />
+                {errors['appointmentDetails.appointment_title'] && (
+                  <p className="text-sm text-destructive">
+                    {errors['appointmentDetails.appointment_title']}
+                  </p>
                 )}
-                onValueChange={(value) => {
-                  setFormData((prev) => ({
-                    ...prev,
-                    appointmentDetails: {
-                      ...prev.appointmentDetails,
-                      reminder_offset_minutes: Number(value),
-                    },
-                  }));
-                  clearError('appointmentDetails.reminder_offset_minutes');
-                }}
-              >
-                <SelectTrigger
+              </div>
+
+              <div className="space-y-2">
+                <Label>Appointment Timezone</Label>
+                <Select
+                  value={formData.appointmentDetails.appointment_timezone}
+                  onValueChange={(value) => {
+                    setFormData((prev) => ({
+                      ...prev,
+                      appointmentDetails: {
+                        ...prev.appointmentDetails,
+                        appointment_timezone: value,
+                      },
+                    }));
+                    clearError('appointmentDetails.appointment_timezone');
+                  }}
+                >
+                  <SelectTrigger
+                    className={
+                      errors['appointmentDetails.appointment_timezone']
+                        ? 'border-destructive focus:ring-destructive'
+                        : ''
+                    }
+                  >
+                    <SelectValue placeholder="Select timezone" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {appointmentTimezones.map((tz) => (
+                      <SelectItem
+                        key={`${tz.value}-${tz.label}`}
+                        value={tz.value}
+                      >
+                        {tz.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {errors['appointmentDetails.appointment_timezone'] && (
+                  <p className="text-sm text-destructive">
+                    {errors['appointmentDetails.appointment_timezone']}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label>Appointment Date</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className={cn(
+                        'w-full justify-start text-left font-normal',
+                        !appointmentDate && 'text-muted-foreground',
+                        errors['appointmentDetails.appointment_datetime'] &&
+                          'border-destructive'
+                      )}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {appointmentDate
+                        ? format(appointmentDate, 'PPP')
+                        : 'Pick a date'}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={appointmentDate}
+                      onSelect={(date) => {
+                        setAppointmentDate(date);
+                        clearError('appointmentDetails.appointment_datetime');
+                      }}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Appointment Time</Label>
+                <Input
+                  type="time"
+                  value={appointmentTime}
+                  onChange={(e) => {
+                    setAppointmentTime(e.target.value);
+                    clearError('appointmentDetails.appointment_datetime');
+                  }}
                   className={
-                    errors['appointmentDetails.reminder_offset_minutes']
-                      ? 'border-destructive focus:ring-destructive'
+                    errors['appointmentDetails.appointment_datetime']
+                      ? 'border-destructive focus-visible:ring-destructive'
                       : ''
                   }
+                />
+                {errors['appointmentDetails.appointment_datetime'] && (
+                  <p className="text-sm text-destructive">
+                    {errors['appointmentDetails.appointment_datetime']}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label>Reminder Offset</Label>
+                <Select
+                  value={String(
+                    formData.appointmentDetails.reminder_offset_minutes
+                  )}
+                  onValueChange={(value) => {
+                    setFormData((prev) => ({
+                      ...prev,
+                      appointmentDetails: {
+                        ...prev.appointmentDetails,
+                        reminder_offset_minutes: Number(value),
+                      },
+                    }));
+                    clearError('appointmentDetails.reminder_offset_minutes');
+                  }}
                 >
-                  <SelectValue placeholder="Select reminder timing" />
-                </SelectTrigger>
-                <SelectContent>
-                  {reminderOffsets.map((option) => (
-                    <SelectItem key={option.value} value={String(option.value)}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {errors['appointmentDetails.reminder_offset_minutes'] && (
-                <p className="text-sm text-destructive">
-                  {errors['appointmentDetails.reminder_offset_minutes']}
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label>Requires Confirmation</Label>
-              <Select
-                value={
-                  formData.appointmentDetails.requires_confirmation
-                    ? 'yes'
-                    : 'no'
-                }
-                onValueChange={(value) => {
-                  setFormData((prev) => ({
-                    ...prev,
-                    appointmentDetails: {
-                      ...prev.appointmentDetails,
-                      requires_confirmation: value === 'yes',
-                    },
-                  }));
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select option" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="yes">Yes</SelectItem>
-                  <SelectItem value="no">No</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Provider Name</Label>
-              <Input
-                value={formData.appointmentDetails.provider_name}
-                onChange={(e) => {
-                  setFormData((prev) => ({
-                    ...prev,
-                    appointmentDetails: {
-                      ...prev.appointmentDetails,
-                      provider_name: e.target.value,
-                    },
-                  }));
-                }}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Provider Phone</Label>
-              <Input
-                type="tel"
-                value={formData.appointmentDetails.provider_phone}
-                onChange={(e) => {
-                  setFormData((prev) => ({
-                    ...prev,
-                    appointmentDetails: {
-                      ...prev.appointmentDetails,
-                      provider_phone: e.target.value,
-                    },
-                  }));
-                }}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Location Name</Label>
-              <Input
-                value={formData.appointmentDetails.location_name}
-                onChange={(e) => {
-                  setFormData((prev) => ({
-                    ...prev,
-                    appointmentDetails: {
-                      ...prev.appointmentDetails,
-                      location_name: e.target.value,
-                    },
-                  }));
-                }}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Location Address</Label>
-              <Input
-                value={formData.appointmentDetails.location_address}
-                onChange={(e) => {
-                  setFormData((prev) => ({
-                    ...prev,
-                    appointmentDetails: {
-                      ...prev.appointmentDetails,
-                      location_address: e.target.value,
-                    },
-                  }));
-                }}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-2 mt-4">
-            <Label>Notes</Label>
-            <textarea
-              className="w-full min-h-[100px] rounded-md border bg-background px-3 py-2 text-sm"
-              value={formData.appointmentDetails.notes}
-              onChange={(e) => {
-                setFormData((prev) => ({
-                  ...prev,
-                  appointmentDetails: {
-                    ...prev.appointmentDetails,
-                    notes: e.target.value,
-                  },
-                }));
-              }}
-            />
-          </div>
-        </Card>
-      )}
-
-      <Card className="p-4 bg-muted/50">
-        <h3 className="font-semibold mb-1">Schedule Frequency</h3>
-        <p className="text-sm text-muted-foreground mb-4">
-          {frequencyHelpText[formData.frequency]}
-        </p>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Frequency</Label>
-            <Select
-              value={formData.frequency}
-              onValueChange={(value: any) => {
-                setFormData((prev) => {
-                  const next = { ...prev, frequency: value };
-
-                  if (value === 'custom') {
-                    next.frequency_days = 7;
-                  }
-
-                  return next;
-                });
-                clearError('frequency');
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select frequency" />
-              </SelectTrigger>
-              <SelectContent>
-                {frequencies.map((freq) => (
-                  <SelectItem key={freq} value={freq}>
-                    {freq.charAt(0).toUpperCase() + freq.slice(1)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Time of Day</Label>
-            <Input
-              type="time"
-              value={formData.frequency_time}
-              aria-invalid={!!errors.frequency_time}
-              className={
-                errors.frequency_time
-                  ? 'border-destructive focus-visible:ring-destructive'
-                  : ''
-              }
-              onChange={(e) => {
-                setFormData((prev) => ({
-                  ...prev,
-                  frequency_time: e.target.value,
-                }));
-                clearError('frequency_time');
-              }}
-            />
-            {errors.frequency_time && (
-              <p className="text-sm text-destructive">
-                {errors.frequency_time}
-              </p>
-            )}
-          </div>
-        </div>
-
-        {showCustomDays && (
-          <div className="space-y-2 mt-4">
-            <Label>Days Between Calls</Label>
-            <Input
-              type="number"
-              min="1"
-              value={formData.frequency_days}
-              aria-invalid={!!errors.frequency_days}
-              className={
-                errors.frequency_days
-                  ? 'border-destructive focus-visible:ring-destructive'
-                  : ''
-              }
-              onChange={(e) => {
-                setFormData((prev) => ({
-                  ...prev,
-                  frequency_days: Number.parseInt(e.target.value || '0'),
-                }));
-                clearError('frequency_days');
-              }}
-            />
-            {errors.frequency_days && (
-              <p className="text-sm text-destructive">
-                {errors.frequency_days}
-              </p>
-            )}
-          </div>
-        )}
-
-        {showDayPicker && (
-          <div className="space-y-3 mt-4">
-            <Label>Select Days</Label>
-
-            <div
-              className={
-                errors.selected_days
-                  ? 'rounded-md border border-destructive p-3'
-                  : ''
-              }
-            >
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                {days.map((day) => (
-                  <label
-                    key={day}
-                    className="flex items-center space-x-2 cursor-pointer"
+                  <SelectTrigger
+                    className={
+                      errors['appointmentDetails.reminder_offset_minutes']
+                        ? 'border-destructive focus:ring-destructive'
+                        : ''
+                    }
                   >
-                    <input
-                      type="checkbox"
-                      checked={formData.selected_days.includes(day)}
-                      onChange={() => toggleDay(day)}
-                      className="w-4 h-4 rounded border-border"
-                    />
-                    <span className="text-sm">{day.slice(0, 3)}</span>
-                  </label>
-                ))}
+                    <SelectValue placeholder="Select reminder timing" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {reminderOffsets.map((option) => (
+                      <SelectItem
+                        key={option.value}
+                        value={String(option.value)}
+                      >
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {errors['appointmentDetails.reminder_offset_minutes'] && (
+                  <p className="text-sm text-destructive">
+                    {errors['appointmentDetails.reminder_offset_minutes']}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label>Requires Confirmation</Label>
+                <Select
+                  value={
+                    formData.appointmentDetails.requires_confirmation
+                      ? 'yes'
+                      : 'no'
+                  }
+                  onValueChange={(value) => {
+                    setFormData((prev) => ({
+                      ...prev,
+                      appointmentDetails: {
+                        ...prev.appointmentDetails,
+                        requires_confirmation: value === 'yes',
+                      },
+                    }));
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select option" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="yes">Yes</SelectItem>
+                    <SelectItem value="no">No</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Provider Name</Label>
+                <Input
+                  value={formData.appointmentDetails.provider_name}
+                  onChange={(e) => {
+                    setFormData((prev) => ({
+                      ...prev,
+                      appointmentDetails: {
+                        ...prev.appointmentDetails,
+                        provider_name: e.target.value,
+                      },
+                    }));
+                  }}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Provider Phone</Label>
+                <Input
+                  type="tel"
+                  value={formData.appointmentDetails.provider_phone}
+                  onChange={(e) => {
+                    setFormData((prev) => ({
+                      ...prev,
+                      appointmentDetails: {
+                        ...prev.appointmentDetails,
+                        provider_phone: e.target.value,
+                      },
+                    }));
+                  }}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Location Name</Label>
+                <Input
+                  value={formData.appointmentDetails.location_name}
+                  onChange={(e) => {
+                    setFormData((prev) => ({
+                      ...prev,
+                      appointmentDetails: {
+                        ...prev.appointmentDetails,
+                        location_name: e.target.value,
+                      },
+                    }));
+                  }}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Location Address</Label>
+                <Input
+                  value={formData.appointmentDetails.location_address}
+                  onChange={(e) => {
+                    setFormData((prev) => ({
+                      ...prev,
+                      appointmentDetails: {
+                        ...prev.appointmentDetails,
+                        location_address: e.target.value,
+                      },
+                    }));
+                  }}
+                />
               </div>
             </div>
 
-            {errors.selected_days && (
-              <p className="text-sm text-destructive">{errors.selected_days}</p>
-            )}
+            <div className="mt-4 space-y-2">
+              <Label>Notes</Label>
+              <textarea
+                className="min-h-[100px] w-full rounded-md border bg-background px-3 py-2 text-sm"
+                value={formData.appointmentDetails.notes}
+                onChange={(e) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    appointmentDetails: {
+                      ...prev.appointmentDetails,
+                      notes: e.target.value,
+                    },
+                  }));
+                }}
+              />
+            </div>
+          </Card>
+
+          <Card className="bg-muted/50 p-4">
+            <h3 className="mb-1 font-semibold">Reminder Schedule</h3>
+            <p className="mb-4 text-sm text-muted-foreground">
+              This reminder is based on the appointment date and reminder
+              offset.
+            </p>
+
+            <div className="space-y-2">
+              <Label>Reminder Will Be Sent At</Label>
+              <div className="rounded-md border bg-background px-3 py-2 text-sm">
+                {computedReminderTimeLabel ||
+                  'Select appointment date and time'}
+              </div>
+            </div>
+          </Card>
+        </>
+      )}
+
+      {!showAppointmentFields && (
+        <Card className="bg-muted/50 p-4">
+          <h3 className="mb-1 font-semibold">Schedule Frequency</h3>
+          <p className="mb-4 text-sm text-muted-foreground">
+            {frequencyHelpText[formData.frequency]}
+          </p>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Frequency</Label>
+              <Select
+                value={formData.frequency}
+                onValueChange={(value: any) => {
+                  setFormData((prev) => {
+                    const next = { ...prev, frequency: value };
+
+                    if (value === 'custom') {
+                      next.frequency_days = 7;
+                    }
+
+                    return next;
+                  });
+                  clearError('frequency');
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select frequency" />
+                </SelectTrigger>
+                <SelectContent>
+                  {frequencies.map((freq) => (
+                    <SelectItem key={freq} value={freq}>
+                      {freq.charAt(0).toUpperCase() + freq.slice(1)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Time of Day</Label>
+              <Input
+                type="time"
+                value={formData.frequency_time}
+                aria-invalid={!!errors.frequency_time}
+                className={
+                  errors.frequency_time
+                    ? 'border-destructive focus-visible:ring-destructive'
+                    : ''
+                }
+                onChange={(e) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    frequency_time: e.target.value,
+                  }));
+                  clearError('frequency_time');
+                }}
+              />
+              {errors.frequency_time && (
+                <p className="text-sm text-destructive">
+                  {errors.frequency_time}
+                </p>
+              )}
+            </div>
           </div>
-        )}
-      </Card>
 
-      <Card className="p-4 bg-muted/50">
-        <h3 className="font-semibold mb-4">Call Settings</h3>
+          {showCustomDays && (
+            <div className="mt-4 space-y-2">
+              <Label>Days Between Calls</Label>
+              <Input
+                type="number"
+                min="1"
+                value={formData.frequency_days}
+                aria-invalid={!!errors.frequency_days}
+                className={
+                  errors.frequency_days
+                    ? 'border-destructive focus-visible:ring-destructive'
+                    : ''
+                }
+                onChange={(e) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    frequency_days: Number.parseInt(e.target.value || '0'),
+                  }));
+                  clearError('frequency_days');
+                }}
+              />
+              {errors.frequency_days && (
+                <p className="text-sm text-destructive">
+                  {errors.frequency_days}
+                </p>
+              )}
+            </div>
+          )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {showDayPicker && (
+            <div className="mt-4 space-y-3">
+              <Label>Select Days</Label>
+
+              <div
+                className={
+                  errors.selected_days
+                    ? 'rounded-md border border-destructive p-3'
+                    : ''
+                }
+              >
+                <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                  {days.map((day) => (
+                    <label
+                      key={day}
+                      className="flex cursor-pointer items-center space-x-2"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={formData.selected_days.includes(day)}
+                        onChange={() => toggleDay(day)}
+                        className="h-4 w-4 rounded border-border"
+                      />
+                      <span className="text-sm">{day.slice(0, 3)}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {errors.selected_days && (
+                <p className="text-sm text-destructive">
+                  {errors.selected_days}
+                </p>
+              )}
+            </div>
+          )}
+        </Card>
+      )}
+
+      <Card className="bg-muted/50 p-4">
+        <h3 className="mb-4 font-semibold">Call Settings</h3>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <div className="space-y-2">
             <Label>Calls Per Day</Label>
             <Input
@@ -975,10 +1034,10 @@ export default function ScheduleForm({
         </div>
       </Card>
 
-      <Card className="p-4 bg-muted/50">
-        <h3 className="font-semibold mb-4">Emergency Contact</h3>
+      <Card className="bg-muted/50 p-4">
+        <h3 className="mb-4 font-semibold">Emergency Contact</h3>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div className="space-y-2">
             <Label>Emergency Contact Name</Label>
             <Input
@@ -1018,12 +1077,12 @@ export default function ScheduleForm({
             setFormData((prev) => ({ ...prev, is_active: e.target.checked }));
             clearError('is_active');
           }}
-          className="w-4 h-4 rounded border-border"
+          className="h-4 w-4 rounded border-border"
         />
         <Label className="cursor-pointer">Schedule is Active</Label>
       </div>
 
-      <div className="flex gap-2 justify-end">
+      <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" onClick={onCancel}>
           Cancel
         </Button>
