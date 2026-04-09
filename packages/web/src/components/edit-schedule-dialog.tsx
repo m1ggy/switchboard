@@ -86,7 +86,7 @@ export default function EditScheduleDialog({
         onOpenChange(nextOpen);
       }}
     >
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {isCreateMode ? 'Add Schedule' : 'Edit Schedule'}
