@@ -15,7 +15,7 @@ export async function seedUpcomingJobs(app: FastifyInstance) {
 
   for (const schedule of schedules) {
     try {
-      const nextRunAt = getNextRunAtForSchedule(schedule);
+      const nextRunAt = await getNextRunAtForSchedule(schedule);
 
       // Optional: only seed if it's "soon" (prevents creating far-future jobs)
       // Example window: next 24h

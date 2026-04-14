@@ -1,10 +1,10 @@
-// src/server/routers/reassuranceContactProfiles.ts
 import pool from '@/lib/pg';
 import crypto from 'crypto';
 import { z } from 'zod';
 import { protectedProcedure, t } from '../trpc';
 
 import { ReassuranceCallLogsRepository } from '@/db/reassurance_call_logs';
+import { AppointmentReminderDetailsRepository } from '@/db/repositories/appointment_reminder_details';
 import { ContactsRepository } from '@/db/repositories/contacts';
 import { ReassuranceCallJobsRepository } from '@/db/repositories/reassurance_calls_jobs';
 import { ReassuranceContactProfilesRepository } from '@/db/repositories/reassurance_contact_profiles';
@@ -29,6 +29,37 @@ const getCallLogsInput = z.object({
     .default(200),
 });
 
+const reminderTemplateEnum = z.enum([
+  'wellness',
+  'safety',
+  'medication',
+  'social',
+  'appointment',
+]);
+
+const weekdayEnum = z.enum([
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+  'sunday',
+]);
+
+const appointmentDetailsInput = z.object({
+  appointment_title: z.string().min(1, 'required'),
+  appointment_datetime: z.string().min(1, 'required'),
+  appointment_timezone: z.string().min(1, 'required'),
+  provider_name: z.string().optional().nullable(),
+  provider_phone: z.string().optional().nullable(),
+  location_name: z.string().optional().nullable(),
+  location_address: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+  reminder_offset_minutes: z.number().int().min(0).default(60),
+  requires_confirmation: z.boolean().default(true),
+});
+
 const createScheduleInput = z
   .object({
     contact_id: z.string().uuid(),
@@ -39,10 +70,7 @@ const createScheduleInput = z
     caller_name: z.string().optional().nullable(),
 
     script_type: z.enum(['template', 'custom']),
-    template: z
-      .enum(['wellness', 'safety', 'medication', 'social'])
-      .optional()
-      .nullable(),
+    template: reminderTemplateEnum.optional().nullable(),
     script_content: z.string().optional().nullable(),
     name_in_script: z.enum(['contact', 'caller']),
 
@@ -50,20 +78,7 @@ const createScheduleInput = z
     frequency_days: z.number().int().positive().optional().nullable(),
     frequency_time: z.string().min(1),
 
-    selected_days: z
-      .array(
-        z.enum([
-          'monday',
-          'tuesday',
-          'wednesday',
-          'thursday',
-          'friday',
-          'saturday',
-          'sunday',
-        ])
-      )
-      .optional()
-      .nullable(),
+    selected_days: z.array(weekdayEnum).optional().nullable(),
 
     calls_per_day: z.number().int().positive(),
     max_attempts: z.number().int().positive(),
@@ -121,6 +136,16 @@ const createScheduleInput = z
           path: ['script_content'],
           code: z.ZodIssueCode.custom,
           message: 'script_content is required when script_type = custom',
+        });
+      }
+    }
+
+    if (data.script_type === 'template' && data.template === 'appointment') {
+      if (!data.appointmentDetails) {
+        ctx.addIssue({
+          path: ['appointmentDetails'],
+          code: z.ZodIssueCode.custom,
+          message: 'appointmentDetails is required when template = appointment',
         });
       }
     }
@@ -259,10 +284,7 @@ const createContactFullInput = z.object({
       caller_name: z.string().optional().nullable(),
 
       script_type: z.enum(['template', 'custom']),
-      template: z
-        .enum(['wellness', 'safety', 'medication', 'social'])
-        .optional()
-        .nullable(),
+      template: reminderTemplateEnum.optional().nullable(),
       script_content: z.string().optional().nullable(),
       name_in_script: z.enum(['contact', 'caller']),
 
@@ -270,20 +292,7 @@ const createContactFullInput = z.object({
       frequency_days: z.number().int().positive().optional().nullable(),
       frequency_time: z.string().min(1, 'required'),
 
-      selected_days: z
-        .array(
-          z.enum([
-            'monday',
-            'tuesday',
-            'wednesday',
-            'thursday',
-            'friday',
-            'saturday',
-            'sunday',
-          ])
-        )
-        .optional()
-        .nullable(),
+      selected_days: z.array(weekdayEnum).optional().nullable(),
 
       calls_per_day: z.number().int().positive(),
       max_attempts: z.number().int().positive(),
@@ -342,6 +351,17 @@ const createContactFullInput = z.object({
             path: ['script_content'],
             code: z.ZodIssueCode.custom,
             message: 'script_content is required when script_type = custom',
+          });
+        }
+      }
+
+      if (data.script_type === 'template' && data.template === 'appointment') {
+        if (!data.appointmentDetails) {
+          ctx.addIssue({
+            path: ['appointmentDetails'],
+            code: z.ZodIssueCode.custom,
+            message:
+              'appointmentDetails is required when template = appointment',
           });
         }
       }
@@ -437,6 +457,7 @@ export const reassuranceContactProfilesRouter = t.router({
         );
 
         let schedule: ReassuranceCallSchedule | null = null;
+        let appointmentReminder = null;
 
         if (input.schedule) {
           schedule = await ReassuranceSchedulesRepository.include(
@@ -475,6 +496,22 @@ export const reassuranceContactProfilesRouter = t.router({
             client
           );
 
+          if (
+            input.schedule.script_type === 'template' &&
+            input.schedule.template === 'appointment' &&
+            input.schedule.appointmentDetails
+          ) {
+            appointmentReminder =
+              await AppointmentReminderDetailsRepository.upsert(
+                {
+                  schedule_id: schedule.id,
+                  contact_id: contactId,
+                  ...input.schedule.appointmentDetails,
+                },
+                client
+              );
+          }
+
           const runAt = getNextRunAtForSchedule(schedule);
 
           await ReassuranceCallJobsRepository.include(
@@ -495,6 +532,7 @@ export const reassuranceContactProfilesRouter = t.router({
           contact,
           profile,
           schedule,
+          appointmentReminder,
         };
       } catch (err) {
         await client.query('ROLLBACK');
@@ -626,7 +664,10 @@ export const reassuranceContactProfilesRouter = t.router({
         );
 
         await client.query('COMMIT');
-        return schedule;
+        return {
+          schedule,
+          appointmentReminder,
+        };
       } catch (err) {
         await client.query('ROLLBACK');
         throw err;

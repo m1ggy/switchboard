@@ -9,7 +9,7 @@ import { type FastifyInstance } from 'fastify';
 async function notifyIncomingCall({
   callerId,
   toNumber,
-
+  callSid,
   app,
 }: {
   callerId: string;
@@ -52,7 +52,16 @@ async function notifyIncomingCall({
       id: crypto.randomUUID() as string,
       message: `Incoming call from ${contact?.label ?? callerId}`,
       createdAt: new Date(),
-      meta: { companyId: existingCompany.id },
+      meta: {
+        type: 'incoming_call',
+        companyId: existingCompany.id,
+        numberId: existingNumber.id,
+        from: callerId,
+        fromLabel: contact?.label ?? callerId,
+        to: toNumber,
+        toNumber,
+        callSid,
+      },
       userId: userCompany.user_id,
     });
 
@@ -180,7 +189,6 @@ export async function notifyNewVoicemail({
 
     const notif = await NotificationsRepository.create({
       id: crypto.randomUUID(),
-      // Keep it short for list previews
       message: `New voicemail from ${from} (${durationDisplay})`,
       createdAt: new Date(),
       userId: userCompany.user_id,
@@ -200,16 +208,14 @@ export async function notifyNewVoicemail({
       },
     });
 
-    // Generic notifications stream
     const notifChannel = `${userCompany.user_id}-notif`;
     app.io.emit(notifChannel, notif);
     console.log(`📢 Voicemail notification emitted to: ${notifChannel}`);
 
-    // Optional: a dedicated real-time stream for voicemail UIs
     const vmChannel = `${userCompany.user_id}-voicemail`;
     app.io.emit(vmChannel, {
       event: 'voicemail.created',
-      data: notif, // or shape it differently if you prefer
+      data: notif,
     });
     console.log(`📢 Voicemail event emitted to: ${vmChannel}`);
   } catch (error) {
@@ -251,7 +257,7 @@ async function notifyUser({
 export function formatDurationWithDateFns(seconds: number) {
   const duration = intervalToDuration({
     start: 0,
-    end: seconds * 1000, // convert to ms
+    end: seconds * 1000,
   });
 
   const { hours, minutes, seconds: secs } = duration;

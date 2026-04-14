@@ -36,7 +36,7 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
   const user = auth.currentUser;
   const trpc = useTRPC();
 
-  const { activeNumber } = useMainStore();
+  const { activeNumber, setActiveCompany, setActiveNumber } = useMainStore();
 
   const { refetch: refetchNotifications } = useQuery(
     trpc.notifications.getNotifications.queryOptions()
@@ -67,6 +67,56 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
     if (!user || !socket) return;
 
     const channel = `${user.uid}-notif`;
+
+    const switchToNotificationNumber = async (notif: Notification) => {
+      const targetCompanyId =
+        typeof notif.meta?.companyId === 'string' ? notif.meta.companyId : null;
+      const targetNumberId =
+        typeof notif.meta?.numberId === 'string' ? notif.meta.numberId : null;
+      const targetToNumber =
+        typeof notif.meta?.to === 'string'
+          ? notif.meta.to
+          : typeof notif.meta?.toNumber === 'string'
+            ? notif.meta.toNumber
+            : null;
+
+      if (!targetCompanyId) return;
+
+      const targetCompany =
+        companies?.find((company) => company.id === targetCompanyId) ?? null;
+      if (!targetCompany) return;
+
+      setActiveCompany(targetCompany);
+
+      const numbers = await client.fetchQuery(
+        trpc.numbers.getCompanyNumbers.queryOptions({
+          companyId: targetCompanyId,
+        })
+      );
+
+      const matchedNumber =
+        numbers.find((number) => {
+          if (targetNumberId && number.id === targetNumberId) return true;
+          if (targetToNumber && number.number === targetToNumber) return true;
+          return false;
+        }) ?? null;
+
+      if (!matchedNumber) return;
+
+      setActiveNumber(matchedNumber);
+
+      await client.invalidateQueries({
+        queryKey: trpc.inboxes.getNumberInboxes.queryKey({
+          numberId: matchedNumber.id,
+        }),
+      });
+
+      await client.invalidateQueries({
+        queryKey: trpc.inboxes.getUnreadInboxesCount.queryKey({
+          numberId: matchedNumber.id,
+        }),
+      });
+    };
 
     const handler = async (notif: Notification) => {
       let title = 'New Notification';
@@ -125,6 +175,28 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
             description: notif.message,
           });
         }
+      } else if (metaType === 'incoming_call') {
+        const targetNumber =
+          typeof notif.meta?.to === 'string'
+            ? notif.meta.to
+            : typeof notif.meta?.toNumber === 'string'
+              ? notif.meta.toNumber
+              : null;
+
+        toast.info(title, {
+          id: notif.id,
+          description: targetNumber
+            ? `${notif.message} • Line: ${targetNumber}`
+            : notif.message,
+          action: targetNumber
+            ? {
+                label: 'Switch number',
+                onClick: () => {
+                  void switchToNotificationNumber(notif);
+                },
+              }
+            : undefined,
+        });
       } else {
         toast.info(title, { description: notif.message });
       }
@@ -166,6 +238,8 @@ export const SocketProvider = ({ socket, children }: SocketProviderProps) => {
     activeNumber?.id,
     trpc,
     showSystemNotification,
+    setActiveCompany,
+    setActiveNumber,
   ]);
 
   useEffect(() => {
