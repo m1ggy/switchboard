@@ -164,4 +164,23 @@ export const ContactsRepository = {
 
     return res.rows[0];
   },
+
+  async findByNumberAndCompany(
+    number: string,
+    company_id: string,
+    db: PoolClient | typeof pool = pool
+  ): Promise<Contact | null> {
+    const res = await db.query<Contact>(
+      `
+    SELECT *
+    FROM contacts
+    WHERE number = $1
+      AND company_id = $2
+    LIMIT 1
+    `,
+      [number, company_id]
+    );
+
+    return res.rows[0] || null;
+  },
 };

@@ -47,7 +47,7 @@ const weekdayEnum = z.enum([
   'sunday',
 ]);
 
-const appointmentDetailsInput = z.object({
+const appointment_details_input = z.object({
   appointment_title: z.string().min(1, 'required'),
   appointment_datetime: z.string().min(1, 'required'),
   appointment_timezone: z.string().min(1, 'required'),
@@ -88,6 +88,8 @@ const createScheduleInput = z
 
     emergency_contact_name: z.string().optional().nullable(),
     emergency_contact_phone: z.string().optional().nullable(),
+
+    appointment_details: appointment_details_input.optional().nullable(),
   })
   .superRefine((data, ctx) => {
     if (data.frequency === 'weekly' || data.frequency === 'biweekly') {
@@ -120,14 +122,12 @@ const createScheduleInput = z
       }
     }
 
-    if (data.script_type === 'template') {
-      if (!data.template) {
-        ctx.addIssue({
-          path: ['template'],
-          code: z.ZodIssueCode.custom,
-          message: 'template is required when script_type = template',
-        });
-      }
+    if (data.script_type === 'template' && !data.template) {
+      ctx.addIssue({
+        path: ['template'],
+        code: z.ZodIssueCode.custom,
+        message: 'template is required when script_type = template',
+      });
     }
 
     if (data.script_type === 'custom') {
@@ -141,11 +141,12 @@ const createScheduleInput = z
     }
 
     if (data.script_type === 'template' && data.template === 'appointment') {
-      if (!data.appointmentDetails) {
+      if (!data.appointment_details) {
         ctx.addIssue({
-          path: ['appointmentDetails'],
+          path: ['appointment_details'],
           code: z.ZodIssueCode.custom,
-          message: 'appointmentDetails is required when template = appointment',
+          message:
+            'appointment_details is required when template = appointment',
         });
       }
     }
@@ -154,6 +155,7 @@ const createScheduleInput = z
 const updateScheduleInput = z
   .object({
     id: z.number().int(),
+    contact_id: z.string().uuid().optional().nullable(),
 
     name: z.string().min(1),
     caller_name: z.string().optional().nullable(),
@@ -177,6 +179,8 @@ const updateScheduleInput = z
 
     emergency_contact_name: z.string().optional().nullable(),
     emergency_contact_phone: z.string().optional().nullable(),
+
+    appointment_details: appointment_details_input.optional().nullable(),
   })
   .superRefine((data, ctx) => {
     if (data.frequency === 'weekly' || data.frequency === 'biweekly') {
@@ -209,14 +213,12 @@ const updateScheduleInput = z
       }
     }
 
-    if (data.script_type === 'template') {
-      if (!data.template) {
-        ctx.addIssue({
-          path: ['template'],
-          code: z.ZodIssueCode.custom,
-          message: 'template is required when script_type = template',
-        });
-      }
+    if (data.script_type === 'template' && !data.template) {
+      ctx.addIssue({
+        path: ['template'],
+        code: z.ZodIssueCode.custom,
+        message: 'template is required when script_type = template',
+      });
     }
 
     if (data.script_type === 'custom') {
@@ -230,114 +232,22 @@ const updateScheduleInput = z
     }
 
     if (data.script_type === 'template' && data.template === 'appointment') {
-      if (!data.appointmentDetails) {
+      if (!data.appointment_details) {
         ctx.addIssue({
-          path: ['appointmentDetails'],
+          path: ['appointment_details'],
           code: z.ZodIssueCode.custom,
-          message: 'appointmentDetails is required when template = appointment',
+          message:
+            'appointment_details is required when template = appointment',
         });
       }
     }
   });
 
-const updateScheduleInput = z
-  .object({
-    id: z.number().int(),
-    contactId: z.string().uuid().optional().nullable(),
-
-    name: z.string().min(1),
-    caller_name: z.string().optional().nullable(),
-
-    script_type: z.enum(['template', 'custom']),
-    template: reminderTemplateEnum.optional().nullable(),
-    script_content: z.string().optional().nullable(),
-    name_in_script: z.enum(['contact', 'caller']),
-
-    frequency: z.enum(['daily', 'weekly', 'biweekly', 'monthly', 'custom']),
-    frequency_days: z.number().int().positive().optional().nullable(),
-    frequency_time: z.string().min(1),
-
-    selected_days: z.array(weekdayEnum).optional().nullable(),
-
-    calls_per_day: z.number().int().positive(),
-    max_attempts: z.number().int().positive(),
-    retry_interval: z.number().int().positive(),
-
-    is_active: z.boolean().optional().nullable(),
-
-    emergency_contact_name: z.string().optional().nullable(),
-    emergency_contact_phone_number: z.string().optional().nullable(),
-
-    appointmentDetails: appointmentDetailsInput.optional().nullable(),
-  })
-  .superRefine((data, ctx) => {
-    if (data.frequency === 'weekly' || data.frequency === 'biweekly') {
-      if (!data.selected_days || data.selected_days.length === 0) {
-        ctx.addIssue({
-          path: ['selected_days'],
-          code: z.ZodIssueCode.custom,
-          message: 'selected_days is required for weekly/biweekly frequency',
-        });
-      }
-    }
-
-    if (data.frequency === 'custom') {
-      if (!data.frequency_days || data.frequency_days <= 0) {
-        ctx.addIssue({
-          path: ['frequency_days'],
-          code: z.ZodIssueCode.custom,
-          message: 'frequency_days is required for custom frequency',
-        });
-      }
-    }
-
-    if (data.frequency === 'monthly') {
-      if (data.frequency_days && data.frequency_days !== 30) {
-        ctx.addIssue({
-          path: ['frequency_days'],
-          code: z.ZodIssueCode.custom,
-          message: 'monthly frequency must use frequency_days = 30',
-        });
-      }
-    }
-
-    if (data.script_type === 'template') {
-      if (!data.template) {
-        ctx.addIssue({
-          path: ['template'],
-          code: z.ZodIssueCode.custom,
-          message: 'template is required when script_type = template',
-        });
-      }
-    }
-
-    if (data.script_type === 'custom') {
-      if (!data.script_content || data.script_content.trim().length === 0) {
-        ctx.addIssue({
-          path: ['script_content'],
-          code: z.ZodIssueCode.custom,
-          message: 'script_content is required when script_type = custom',
-        });
-      }
-    }
-
-    if (data.script_type === 'template' && data.template === 'appointment') {
-      if (!data.appointmentDetails) {
-        ctx.addIssue({
-          path: ['appointmentDetails'],
-          code: z.ZodIssueCode.custom,
-          message: 'appointmentDetails is required when template = appointment',
-        });
-      }
-    }
-  });
-
-// Minimal: you can expand these schemas later
 const jsonRecord = z.record(z.any());
 
 const upsertInput = z.object({
-  contactId: z.string().uuid(),
-  preferredName: z.string().min(1).optional().nullable(),
+  contact_id: z.string().uuid(),
+  preferred_name: z.string().min(1).optional().nullable(),
   locale: z.string().min(2).optional().nullable(),
   timezone: z.string().min(1).optional().nullable(),
   demographics: jsonRecord.optional().nullable(),
@@ -391,7 +301,7 @@ const createContactFullInput = z.object({
       number_id: z.string().uuid(),
       is_active: z.boolean().optional().nullable(),
 
-      appointmentDetails: appointmentDetailsInput.optional().nullable(),
+      appointment_details: appointment_details_input.optional().nullable(),
     })
     .superRefine((data, ctx) => {
       if (data.frequency === 'weekly' || data.frequency === 'biweekly') {
@@ -424,14 +334,12 @@ const createContactFullInput = z.object({
         }
       }
 
-      if (data.script_type === 'template') {
-        if (!data.template) {
-          ctx.addIssue({
-            path: ['template'],
-            code: z.ZodIssueCode.custom,
-            message: 'template is required when script_type = template',
-          });
-        }
+      if (data.script_type === 'template' && !data.template) {
+        ctx.addIssue({
+          path: ['template'],
+          code: z.ZodIssueCode.custom,
+          message: 'template is required when script_type = template',
+        });
       }
 
       if (data.script_type === 'custom') {
@@ -445,12 +353,12 @@ const createContactFullInput = z.object({
       }
 
       if (data.script_type === 'template' && data.template === 'appointment') {
-        if (!data.appointmentDetails) {
+        if (!data.appointment_details) {
           ctx.addIssue({
-            path: ['appointmentDetails'],
+            path: ['appointment_details'],
             code: z.ZodIssueCode.custom,
             message:
-              'appointmentDetails is required when template = appointment',
+              'appointment_details is required when template = appointment',
           });
         }
       }
@@ -530,11 +438,11 @@ export const reassuranceContactProfilesRouter = t.router({
           },
           client
         );
-        const contactId = contact.id;
+        const contact_id = contact.id;
 
         const profile = await ReassuranceContactProfilesRepository.upsert(
           {
-            contact_id: contactId,
+            contact_id,
             preferred_name: input.profile?.preferred_name ?? null,
             timezone: input.profile?.timezone ?? null,
             locale: input.profile?.locale ?? null,
@@ -546,7 +454,7 @@ export const reassuranceContactProfilesRouter = t.router({
         );
 
         let schedule: ReassuranceCallSchedule | null = null;
-        let appointmentReminder = null;
+        let appointment_reminder = null;
 
         if (input.schedule) {
           schedule = await ReassuranceSchedulesRepository.include(
@@ -588,20 +496,20 @@ export const reassuranceContactProfilesRouter = t.router({
           if (
             input.schedule.script_type === 'template' &&
             input.schedule.template === 'appointment' &&
-            input.schedule.appointmentDetails
+            input.schedule.appointment_details
           ) {
-            appointmentReminder =
+            appointment_reminder =
               await AppointmentReminderDetailsRepository.upsert(
                 {
                   schedule_id: schedule.id,
-                  contact_id: contactId,
-                  ...input.schedule.appointmentDetails,
+                  contact_id,
+                  ...input.schedule.appointment_details,
                 },
                 client
               );
           }
 
-          const runAt = getNextRunAtForSchedule(schedule);
+          const runAt = await getNextRunAtForSchedule(schedule);
 
           await ReassuranceCallJobsRepository.include(
             {
@@ -621,7 +529,7 @@ export const reassuranceContactProfilesRouter = t.router({
           contact,
           profile,
           schedule,
-          appointmentReminder,
+          appointment_reminder,
         };
       } catch (err) {
         await client.query('ROLLBACK');
@@ -681,7 +589,10 @@ export const reassuranceContactProfilesRouter = t.router({
             frequency_days: input.frequency_days ?? null,
             frequency_time: input.frequency_time,
 
-            selected_days: input.selected_days ?? null,
+            selected_days:
+              input.frequency === 'weekly' || input.frequency === 'biweekly'
+                ? (input.selected_days ?? ['monday'])
+                : null,
 
             calls_per_day: input.calls_per_day,
             max_attempts: input.max_attempts,
@@ -690,22 +601,21 @@ export const reassuranceContactProfilesRouter = t.router({
             is_active: input.is_active ?? true,
 
             emergency_contact_name: input.emergency_contact_name ?? null,
-            emergency_contact_phone_number:
-              input.emergency_contact_phone_number ?? null,
+            emergency_contact_phone: input.emergency_contact_phone ?? null,
           },
           client
         );
 
-        let appointmentReminder = null;
+        let appointment_reminder = null;
 
         if (
           input.script_type === 'template' &&
           input.template === 'appointment' &&
-          input.appointmentDetails
+          input.appointment_details
         ) {
-          let contactId = input.contactId ?? null;
+          let contact_id = input.contact_id ?? null;
 
-          if (!contactId) {
+          if (!contact_id) {
             const existingSchedule = await ReassuranceSchedulesRepository.find(
               input.id
             );
@@ -725,15 +635,15 @@ export const reassuranceContactProfilesRouter = t.router({
               );
             }
 
-            contactId = contact.id;
+            contact_id = contact.id;
           }
 
-          appointmentReminder =
+          appointment_reminder =
             await AppointmentReminderDetailsRepository.upsert(
               {
                 schedule_id: input.id,
-                contact_id: contactId,
-                ...input.appointmentDetails,
+                contact_id,
+                ...input.appointment_details,
               },
               client
             );
@@ -748,7 +658,7 @@ export const reassuranceContactProfilesRouter = t.router({
 
         return {
           schedule: updated,
-          appointmentReminder,
+          appointment_reminder,
         };
       } catch (err) {
         await client.query('ROLLBACK');
@@ -766,7 +676,7 @@ export const reassuranceContactProfilesRouter = t.router({
       try {
         await client.query('BEGIN');
 
-        const contact = await ContactsRepository.findById?.(input.contactId);
+        const contact = await ContactsRepository.findById?.(input.contact_id);
         if (!contact) {
           throw new Error('Contact not found');
         }
@@ -806,25 +716,25 @@ export const reassuranceContactProfilesRouter = t.router({
           client
         );
 
-        let appointmentReminder = null;
+        let appointment_reminder = null;
 
         if (
           input.script_type === 'template' &&
           input.template === 'appointment' &&
-          input.appointmentDetails
+          input.appointment_details
         ) {
-          appointmentReminder =
+          appointment_reminder =
             await AppointmentReminderDetailsRepository.upsert(
               {
                 schedule_id: schedule.id,
-                contact_id: input.contactId,
-                ...input.appointmentDetails,
+                contact_id: input.contact_id,
+                ...input.appointment_details,
               },
               client
             );
         }
 
-        const runAt = getNextRunAtForSchedule(schedule);
+        const runAt = await getNextRunAtForSchedule(schedule);
 
         await ReassuranceCallJobsRepository.include(
           {
@@ -840,7 +750,7 @@ export const reassuranceContactProfilesRouter = t.router({
         await client.query('COMMIT');
         return {
           schedule,
-          appointmentReminder,
+          appointment_reminder,
         };
       } catch (err) {
         await client.query('ROLLBACK');

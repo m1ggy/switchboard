@@ -17,7 +17,13 @@ type UpdateScheduleInput = {
   caller_name?: string | null;
 
   script_type: 'template' | 'custom';
-  template?: 'wellness' | 'safety' | 'medication' | 'social' | null;
+  template?:
+    | 'wellness'
+    | 'safety'
+    | 'medication'
+    | 'social'
+    | 'appointment'
+    | null;
   script_content?: string | null;
   name_in_script: 'contact' | 'caller';
 
@@ -51,7 +57,13 @@ export const ReassuranceSchedulesRepository = {
       emergency_contact_name?: string | null;
       emergency_contact_phone_number?: string | null;
       script_type: 'template' | 'custom';
-      template?: 'wellness' | 'safety' | 'medication' | 'social' | null;
+      template?:
+        | 'wellness'
+        | 'safety'
+        | 'medication'
+        | 'social'
+        | 'appointment'
+        | null;
       script_content?: string | null;
       name_in_script: 'contact' | 'caller';
       frequency: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'custom';
