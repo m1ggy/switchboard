@@ -93,7 +93,7 @@ export default function Dashboard({
   const { data, isLoading, refetch } = useQuery(
     trpc.reassuranceContactProfiles.getAllWithSchedulesByCompanyId.queryOptions(
       {
-        companyId: activeCompany?.id as string,
+        company_id: activeCompany?.id as string,
       }
     )
   );
@@ -103,7 +103,7 @@ export default function Dashboard({
     trpc.reassuranceContactProfiles.deleteSchedule.mutationOptions()
   );
 
-  const rows: Row[] = (data ?? []) as any;
+  const rows: Row[] = useMemo(() => data ?? [], [data]);
 
   /**
    * ✅ Filter list based on search query
