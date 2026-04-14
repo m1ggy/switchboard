@@ -361,6 +361,8 @@ export default function ScheduleForm({
     setLoading(true);
     setErrors({});
 
+    console.log({ e });
+
     try {
       const payload = buildPayload();
 

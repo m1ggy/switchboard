@@ -33,7 +33,6 @@ const INITIAL_FORM_STATE = {
   name: '',
   phoneNumber: '',
   callerName: '',
-  // NEW: emergency contact
   emergencyContactName: '',
   emergencyContactPhoneNumber: '',
   scriptType: 'template',
