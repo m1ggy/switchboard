@@ -12,11 +12,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { profileSchema, type Profile } from '@/lib/schemas';
+import { profileSchema } from '@/lib/schemas';
 import { AlertCircle } from 'lucide-react';
 import type React from 'react';
 import { useState } from 'react';
-import { ZodError } from 'zod';
+import { ZodError, type z } from 'zod';
 
 const timezones = [
   'UTC',
@@ -52,10 +52,12 @@ const riskOptions = [
   'Falls Risk',
 ];
 
+type ProfileFormSubmitData = z.infer<typeof profileSchema>;
+
 interface ProfileFormProps {
   contactId: string;
-  initialData?: Partial<Profile>;
-  onSubmit: (data: Profile) => void;
+  initialData?: Partial<ProfileFormSubmitData>;
+  onSubmit: (data: ProfileFormSubmitData) => void;
   onCancel?: () => void;
 }
 
@@ -125,9 +127,7 @@ export default function ProfileForm({
         </Alert>
       )}
 
-      {/* Preferred Name + Timezone */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Preferred Name */}
         <div className="space-y-2">
           <Label htmlFor="preferredName">Preferred Name</Label>
           <Input
@@ -153,7 +153,6 @@ export default function ProfileForm({
           )}
         </div>
 
-        {/* Timezone */}
         <div className="space-y-2">
           <Label htmlFor="timezone">Timezone</Label>
           <Select
@@ -188,7 +187,6 @@ export default function ProfileForm({
         </div>
       </div>
 
-      {/* Locale */}
       <div className="space-y-2">
         <Label htmlFor="locale">Language/Locale</Label>
         <Select
@@ -220,7 +218,6 @@ export default function ProfileForm({
         )}
       </div>
 
-      {/* Medical Notes */}
       <div className="space-y-2">
         <Label htmlFor="medicalNotes">Medical Notes</Label>
         <Textarea
@@ -244,7 +241,6 @@ export default function ProfileForm({
         )}
       </div>
 
-      {/* Goals */}
       <div className="space-y-2">
         <Label htmlFor="goals">Goals</Label>
         <Textarea
@@ -268,7 +264,6 @@ export default function ProfileForm({
         )}
       </div>
 
-      {/* Risk Flags */}
       <div className="space-y-3">
         <Label>Risk Flags</Label>
         <div
@@ -299,7 +294,6 @@ export default function ProfileForm({
         )}
       </div>
 
-      {/* Buttons */}
       <div className="flex gap-2 justify-end">
         <Button
           type="button"

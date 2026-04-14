@@ -12,11 +12,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 import { scheduleSchema } from '@/lib/schemas';
 import { AlertCircle } from 'lucide-react';
 import type React from 'react';
 import { useMemo, useState } from 'react';
-import { ZodError } from 'zod';
+import { ZodError, type z } from 'zod';
 
 const frequencies = [
   'daily',
@@ -25,6 +26,7 @@ const frequencies = [
   'monthly',
   'custom',
 ] as const;
+
 const scriptTypes = ['template', 'custom'] as const;
 const templates = ['wellness', 'safety', 'medication', 'social'] as const;
 
@@ -46,16 +48,24 @@ const frequencyHelpText: Record<(typeof frequencies)[number], string> = {
   custom: 'Calls happen every N days at the selected time.',
 };
 
+type ScheduleFormSubmitData = z.infer<typeof scheduleSchema> & {
+  company_id: string;
+  number_id: string;
+  template?: 'wellness' | 'safety' | 'medication' | 'social' | null;
+};
+
 interface ScheduleFormProps {
   contactId: string;
+  companyId: string;
   numberId: string;
-  initialData?: Partial<any>;
-  onSubmit: (data: any) => void;
+  initialData?: Partial<ScheduleFormSubmitData>;
+  onSubmit: (data: ScheduleFormSubmitData) => void;
   onCancel?: () => void;
 }
 
 export default function ScheduleForm({
   contactId,
+  companyId,
   numberId,
   initialData,
   onSubmit,
@@ -66,6 +76,7 @@ export default function ScheduleForm({
 
   const [formData, setFormData] = useState({
     contact_id: contactId,
+    company_id: companyId,
     number_id: numberId,
 
     name: initialData?.name || '',
@@ -97,7 +108,9 @@ export default function ScheduleForm({
     frequency_time: initialData?.frequency_time || '10:00',
 
     selected_days: (initialData?.selected_days?.length
-      ? initialData.selected_days
+      ? initialData.selected_days.map(
+          (d) => d.charAt(0).toUpperCase() + d.slice(1)
+        )
       : ['Monday', 'Wednesday', 'Friday']) as (typeof days)[number][],
 
     calls_per_day: initialData?.calls_per_day || 1,
@@ -135,7 +148,7 @@ export default function ScheduleForm({
     clearError('selected_days');
   };
 
-  const buildPayload = () => {
+  const buildPayload = (): ScheduleFormSubmitData => {
     const should_send_selected_days = ['weekly', 'biweekly'].includes(
       formData.frequency
     );
@@ -149,10 +162,14 @@ export default function ScheduleForm({
 
     return {
       contact_id: formData.contact_id,
+      company_id: formData.company_id,
+      number_id: formData.number_id,
+
       name: formData.name,
       caller_name: formData.caller_name || null,
 
       script_type: formData.script_type,
+      template: formData.script_type === 'template' ? formData.template : null,
       script_content:
         formData.script_type === 'custom' ? formData.script_content : null,
 
@@ -164,7 +181,7 @@ export default function ScheduleForm({
 
       selected_days: should_send_selected_days
         ? formData.selected_days.map((d) => d.toLowerCase())
-        : [],
+        : null,
 
       calls_per_day: formData.calls_per_day,
       max_attempts: formData.max_attempts,
@@ -184,8 +201,33 @@ export default function ScheduleForm({
 
     try {
       const payload = buildPayload();
-      const validated = scheduleSchema.parse(payload);
-      onSubmit(validated);
+
+      const validated = scheduleSchema.parse({
+        contact_id: payload.contact_id,
+        name: payload.name,
+        caller_name: payload.caller_name,
+        script_type: payload.script_type,
+        template: payload.template,
+        script_content: payload.script_content,
+        name_in_script: payload.name_in_script,
+        frequency: payload.frequency,
+        frequency_days: payload.frequency_days,
+        frequency_time: payload.frequency_time,
+        selected_days: payload.selected_days,
+        calls_per_day: payload.calls_per_day,
+        max_attempts: payload.max_attempts,
+        retry_interval: payload.retry_interval,
+        emergency_contact_name: payload.emergency_contact_name,
+        emergency_contact_phone: payload.emergency_contact_phone,
+        is_active: payload.is_active,
+      });
+
+      onSubmit({
+        ...validated,
+        company_id: payload.company_id,
+        number_id: payload.number_id,
+        template: payload.template,
+      });
     } catch (err) {
       if (err instanceof ZodError) {
         const fieldErrors: Record<string, string> = {};
@@ -194,7 +236,6 @@ export default function ScheduleForm({
           fieldErrors[fieldName] = error.message;
         });
 
-        console.log(fieldErrors);
         setErrors(fieldErrors);
       }
     } finally {
@@ -214,7 +255,6 @@ export default function ScheduleForm({
         </Alert>
       )}
 
-      {/* Schedule Name + Caller */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label htmlFor="name">Schedule Name</Label>
@@ -261,7 +301,6 @@ export default function ScheduleForm({
         </div>
       </div>
 
-      {/* Script Settings */}
       <Card className="p-4 bg-muted/50">
         <h3 className="font-semibold mb-4">Script Settings</h3>
 
@@ -270,9 +309,19 @@ export default function ScheduleForm({
             <Label>Script Type</Label>
             <Select
               value={formData.script_type}
-              onValueChange={(value: any) => {
-                setFormData((prev) => ({ ...prev, script_type: value }));
+              onValueChange={(value: 'template' | 'custom') => {
+                setFormData((prev) => ({
+                  ...prev,
+                  script_type: value,
+                  template:
+                    value === 'template'
+                      ? prev.template || 'wellness'
+                      : prev.template,
+                  script_content: value === 'custom' ? prev.script_content : '',
+                }));
                 clearError('script_type');
+                clearError('template');
+                clearError('script_content');
               }}
             >
               <SelectTrigger
@@ -292,18 +341,27 @@ export default function ScheduleForm({
                 ))}
               </SelectContent>
             </Select>
+            {errors.script_type && (
+              <p className="text-sm text-destructive">{errors.script_type}</p>
+            )}
           </div>
 
           <div className="space-y-2">
             <Label>Name Usage in Script</Label>
             <Select
               value={formData.name_in_script}
-              onValueChange={(value: any) => {
+              onValueChange={(value: 'contact' | 'caller') => {
                 setFormData((prev) => ({ ...prev, name_in_script: value }));
                 clearError('name_in_script');
               }}
             >
-              <SelectTrigger>
+              <SelectTrigger
+                className={
+                  errors.name_in_script
+                    ? 'border-destructive focus:ring-destructive'
+                    : ''
+                }
+              >
                 <SelectValue placeholder="Select usage" />
               </SelectTrigger>
               <SelectContent>
@@ -311,11 +369,80 @@ export default function ScheduleForm({
                 <SelectItem value="caller">Caller Name</SelectItem>
               </SelectContent>
             </Select>
+            {errors.name_in_script && (
+              <p className="text-sm text-destructive">
+                {errors.name_in_script}
+              </p>
+            )}
           </div>
         </div>
+
+        {formData.script_type === 'template' && (
+          <div className="space-y-2 mt-4">
+            <Label>Template</Label>
+            <Select
+              value={formData.template}
+              onValueChange={(
+                value: 'wellness' | 'safety' | 'medication' | 'social'
+              ) => {
+                setFormData((prev) => ({ ...prev, template: value }));
+                clearError('template');
+              }}
+            >
+              <SelectTrigger
+                className={
+                  errors.template
+                    ? 'border-destructive focus:ring-destructive'
+                    : ''
+                }
+              >
+                <SelectValue placeholder="Select template" />
+              </SelectTrigger>
+              <SelectContent>
+                {templates.map((template) => (
+                  <SelectItem key={template} value={template}>
+                    {template.charAt(0).toUpperCase() + template.slice(1)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {errors.template && (
+              <p className="text-sm text-destructive">{errors.template}</p>
+            )}
+          </div>
+        )}
+
+        {formData.script_type === 'custom' && (
+          <div className="space-y-2 mt-4">
+            <Label htmlFor="script_content">Custom Script</Label>
+            <Textarea
+              id="script_content"
+              rows={5}
+              placeholder="Write the custom script that should be used for this schedule..."
+              value={formData.script_content}
+              aria-invalid={!!errors.script_content}
+              className={
+                errors.script_content
+                  ? 'border-destructive focus-visible:ring-destructive'
+                  : ''
+              }
+              onChange={(e) => {
+                setFormData((prev) => ({
+                  ...prev,
+                  script_content: e.target.value,
+                }));
+                clearError('script_content');
+              }}
+            />
+            {errors.script_content && (
+              <p className="text-sm text-destructive">
+                {errors.script_content}
+              </p>
+            )}
+          </div>
+        )}
       </Card>
 
-      {/* Frequency */}
       <Card className="p-4 bg-muted/50">
         <h3 className="font-semibold mb-1">Schedule Frequency</h3>
         <p className="text-sm text-muted-foreground mb-4">
@@ -327,17 +454,27 @@ export default function ScheduleForm({
             <Label>Frequency</Label>
             <Select
               value={formData.frequency}
-              onValueChange={(value: any) => {
-                setFormData((prev) => ({ ...prev, frequency: value }));
+              onValueChange={(
+                value: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'custom'
+              ) => {
+                setFormData((prev) => ({
+                  ...prev,
+                  frequency: value,
+                  frequency_days:
+                    value === 'custom' ? prev.frequency_days || 7 : 7,
+                }));
                 clearError('frequency');
-
-                // defaults
-                if (value === 'custom') {
-                  setFormData((prev) => ({ ...prev, frequency_days: 7 }));
-                }
+                clearError('frequency_days');
+                clearError('selected_days');
               }}
             >
-              <SelectTrigger>
+              <SelectTrigger
+                className={
+                  errors.frequency
+                    ? 'border-destructive focus:ring-destructive'
+                    : ''
+                }
+              >
                 <SelectValue placeholder="Select frequency" />
               </SelectTrigger>
               <SelectContent>
@@ -348,6 +485,9 @@ export default function ScheduleForm({
                 ))}
               </SelectContent>
             </Select>
+            {errors.frequency && (
+              <p className="text-sm text-destructive">{errors.frequency}</p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -377,7 +517,6 @@ export default function ScheduleForm({
           </div>
         </div>
 
-        {/* Custom days between */}
         {showCustomDays && (
           <div className="space-y-2 mt-4">
             <Label>Days Between Calls</Label>
@@ -394,7 +533,7 @@ export default function ScheduleForm({
               onChange={(e) => {
                 setFormData((prev) => ({
                   ...prev,
-                  frequency_days: Number.parseInt(e.target.value || '0'),
+                  frequency_days: Number.parseInt(e.target.value || '0', 10),
                 }));
                 clearError('frequency_days');
               }}
@@ -407,7 +546,6 @@ export default function ScheduleForm({
           </div>
         )}
 
-        {/* Weekly + Biweekly day picker */}
         {showDayPicker && (
           <div className="space-y-3 mt-4">
             <Label>Select Days</Label>
@@ -444,7 +582,6 @@ export default function ScheduleForm({
         )}
       </Card>
 
-      {/* Call Settings */}
       <Card className="p-4 bg-muted/50">
         <h3 className="font-semibold mb-4">Call Settings</h3>
 
@@ -455,14 +592,23 @@ export default function ScheduleForm({
               type="number"
               min="1"
               value={formData.calls_per_day}
+              aria-invalid={!!errors.calls_per_day}
+              className={
+                errors.calls_per_day
+                  ? 'border-destructive focus-visible:ring-destructive'
+                  : ''
+              }
               onChange={(e) => {
                 setFormData((prev) => ({
                   ...prev,
-                  calls_per_day: Number.parseInt(e.target.value || '0'),
+                  calls_per_day: Number.parseInt(e.target.value || '0', 10),
                 }));
                 clearError('calls_per_day');
               }}
             />
+            {errors.calls_per_day && (
+              <p className="text-sm text-destructive">{errors.calls_per_day}</p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -471,14 +617,23 @@ export default function ScheduleForm({
               type="number"
               min="1"
               value={formData.max_attempts}
+              aria-invalid={!!errors.max_attempts}
+              className={
+                errors.max_attempts
+                  ? 'border-destructive focus-visible:ring-destructive'
+                  : ''
+              }
               onChange={(e) => {
                 setFormData((prev) => ({
                   ...prev,
-                  max_attempts: Number.parseInt(e.target.value || '0'),
+                  max_attempts: Number.parseInt(e.target.value || '0', 10),
                 }));
                 clearError('max_attempts');
               }}
             />
+            {errors.max_attempts && (
+              <p className="text-sm text-destructive">{errors.max_attempts}</p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -487,19 +642,29 @@ export default function ScheduleForm({
               type="number"
               min="1"
               value={formData.retry_interval}
+              aria-invalid={!!errors.retry_interval}
+              className={
+                errors.retry_interval
+                  ? 'border-destructive focus-visible:ring-destructive'
+                  : ''
+              }
               onChange={(e) => {
                 setFormData((prev) => ({
                   ...prev,
-                  retry_interval: Number.parseInt(e.target.value || '0'),
+                  retry_interval: Number.parseInt(e.target.value || '0', 10),
                 }));
                 clearError('retry_interval');
               }}
             />
+            {errors.retry_interval && (
+              <p className="text-sm text-destructive">
+                {errors.retry_interval}
+              </p>
+            )}
           </div>
         </div>
       </Card>
 
-      {/* Emergency Contact */}
       <Card className="p-4 bg-muted/50">
         <h3 className="font-semibold mb-4">Emergency Contact</h3>
 
@@ -508,6 +673,12 @@ export default function ScheduleForm({
             <Label>Emergency Contact Name</Label>
             <Input
               value={formData.emergency_contact_name}
+              aria-invalid={!!errors.emergency_contact_name}
+              className={
+                errors.emergency_contact_name
+                  ? 'border-destructive focus-visible:ring-destructive'
+                  : ''
+              }
               onChange={(e) => {
                 setFormData((prev) => ({
                   ...prev,
@@ -516,6 +687,11 @@ export default function ScheduleForm({
                 clearError('emergency_contact_name');
               }}
             />
+            {errors.emergency_contact_name && (
+              <p className="text-sm text-destructive">
+                {errors.emergency_contact_name}
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -523,6 +699,12 @@ export default function ScheduleForm({
             <Input
               type="tel"
               value={formData.emergency_contact_phone}
+              aria-invalid={!!errors.emergency_contact_phone}
+              className={
+                errors.emergency_contact_phone
+                  ? 'border-destructive focus-visible:ring-destructive'
+                  : ''
+              }
               onChange={(e) => {
                 setFormData((prev) => ({
                   ...prev,
@@ -531,13 +713,18 @@ export default function ScheduleForm({
                 clearError('emergency_contact_phone');
               }}
             />
+            {errors.emergency_contact_phone && (
+              <p className="text-sm text-destructive">
+                {errors.emergency_contact_phone}
+              </p>
+            )}
           </div>
         </div>
       </Card>
 
-      {/* Active */}
       <div className="flex items-center space-x-2">
         <input
+          id="is_active"
           type="checkbox"
           checked={formData.is_active}
           onChange={(e) => {
@@ -546,10 +733,11 @@ export default function ScheduleForm({
           }}
           className="w-4 h-4 rounded border-border"
         />
-        <Label className="cursor-pointer">Schedule is Active</Label>
+        <Label htmlFor="is_active" className="cursor-pointer">
+          Schedule is Active
+        </Label>
       </div>
 
-      {/* Buttons */}
       <div className="flex gap-2 justify-end">
         <Button type="button" variant="outline" onClick={onCancel}>
           Cancel

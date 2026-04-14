@@ -17,10 +17,10 @@ const deleteScheduleInput = z.object({
 });
 
 const getCallLogsInput = z.object({
-  contactId: z.string().uuid(),
+  contact_id: z.string().uuid(),
   limit: z.number().int().positive().max(200).optional().default(20),
-  includeTranscript: z.boolean().optional().default(false),
-  transcriptLimit: z
+  include_transcript: z.boolean().optional().default(false),
+  transcript_limit: z
     .number()
     .int()
     .positive()
@@ -31,9 +31,9 @@ const getCallLogsInput = z.object({
 
 const createScheduleInput = z
   .object({
-    contactId: z.string().uuid(),
-    companyId: z.string().uuid(),
-    numberId: z.string().uuid(),
+    contact_id: z.string().uuid(),
+    company_id: z.string().uuid(),
+    number_id: z.string().uuid(),
 
     name: z.string().min(1),
     caller_name: z.string().optional().nullable(),
@@ -72,10 +72,9 @@ const createScheduleInput = z
     is_active: z.boolean().optional().nullable(),
 
     emergency_contact_name: z.string().optional().nullable(),
-    emergency_contact_phone_number: z.string().optional().nullable(),
+    emergency_contact_phone: z.string().optional().nullable(),
   })
   .superRefine((data, ctx) => {
-    // WEEKLY / BIWEEKLY must have selected_days
     if (data.frequency === 'weekly' || data.frequency === 'biweekly') {
       if (!data.selected_days || data.selected_days.length === 0) {
         ctx.addIssue({
@@ -86,7 +85,6 @@ const createScheduleInput = z
       }
     }
 
-    // CUSTOM must have frequency_days
     if (data.frequency === 'custom') {
       if (!data.frequency_days || data.frequency_days <= 0) {
         ctx.addIssue({
@@ -97,7 +95,6 @@ const createScheduleInput = z
       }
     }
 
-    // MONTHLY should be 30 (if provided)
     if (data.frequency === 'monthly') {
       if (data.frequency_days && data.frequency_days !== 30) {
         ctx.addIssue({
@@ -108,7 +105,6 @@ const createScheduleInput = z
       }
     }
 
-    // TEMPLATE SCRIPT must have template
     if (data.script_type === 'template') {
       if (!data.template) {
         ctx.addIssue({
@@ -119,7 +115,6 @@ const createScheduleInput = z
       }
     }
 
-    // CUSTOM SCRIPT must have script_content
     if (data.script_type === 'custom') {
       if (!data.script_content || data.script_content.trim().length === 0) {
         ctx.addIssue({
@@ -131,83 +126,133 @@ const createScheduleInput = z
     }
   });
 
-const updateScheduleInput = z.object({
-  id: z.number().int(),
+const updateScheduleInput = z
+  .object({
+    id: z.number().int(),
 
-  name: z.string().min(1),
-  caller_name: z.string().optional().nullable(),
+    name: z.string().min(1),
+    caller_name: z.string().optional().nullable(),
 
-  script_type: z.enum(['template', 'custom']),
-  template: z.string().optional().nullable(),
-  script_content: z.string().optional().nullable(),
-  name_in_script: z.enum(['contact', 'caller']),
+    script_type: z.enum(['template', 'custom']),
+    template: z
+      .enum(['wellness', 'safety', 'medication', 'social'])
+      .optional()
+      .nullable(),
+    script_content: z.string().optional().nullable(),
+    name_in_script: z.enum(['contact', 'caller']),
 
-  frequency: z.enum(['daily', 'weekly', 'biweekly', 'monthly', 'custom']),
-  frequency_days: z.number().int().positive().optional().nullable(),
-  frequency_time: z.string().min(1),
+    frequency: z.enum(['daily', 'weekly', 'biweekly', 'monthly', 'custom']),
+    frequency_days: z.number().int().positive().optional().nullable(),
+    frequency_time: z.string().min(1),
 
-  selected_days: z
-    .array(
-      z.enum([
-        'monday',
-        'tuesday',
-        'wednesday',
-        'thursday',
-        'friday',
-        'saturday',
-        'sunday',
-      ])
-    )
-    .optional()
-    .nullable(),
+    selected_days: z
+      .array(
+        z.enum([
+          'monday',
+          'tuesday',
+          'wednesday',
+          'thursday',
+          'friday',
+          'saturday',
+          'sunday',
+        ])
+      )
+      .optional()
+      .nullable(),
 
-  calls_per_day: z.number().int().positive(),
-  max_attempts: z.number().int().positive(),
-  retry_interval: z.number().int().positive(),
+    calls_per_day: z.number().int().positive(),
+    max_attempts: z.number().int().positive(),
+    retry_interval: z.number().int().positive(),
 
-  is_active: z.boolean().optional().nullable(),
+    is_active: z.boolean().optional().nullable(),
 
-  emergency_contact_name: z.string().optional().nullable(),
-  emergency_contact_phone_number: z.string().optional().nullable(),
-});
+    emergency_contact_name: z.string().optional().nullable(),
+    emergency_contact_phone: z.string().optional().nullable(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.frequency === 'weekly' || data.frequency === 'biweekly') {
+      if (!data.selected_days || data.selected_days.length === 0) {
+        ctx.addIssue({
+          path: ['selected_days'],
+          code: z.ZodIssueCode.custom,
+          message: 'selected_days is required for weekly/biweekly frequency',
+        });
+      }
+    }
 
-// Minimal: you can expand these schemas later
+    if (data.frequency === 'custom') {
+      if (!data.frequency_days || data.frequency_days <= 0) {
+        ctx.addIssue({
+          path: ['frequency_days'],
+          code: z.ZodIssueCode.custom,
+          message: 'frequency_days is required for custom frequency',
+        });
+      }
+    }
+
+    if (data.frequency === 'monthly') {
+      if (data.frequency_days && data.frequency_days !== 30) {
+        ctx.addIssue({
+          path: ['frequency_days'],
+          code: z.ZodIssueCode.custom,
+          message: 'monthly frequency must use frequency_days = 30',
+        });
+      }
+    }
+
+    if (data.script_type === 'template') {
+      if (!data.template) {
+        ctx.addIssue({
+          path: ['template'],
+          code: z.ZodIssueCode.custom,
+          message: 'template is required when script_type = template',
+        });
+      }
+    }
+
+    if (data.script_type === 'custom') {
+      if (!data.script_content || data.script_content.trim().length === 0) {
+        ctx.addIssue({
+          path: ['script_content'],
+          code: z.ZodIssueCode.custom,
+          message: 'script_content is required when script_type = custom',
+        });
+      }
+    }
+  });
+
 const jsonRecord = z.record(z.any());
 
 const upsertInput = z.object({
-  contactId: z.string().uuid(),
-  // optional fields (patch-like upsert)
-  preferredName: z.string().min(1).optional().nullable(),
+  contact_id: z.string().uuid(),
+  preferred_name: z.string().min(1).optional().nullable(),
   locale: z.string().min(2).optional().nullable(),
   timezone: z.string().min(1).optional().nullable(),
   demographics: jsonRecord.optional().nullable(),
-  medicalNotes: z.string().optional().nullable(),
+  medical_notes: z.string().optional().nullable(),
   preferences: jsonRecord.optional().nullable(),
   goals: z.string().optional().nullable(),
-  riskFlags: jsonRecord.optional().nullable(),
-  lastState: jsonRecord.optional().nullable(),
+  risk_flags: z.array(z.string()).optional().nullable(),
+  last_state: jsonRecord.optional().nullable(),
 });
 
 const createContactFullInput = z.object({
-  // Contact
   label: z.string().min(1, 'Required'),
   number: z.string().min(1, 'Required'),
-  companyId: z.string().uuid(),
+  company_id: z.string().uuid(),
 
-  // Profile (optional)
   profile: z
     .object({
-      preferredName: z.string().optional().nullable(),
+      preferred_name: z.string().optional().nullable(),
       timezone: z.string().optional().nullable(),
       locale: z.string().optional().nullable(),
-      medicalNotes: z.string().optional().nullable(),
+      medical_notes: z.string().optional().nullable(),
       goals: z.string().optional().nullable(),
-      riskFlags: z.array(z.string()).optional().nullable(),
+      risk_flags: z.array(z.string()).optional().nullable(),
     })
     .optional()
     .nullable(),
 
-  // Schedule (optional)
   schedule: z
     .object({
       name: z.string().min(1, 'required'),
@@ -248,12 +293,9 @@ const createContactFullInput = z.object({
       emergency_contact_phone: z.string().min(1, 'required'),
 
       number_id: z.string().uuid(),
+      is_active: z.boolean().optional().nullable(),
     })
     .superRefine((data, ctx) => {
-      /**
-       * WEEKLY / BIWEEKLY
-       * must have selected_days
-       */
       if (data.frequency === 'weekly' || data.frequency === 'biweekly') {
         if (!data.selected_days || data.selected_days.length === 0) {
           ctx.addIssue({
@@ -264,10 +306,6 @@ const createContactFullInput = z.object({
         }
       }
 
-      /**
-       * CUSTOM
-       * must have frequency_days
-       */
       if (data.frequency === 'custom') {
         if (!data.frequency_days || data.frequency_days <= 0) {
           ctx.addIssue({
@@ -278,11 +316,6 @@ const createContactFullInput = z.object({
         }
       }
 
-      /**
-       * MONTHLY
-       * should always be 30 days (if provided)
-       * (we enforce logic so it doesn’t become ambiguous)
-       */
       if (data.frequency === 'monthly') {
         if (data.frequency_days && data.frequency_days !== 30) {
           ctx.addIssue({
@@ -293,10 +326,6 @@ const createContactFullInput = z.object({
         }
       }
 
-      /**
-       * TEMPLATE SCRIPT
-       * must have template
-       */
       if (data.script_type === 'template') {
         if (!data.template) {
           ctx.addIssue({
@@ -307,10 +336,6 @@ const createContactFullInput = z.object({
         }
       }
 
-      /**
-       * CUSTOM SCRIPT
-       * must have script_content
-       */
       if (data.script_type === 'custom') {
         if (!data.script_content || data.script_content.trim().length === 0) {
           ctx.addIssue({
@@ -327,92 +352,90 @@ const createContactFullInput = z.object({
 
 export const reassuranceContactProfilesRouter = t.router({
   getByContactId: protectedProcedure
-    .input(z.object({ contactId: z.string().uuid() }))
+    .input(z.object({ contact_id: z.string().uuid() }))
     .query(async ({ input }) => {
       const profile = await ReassuranceContactProfilesRepository.getByContactId(
-        input.contactId
+        input.contact_id
       );
       return profile;
     }),
 
   upsert: protectedProcedure.input(upsertInput).mutation(async ({ input }) => {
-    // Optional: ensure contact exists (safety)
-    const contact = await ContactsRepository.findById?.(input.contactId);
+    const contact = await ContactsRepository.findById?.(input.contact_id);
     if (contact === null) {
       throw new Error('Contact not found');
     }
 
     const saved = await ReassuranceContactProfilesRepository.upsert({
-      contact_id: input.contactId,
-      preferred_name: input.preferredName ?? null,
+      contact_id: input.contact_id,
+      preferred_name: input.preferred_name ?? null,
       locale: input.locale ?? null,
       timezone: input.timezone ?? null,
       demographics: input.demographics ?? null,
-      medical_notes: input.medicalNotes ?? null,
+      medical_notes: input.medical_notes ?? null,
       preferences: input.preferences ?? null,
       goals: input.goals ?? null,
-      risk_flags: input.riskFlags ?? null,
-      last_state: input.lastState ?? null,
+      risk_flags: input.risk_flags ?? null,
+      last_state: input.last_state ?? null,
     });
 
     return saved;
   }),
 
   mergeLastState: protectedProcedure
-    .input(z.object({ contactId: z.string().uuid(), patch: jsonRecord }))
+    .input(z.object({ contact_id: z.string().uuid(), patch: jsonRecord }))
     .mutation(async ({ input }) => {
       return await ReassuranceContactProfilesRepository.mergeLastState(
-        input.contactId,
+        input.contact_id,
         input.patch
       );
     }),
 
   mergeRiskFlags: protectedProcedure
-    .input(z.object({ contactId: z.string().uuid(), patch: jsonRecord }))
+    .input(
+      z.object({
+        contact_id: z.string().uuid(),
+        patch: jsonRecord,
+      })
+    )
     .mutation(async ({ input }) => {
       return await ReassuranceContactProfilesRepository.mergeRiskFlags(
-        input.contactId,
+        input.contact_id,
         input.patch
       );
     }),
 
-  /**
-   * ✅ Create contact + profile + schedule + job in one transaction
-   */
   createContactFull: protectedProcedure
-    .input(createContactFullInput) // ✅ snake_case schema
+    .input(createContactFullInput)
     .mutation(async ({ input }) => {
       const client = await pool.connect();
 
       try {
         await client.query('BEGIN');
 
-        // 1️⃣ Contact
         const contact = await ContactsRepository.findOrCreate(
           {
             number: input.number,
             label: input.label,
-            companyId: input.companyId,
+            companyId: input.company_id,
           },
           client
         );
         const contactId = contact.id;
 
-        // 2️⃣ Profile
         const profile = await ReassuranceContactProfilesRepository.upsert(
           {
             contact_id: contactId,
-            preferred_name: input.profile?.preferredName ?? null,
+            preferred_name: input.profile?.preferred_name ?? null,
             timezone: input.profile?.timezone ?? null,
             locale: input.profile?.locale ?? null,
-            medical_notes: input.profile?.medicalNotes ?? null,
+            medical_notes: input.profile?.medical_notes ?? null,
             goals: input.profile?.goals ?? null,
-            risk_flags: input.profile?.riskFlags ?? null,
+            risk_flags: input.profile?.risk_flags ?? null,
           },
           client
         );
 
-        // 3️⃣ Schedule (+ Job)
         let schedule: ReassuranceCallSchedule | null = null;
 
         if (input.schedule) {
@@ -435,7 +458,6 @@ export const reassuranceContactProfilesRouter = t.router({
               frequency_days: input.schedule.frequency_days ?? null,
               frequency_time: input.schedule.frequency_time,
 
-              // ✅ only use selected_days if weekly/biweekly, otherwise null
               selected_days:
                 input.schedule.frequency === 'weekly' ||
                 input.schedule.frequency === 'biweekly'
@@ -446,8 +468,9 @@ export const reassuranceContactProfilesRouter = t.router({
               max_attempts: input.schedule.max_attempts,
               retry_interval: input.schedule.retry_interval,
 
-              company_id: input.companyId,
+              company_id: input.company_id,
               number_id: input.schedule.number_id,
+              is_active: input.schedule.is_active ?? true,
             },
             client
           );
@@ -482,60 +505,35 @@ export const reassuranceContactProfilesRouter = t.router({
     }),
 
   getAllByCompanyId: protectedProcedure
-    .input(z.object({ companyId: z.string().uuid() }))
+    .input(z.object({ company_id: z.string().uuid() }))
     .query(async ({ input }) => {
       return await ReassuranceContactProfilesRepository.getAllByCompanyId(
-        input.companyId
+        input.company_id
       );
     }),
+
   getAllWithSchedulesByCompanyId: protectedProcedure
-    .input(z.object({ companyId: z.string().uuid() }))
+    .input(z.object({ company_id: z.string().uuid() }))
     .query(async ({ input }) => {
       return await ReassuranceContactProfilesRepository.getAllWithSchedulesByCompanyId(
-        input.companyId
+        input.company_id
       );
     }),
+
   getCallLogsByContactId: protectedProcedure
     .input(getCallLogsInput)
     .query(async ({ input }) => {
       return await ReassuranceCallLogsRepository.listByContactId({
-        contactId: input.contactId,
+        contactId: input.contact_id,
         limit: input.limit,
-        includeTranscript: input.includeTranscript,
-        transcriptLimit: input.transcriptLimit,
+        includeTranscript: input.include_transcript,
+        transcriptLimit: input.transcript_limit,
       });
     }),
+
   update: protectedProcedure
     .input(updateScheduleInput)
     .mutation(async ({ input }) => {
-      // Minimal validation rules (same as createContactFull)
-      if (input.frequency === 'weekly' || input.frequency === 'biweekly') {
-        if (!input.selected_days || input.selected_days.length === 0) {
-          throw new Error(
-            'selected_days is required for weekly/biweekly frequency'
-          );
-        }
-      }
-
-      if (input.frequency === 'custom') {
-        if (!input.frequency_days || input.frequency_days <= 0) {
-          throw new Error('frequency_days is required for custom frequency');
-        }
-      }
-
-      if (input.frequency === 'monthly') {
-        if (input.frequency_days && input.frequency_days !== 30) {
-          throw new Error('monthly frequency must use frequency_days = 30');
-        }
-      }
-      if (input.script_type === 'custom') {
-        if (!input.script_content || input.script_content.trim().length === 0) {
-          throw new Error(
-            'script_content is required when script_type = custom'
-          );
-        }
-      }
-
       return await ReassuranceSchedulesRepository.update({
         id: input.id,
         name: input.name,
@@ -550,7 +548,10 @@ export const reassuranceContactProfilesRouter = t.router({
         frequency_days: input.frequency_days ?? null,
         frequency_time: input.frequency_time,
 
-        selected_days: input.selected_days ?? null,
+        selected_days:
+          input.frequency === 'weekly' || input.frequency === 'biweekly'
+            ? (input.selected_days ?? ['monday'])
+            : null,
 
         calls_per_day: input.calls_per_day,
         max_attempts: input.max_attempts,
@@ -559,15 +560,10 @@ export const reassuranceContactProfilesRouter = t.router({
         is_active: input.is_active ?? true,
 
         emergency_contact_name: input.emergency_contact_name ?? null,
-        emergency_contact_phone_number:
-          input.emergency_contact_phone_number ?? null,
+        emergency_contact_phone_number: input.emergency_contact_phone ?? null,
       });
     }),
 
-  /**
-   * ✅ Then add this new procedure inside reassuranceContactProfilesRouter
-   * Place it near `update` (same router)
-   */
   createSchedule: protectedProcedure
     .input(createScheduleInput)
     .mutation(async ({ input }) => {
@@ -576,22 +572,20 @@ export const reassuranceContactProfilesRouter = t.router({
       try {
         await client.query('BEGIN');
 
-        // Ensure contact exists (and get phone number)
-        const contact = await ContactsRepository.findById?.(input.contactId);
+        const contact = await ContactsRepository.findById?.(input.contact_id);
         if (!contact) {
           throw new Error('Contact not found');
         }
 
-        // Create schedule
         const schedule = await ReassuranceSchedulesRepository.include(
           {
             name: input.name,
-            phone_number: contact.number, // ✅ from contact (source of truth)
+            phone_number: contact.number,
             caller_name: input.caller_name ?? null,
 
             emergency_contact_name: input.emergency_contact_name ?? null,
             emergency_contact_phone_number:
-              input.emergency_contact_phone_number ?? null,
+              input.emergency_contact_phone ?? null,
 
             script_type: input.script_type,
             template: input.template ?? null,
@@ -602,7 +596,6 @@ export const reassuranceContactProfilesRouter = t.router({
             frequency_days: input.frequency_days ?? null,
             frequency_time: input.frequency_time,
 
-            // ✅ only use selected_days if weekly/biweekly, otherwise null
             selected_days:
               input.frequency === 'weekly' || input.frequency === 'biweekly'
                 ? (input.selected_days ?? ['monday'])
@@ -612,13 +605,13 @@ export const reassuranceContactProfilesRouter = t.router({
             max_attempts: input.max_attempts,
             retry_interval: input.retry_interval,
 
-            company_id: input.companyId,
-            number_id: input.numberId,
+            company_id: input.company_id,
+            number_id: input.number_id,
+            is_active: input.is_active ?? true,
           },
           client
         );
 
-        // Create job
         const runAt = getNextRunAtForSchedule(schedule);
 
         await ReassuranceCallJobsRepository.include(
@@ -650,16 +643,11 @@ export const reassuranceContactProfilesRouter = t.router({
       try {
         await client.query('BEGIN');
 
-        // 1) Delete any jobs for this schedule first (avoid FK issues)
-        // NOTE: adjust table name/column if yours differs
         await client.query(
           `DELETE FROM reassurance_call_jobs WHERE schedule_id = $1`,
           [input.id]
         );
 
-        // 2) Delete schedule
-        // Prefer repository if you have one; otherwise use SQL
-        // If you already have ReassuranceSchedulesRepository.delete(id, client), use that instead.
         const res = await client.query(
           `DELETE FROM reassurance_call_schedules WHERE id = $1 RETURNING id`,
           [input.id]
