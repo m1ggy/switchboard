@@ -18,7 +18,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
 import { scheduleSchema } from '@/lib/schemas';
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
@@ -291,10 +290,10 @@ export default function ScheduleForm({
     clearError('selected_days');
   };
 
-  const buildPayload = (): ScheduleFormSubmitData => {
-    const should_send_selected_days = ['weekly', 'biweekly'].includes(
-      formData.frequency
-    );
+  const buildPayload = () => {
+    const should_send_selected_days =
+      !showAppointmentFields &&
+      ['weekly', 'biweekly'].includes(formData.frequency);
 
     const computed_frequency_days = showAppointmentFields
       ? null
@@ -306,7 +305,6 @@ export default function ScheduleForm({
 
     return {
       contact_id: formData.contact_id,
-      company_id: formData.company_id,
       number_id: formData.number_id,
 
       name: formData.name,
@@ -418,7 +416,7 @@ export default function ScheduleForm({
         </Alert>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div className="space-y-2">
           <Label htmlFor="name">Schedule Name</Label>
           <Input
@@ -464,23 +462,18 @@ export default function ScheduleForm({
         </div>
       </div>
 
-      <Card className="p-4 bg-muted/50">
-        <h3 className="font-semibold mb-4">Script Settings</h3>
+      <Card className="bg-muted/50 p-4">
+        <h3 className="mb-4 font-semibold">Script Settings</h3>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <div className="space-y-2">
             <Label>Script Type</Label>
             <Select
               value={formData.script_type}
-              onValueChange={(value: 'template' | 'custom') => {
+              onValueChange={(value: any) => {
                 setFormData((prev) => ({
                   ...prev,
                   script_type: value,
-                  template:
-                    value === 'template'
-                      ? prev.template || 'wellness'
-                      : prev.template,
-                  script_content: value === 'custom' ? prev.script_content : '',
                 }));
                 clearError('script_type');
                 clearError('template');
@@ -577,55 +570,12 @@ export default function ScheduleForm({
           </div>
         </div>
 
-        {formData.script_type === 'template' && (
-          <div className="space-y-2 mt-4">
-            <Label>Template</Label>
-            <Select
-              value={formData.template}
-              onValueChange={(
-                value: 'wellness' | 'safety' | 'medication' | 'social'
-              ) => {
-                setFormData((prev) => ({ ...prev, template: value }));
-                clearError('template');
-              }}
-            >
-              <SelectTrigger
-                className={
-                  errors.template
-                    ? 'border-destructive focus:ring-destructive'
-                    : ''
-                }
-              >
-                <SelectValue placeholder="Select template" />
-              </SelectTrigger>
-              <SelectContent>
-                {templates.map((template) => (
-                  <SelectItem key={template} value={template}>
-                    {template.charAt(0).toUpperCase() + template.slice(1)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {errors.template && (
-              <p className="text-sm text-destructive">{errors.template}</p>
-            )}
-          </div>
-        )}
-
         {formData.script_type === 'custom' && (
-          <div className="space-y-2 mt-4">
-            <Label htmlFor="script_content">Custom Script</Label>
-            <Textarea
-              id="script_content"
-              rows={5}
-              placeholder="Write the custom script that should be used for this schedule..."
+          <div className="mt-4 space-y-2">
+            <Label>Custom Script</Label>
+            <textarea
+              className="min-h-[120px] w-full rounded-md border bg-background px-3 py-2 text-sm"
               value={formData.script_content}
-              aria-invalid={!!errors.script_content}
-              className={
-                errors.script_content
-                  ? 'border-destructive focus-visible:ring-destructive'
-                  : ''
-              }
               onChange={(e) => {
                 setFormData((prev) => ({
                   ...prev,
@@ -643,113 +593,10 @@ export default function ScheduleForm({
         )}
       </Card>
 
-      <Card className="p-4 bg-muted/50">
-        <h3 className="font-semibold mb-1">Schedule Frequency</h3>
-        <p className="text-sm text-muted-foreground mb-4">
-          {frequencyHelpText[formData.frequency]}
-        </p>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Frequency</Label>
-            <Select
-              value={formData.frequency}
-              onValueChange={(
-                value: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'custom'
-              ) => {
-                setFormData((prev) => ({
-                  ...prev,
-                  frequency: value,
-                  frequency_days:
-                    value === 'custom' ? prev.frequency_days || 7 : 7,
-                }));
-                clearError('frequency');
-                clearError('frequency_days');
-                clearError('selected_days');
-              }}
-            >
-              <SelectTrigger
-                className={
-                  errors.frequency
-                    ? 'border-destructive focus:ring-destructive'
-                    : ''
-                }
-              >
-                <SelectValue placeholder="Select frequency" />
-              </SelectTrigger>
-              <SelectContent>
-                {frequencies.map((freq) => (
-                  <SelectItem key={freq} value={freq}>
-                    {freq.charAt(0).toUpperCase() + freq.slice(1)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {errors.frequency && (
-              <p className="text-sm text-destructive">{errors.frequency}</p>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <Label>Time of Day</Label>
-            <Input
-              type="time"
-              value={formData.frequency_time}
-              aria-invalid={!!errors.frequency_time}
-              className={
-                errors.frequency_time
-                  ? 'border-destructive focus-visible:ring-destructive'
-                  : ''
-              }
-              onChange={(e) => {
-                setFormData((prev) => ({
-                  ...prev,
-                  script_content: e.target.value,
-                }));
-                clearError('script_content');
-              }}
-            />
-            {errors.script_content && (
-              <p className="text-sm text-destructive">
-                {errors.frequency_time}
-              </p>
-            )}
-          </div>
-        </div>
-
-        {showCustomDays && (
-          <div className="space-y-2 mt-4">
-            <Label>Days Between Calls</Label>
-            <Input
-              type="number"
-              min="1"
-              value={formData.frequency_days}
-              aria-invalid={!!errors.frequency_days}
-              className={
-                errors.frequency_days
-                  ? 'border-destructive focus-visible:ring-destructive'
-                  : ''
-              }
-              onChange={(e) => {
-                setFormData((prev) => ({
-                  ...prev,
-                  frequency_days: Number.parseInt(e.target.value || '0', 10),
-                }));
-                clearError('frequency_days');
-              }}
-            />
-            {errors.frequency_days && (
-              <p className="text-sm text-destructive">
-                {errors.frequency_days}
-              </p>
-            )}
-          </div>
-        )}
-      </Card>
-
-        {showDayPicker && (
-          <div className="space-y-3 mt-4">
-            <Label>Select Days</Label>
+      {showAppointmentFields && (
+        <>
+          <Card className="bg-muted/50 p-4">
+            <h3 className="mb-4 font-semibold">Appointment Details</h3>
 
             {errors.appointmentDetails && (
               <p className="mb-3 text-sm text-destructive">
@@ -1117,8 +964,34 @@ export default function ScheduleForm({
             </div>
           </div>
 
-      <Card className="p-4 bg-muted/50">
-        <h3 className="font-semibold mb-4">Call Settings</h3>
+          {showCustomDays && (
+            <div className="mt-4 space-y-2">
+              <Label>Days Between Calls</Label>
+              <Input
+                type="number"
+                min="1"
+                value={formData.frequency_days}
+                aria-invalid={!!errors.frequency_days}
+                className={
+                  errors.frequency_days
+                    ? 'border-destructive focus-visible:ring-destructive'
+                    : ''
+                }
+                onChange={(e) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    frequency_days: Number.parseInt(e.target.value || '0'),
+                  }));
+                  clearError('frequency_days');
+                }}
+              />
+              {errors.frequency_days && (
+                <p className="text-sm text-destructive">
+                  {errors.frequency_days}
+                </p>
+              )}
+            </div>
+          )}
 
           {showDayPicker && (
             <div className="mt-4 space-y-3">
@@ -1242,8 +1115,8 @@ export default function ScheduleForm({
         </div>
       </Card>
 
-      <Card className="p-4 bg-muted/50">
-        <h3 className="font-semibold mb-4">Emergency Contact</h3>
+      <Card className="bg-muted/50 p-4">
+        <h3 className="mb-4 font-semibold">Emergency Contact</h3>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div className="space-y-2">
@@ -1315,7 +1188,7 @@ export default function ScheduleForm({
         </Label>
       </div>
 
-      <div className="flex gap-2 justify-end">
+      <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" onClick={onCancel}>
           Cancel
         </Button>

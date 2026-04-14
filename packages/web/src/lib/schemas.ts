@@ -19,26 +19,6 @@ export const profileSchema = z.object({
   risk_flags: z.array(z.string()),
 });
 
-<<<<<<< HEAD
-export const scheduleSchema = z.object({
-  id: z.string().optional(),
-  contact_id: z.string(),
-  name: z.string().min(1, 'Schedule name is required'),
-  caller_name: z.string().optional().nullable(),
-  script_type: z.enum(['template', 'custom']),
-  script_content: z.string().optional().nullable(),
-  name_in_script: z.enum(['contact', 'caller']),
-  frequency: z.enum(['daily', 'weekly', 'biweekly', 'monthly', 'custom']),
-  frequency_days: z.number().min(1).optional().nullable(),
-  frequency_time: z.string(),
-  selected_days: z.array(z.string()).nullable(),
-  calls_per_day: z.number().min(1),
-  max_attempts: z.number().min(1),
-  retry_interval: z.number().min(1),
-  emergency_contact_name: z.string().optional().nullable(),
-  emergency_contact_phone: z.string().optional().nullable(),
-  is_active: z.boolean(),
-=======
 export const appointmentDetailsSchema = z.object({
   appointment_title: z.string().min(1),
   appointment_datetime: z.string().min(1),
@@ -50,7 +30,6 @@ export const appointmentDetailsSchema = z.object({
   notes: z.string().nullable().optional(),
   reminder_offset_minutes: z.number().int().min(0).default(60),
   requires_confirmation: z.boolean().default(true),
->>>>>>> 8d5cb4dacc96b206cb7c029ebf6e5ba200c2451a
 });
 
 export const scheduleSchema = z

@@ -159,10 +159,7 @@ const updateScheduleInput = z
     caller_name: z.string().optional().nullable(),
 
     script_type: z.enum(['template', 'custom']),
-    template: z
-      .enum(['wellness', 'safety', 'medication', 'social'])
-      .optional()
-      .nullable(),
+    template: reminderTemplateEnum.optional().nullable(),
     script_content: z.string().optional().nullable(),
     name_in_script: z.enum(['contact', 'caller']),
 
@@ -170,20 +167,7 @@ const updateScheduleInput = z
     frequency_days: z.number().int().positive().optional().nullable(),
     frequency_time: z.string().min(1),
 
-    selected_days: z
-      .array(
-        z.enum([
-          'monday',
-          'tuesday',
-          'wednesday',
-          'thursday',
-          'friday',
-          'saturday',
-          'sunday',
-        ])
-      )
-      .optional()
-      .nullable(),
+    selected_days: z.array(weekdayEnum).optional().nullable(),
 
     calls_per_day: z.number().int().positive(),
     max_attempts: z.number().int().positive(),
@@ -244,13 +228,116 @@ const updateScheduleInput = z
         });
       }
     }
+
+    if (data.script_type === 'template' && data.template === 'appointment') {
+      if (!data.appointmentDetails) {
+        ctx.addIssue({
+          path: ['appointmentDetails'],
+          code: z.ZodIssueCode.custom,
+          message: 'appointmentDetails is required when template = appointment',
+        });
+      }
+    }
   });
 
+const updateScheduleInput = z
+  .object({
+    id: z.number().int(),
+    contactId: z.string().uuid().optional().nullable(),
+
+    name: z.string().min(1),
+    caller_name: z.string().optional().nullable(),
+
+    script_type: z.enum(['template', 'custom']),
+    template: reminderTemplateEnum.optional().nullable(),
+    script_content: z.string().optional().nullable(),
+    name_in_script: z.enum(['contact', 'caller']),
+
+    frequency: z.enum(['daily', 'weekly', 'biweekly', 'monthly', 'custom']),
+    frequency_days: z.number().int().positive().optional().nullable(),
+    frequency_time: z.string().min(1),
+
+    selected_days: z.array(weekdayEnum).optional().nullable(),
+
+    calls_per_day: z.number().int().positive(),
+    max_attempts: z.number().int().positive(),
+    retry_interval: z.number().int().positive(),
+
+    is_active: z.boolean().optional().nullable(),
+
+    emergency_contact_name: z.string().optional().nullable(),
+    emergency_contact_phone_number: z.string().optional().nullable(),
+
+    appointmentDetails: appointmentDetailsInput.optional().nullable(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.frequency === 'weekly' || data.frequency === 'biweekly') {
+      if (!data.selected_days || data.selected_days.length === 0) {
+        ctx.addIssue({
+          path: ['selected_days'],
+          code: z.ZodIssueCode.custom,
+          message: 'selected_days is required for weekly/biweekly frequency',
+        });
+      }
+    }
+
+    if (data.frequency === 'custom') {
+      if (!data.frequency_days || data.frequency_days <= 0) {
+        ctx.addIssue({
+          path: ['frequency_days'],
+          code: z.ZodIssueCode.custom,
+          message: 'frequency_days is required for custom frequency',
+        });
+      }
+    }
+
+    if (data.frequency === 'monthly') {
+      if (data.frequency_days && data.frequency_days !== 30) {
+        ctx.addIssue({
+          path: ['frequency_days'],
+          code: z.ZodIssueCode.custom,
+          message: 'monthly frequency must use frequency_days = 30',
+        });
+      }
+    }
+
+    if (data.script_type === 'template') {
+      if (!data.template) {
+        ctx.addIssue({
+          path: ['template'],
+          code: z.ZodIssueCode.custom,
+          message: 'template is required when script_type = template',
+        });
+      }
+    }
+
+    if (data.script_type === 'custom') {
+      if (!data.script_content || data.script_content.trim().length === 0) {
+        ctx.addIssue({
+          path: ['script_content'],
+          code: z.ZodIssueCode.custom,
+          message: 'script_content is required when script_type = custom',
+        });
+      }
+    }
+
+    if (data.script_type === 'template' && data.template === 'appointment') {
+      if (!data.appointmentDetails) {
+        ctx.addIssue({
+          path: ['appointmentDetails'],
+          code: z.ZodIssueCode.custom,
+          message: 'appointmentDetails is required when template = appointment',
+        });
+      }
+    }
+  });
+
+// Minimal: you can expand these schemas later
 const jsonRecord = z.record(z.any());
 
 const upsertInput = z.object({
-  contact_id: z.string().uuid(),
-  preferred_name: z.string().min(1).optional().nullable(),
+  contactId: z.string().uuid(),
+  preferredName: z.string().min(1).optional().nullable(),
   locale: z.string().min(2).optional().nullable(),
   timezone: z.string().min(1).optional().nullable(),
   demographics: jsonRecord.optional().nullable(),
@@ -303,6 +390,8 @@ const createContactFullInput = z.object({
 
       number_id: z.string().uuid(),
       is_active: z.boolean().optional().nullable(),
+
+      appointmentDetails: appointmentDetailsInput.optional().nullable(),
     })
     .superRefine((data, ctx) => {
       if (data.frequency === 'weekly' || data.frequency === 'biweekly') {
@@ -572,34 +661,101 @@ export const reassuranceContactProfilesRouter = t.router({
   update: protectedProcedure
     .input(updateScheduleInput)
     .mutation(async ({ input }) => {
-      return await ReassuranceSchedulesRepository.update({
-        id: input.id,
-        name: input.name,
-        caller_name: input.caller_name ?? null,
+      const client = await pool.connect();
 
-        script_type: input.script_type,
-        template: input.template ?? null,
-        script_content: input.script_content ?? null,
-        name_in_script: input.name_in_script,
+      try {
+        await client.query('BEGIN');
 
-        frequency: input.frequency,
-        frequency_days: input.frequency_days ?? null,
-        frequency_time: input.frequency_time,
+        const updated = await ReassuranceSchedulesRepository.update(
+          {
+            id: input.id,
+            name: input.name,
+            caller_name: input.caller_name ?? null,
 
-        selected_days:
-          input.frequency === 'weekly' || input.frequency === 'biweekly'
-            ? (input.selected_days ?? ['monday'])
-            : null,
+            script_type: input.script_type,
+            template: input.template ?? null,
+            script_content: input.script_content ?? null,
+            name_in_script: input.name_in_script,
 
-        calls_per_day: input.calls_per_day,
-        max_attempts: input.max_attempts,
-        retry_interval: input.retry_interval,
+            frequency: input.frequency,
+            frequency_days: input.frequency_days ?? null,
+            frequency_time: input.frequency_time,
 
-        is_active: input.is_active ?? true,
+            selected_days: input.selected_days ?? null,
 
-        emergency_contact_name: input.emergency_contact_name ?? null,
-        emergency_contact_phone_number: input.emergency_contact_phone ?? null,
-      });
+            calls_per_day: input.calls_per_day,
+            max_attempts: input.max_attempts,
+            retry_interval: input.retry_interval,
+
+            is_active: input.is_active ?? true,
+
+            emergency_contact_name: input.emergency_contact_name ?? null,
+            emergency_contact_phone_number:
+              input.emergency_contact_phone_number ?? null,
+          },
+          client
+        );
+
+        let appointmentReminder = null;
+
+        if (
+          input.script_type === 'template' &&
+          input.template === 'appointment' &&
+          input.appointmentDetails
+        ) {
+          let contactId = input.contactId ?? null;
+
+          if (!contactId) {
+            const existingSchedule = await ReassuranceSchedulesRepository.find(
+              input.id
+            );
+
+            if (!existingSchedule) {
+              throw new Error('Schedule not found');
+            }
+
+            const contact = await ContactsRepository.findByNumberAndCompany?.(
+              existingSchedule.phone_number,
+              existingSchedule.company_id
+            );
+
+            if (!contact) {
+              throw new Error(
+                'Contact not found for appointment reminder update'
+              );
+            }
+
+            contactId = contact.id;
+          }
+
+          appointmentReminder =
+            await AppointmentReminderDetailsRepository.upsert(
+              {
+                schedule_id: input.id,
+                contact_id: contactId,
+                ...input.appointmentDetails,
+              },
+              client
+            );
+        } else {
+          await AppointmentReminderDetailsRepository.deleteByScheduleId(
+            input.id,
+            client
+          );
+        }
+
+        await client.query('COMMIT');
+
+        return {
+          schedule: updated,
+          appointmentReminder,
+        };
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
     }),
 
   createSchedule: protectedProcedure
@@ -610,7 +766,7 @@ export const reassuranceContactProfilesRouter = t.router({
       try {
         await client.query('BEGIN');
 
-        const contact = await ContactsRepository.findById?.(input.contact_id);
+        const contact = await ContactsRepository.findById?.(input.contactId);
         if (!contact) {
           throw new Error('Contact not found');
         }
@@ -650,6 +806,24 @@ export const reassuranceContactProfilesRouter = t.router({
           client
         );
 
+        let appointmentReminder = null;
+
+        if (
+          input.script_type === 'template' &&
+          input.template === 'appointment' &&
+          input.appointmentDetails
+        ) {
+          appointmentReminder =
+            await AppointmentReminderDetailsRepository.upsert(
+              {
+                schedule_id: schedule.id,
+                contact_id: input.contactId,
+                ...input.appointmentDetails,
+              },
+              client
+            );
+        }
+
         const runAt = getNextRunAtForSchedule(schedule);
 
         await ReassuranceCallJobsRepository.include(
@@ -687,6 +861,11 @@ export const reassuranceContactProfilesRouter = t.router({
         await client.query(
           `DELETE FROM reassurance_call_jobs WHERE schedule_id = $1`,
           [input.id]
+        );
+
+        await AppointmentReminderDetailsRepository.deleteByScheduleId(
+          input.id,
+          client
         );
 
         const res = await client.query(
