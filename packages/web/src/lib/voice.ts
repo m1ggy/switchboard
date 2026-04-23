@@ -31,6 +31,22 @@ export class TwilioVoiceClient {
     this.identity = options.identity;
   }
 
+  private toError(error: unknown): Error {
+    if (error instanceof Error) {
+      return error;
+    }
+
+    if (typeof error === 'string') {
+      return new Error(error);
+    }
+
+    try {
+      return new Error(JSON.stringify(error));
+    } catch {
+      return new Error('Unknown Twilio voice error');
+    }
+  }
+
   async initialize(): Promise<void> {
     try {
       if (this.device) {
@@ -49,8 +65,9 @@ export class TwilioVoiceClient {
 
       await device.register();
     } catch (error) {
-      this.onError?.(this.toError(error));
-      throw error;
+      const normalizedError = this.toError(error);
+      this.onError?.(normalizedError);
+      throw normalizedError;
     }
   }
 
@@ -122,8 +139,9 @@ export class TwilioVoiceClient {
 
       return connection;
     } catch (error) {
-      this.onError?.(this.toError(error));
-      throw error;
+      const normalizedError = this.toError(error);
+      this.onError?.(normalizedError);
+      throw normalizedError;
     }
   }
 
