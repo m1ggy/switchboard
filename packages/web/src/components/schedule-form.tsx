@@ -81,8 +81,8 @@ type ScheduleFormSubmitData = z.infer<typeof scheduleSchema> & {
 
 interface ScheduleFormProps {
   contactId: string;
-  companyId: string;
-  numberId: string;
+  companyId?: string;
+  numberId?: string;
   initialData?: Partial<ScheduleFormSubmitData>;
   onSubmit: (data: ScheduleFormSubmitData) => void;
   onCancel?: () => void;
@@ -173,8 +173,8 @@ export default function ScheduleForm({
 
   const [formData, setFormData] = useState({
     contact_id: contactId,
-    company_id: companyId,
-    number_id: numberId,
+    company_id: companyId || (initialData as any)?.company_id || '',
+    number_id: numberId || (initialData as any)?.number_id || '',
 
     name: initialData?.name || '',
     caller_name: initialData?.caller_name || '',
@@ -408,6 +408,7 @@ export default function ScheduleForm({
 
       const validated = scheduleSchema.parse({
         contact_id: payload.contact_id,
+        number_id: payload.number_id,
         name: payload.name,
         caller_name: payload.caller_name,
         script_type: payload.script_type,
