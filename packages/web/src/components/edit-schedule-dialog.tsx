@@ -53,20 +53,21 @@ export default function EditScheduleDialog({
   const handleSubmit = async (scheduleData: Schedule) => {
     setIsSubmitting(true);
     try {
+      const { appointmentDetails, ...rest } = scheduleData as any;
+      const appointment_details = appointmentDetails ?? null;
+
       if (isCreateMode) {
-        // ✅ CREATE: don't send an id (or send id as undefined)
         await createScheduleMutation.mutateAsync({
-          ...scheduleData,
-          // ensure it links to the right contact/company fields as needed
-          // contactId: contact.id, // only if your backend expects it
+          ...rest,
+          appointment_details,
           id: undefined,
         } as any);
       } else {
-        // ✅ UPDATE: ensure we send the schedule id
         await updateScheduleMutation.mutateAsync({
-          ...scheduleData,
+          ...rest,
+          appointment_details,
           id: schedule.id,
-        });
+        } as any);
       }
 
       onSuccess();

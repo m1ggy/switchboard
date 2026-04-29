@@ -36,13 +36,6 @@ const frequencies = [
 
 const scriptTypes = ['template', 'custom'] as const;
 
-const templates = [
-  'wellness',
-  'safety',
-  'medication',
-  'social',
-  'appointment',
-] as const;
 
 const days = [
   'Monday',
@@ -431,6 +424,7 @@ export default function ScheduleForm({
         emergency_contact_name: payload.emergency_contact_name,
         emergency_contact_phone: payload.emergency_contact_phone,
         is_active: payload.is_active,
+        appointmentDetails: payload.appointmentDetails,
       });
 
       onSubmit({
@@ -575,15 +569,40 @@ export default function ScheduleForm({
                   <SelectValue placeholder="Select template" />
                 </SelectTrigger>
                 <SelectContent>
-                  {templates.map((template) => (
-                    <SelectItem key={template} value={template}>
-                      {template.charAt(0).toUpperCase() + template.slice(1)}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="wellness">Wellness</SelectItem>
+                  <SelectItem value="safety">Safety</SelectItem>
+                  <SelectItem value="medication">Medication Reminder</SelectItem>
+                  <SelectItem value="social">Social</SelectItem>
+                  <SelectItem value="appointment">Appointment Reminder</SelectItem>
                 </SelectContent>
               </Select>
               {errors.template && (
                 <p className="text-sm text-destructive">{errors.template}</p>
+              )}
+              {formData.template === 'wellness' && (
+                <p className="text-xs text-muted-foreground">
+                  Asks how the person is feeling today. Warm, supportive tone. Up to 3 exchanges.
+                </p>
+              )}
+              {formData.template === 'safety' && (
+                <p className="text-xs text-muted-foreground">
+                  General reassurance check-in focused on safety and comfort. Up to 3 exchanges.
+                </p>
+              )}
+              {formData.template === 'medication' && (
+                <p className="text-xs text-muted-foreground">
+                  Asks if the person has taken their medication. One-turn call, ends after response.
+                </p>
+              )}
+              {formData.template === 'social' && (
+                <p className="text-xs text-muted-foreground">
+                  Friendly social check-in for connection and companionship. Up to 3 exchanges.
+                </p>
+              )}
+              {formData.template === 'appointment' && (
+                <p className="text-xs text-muted-foreground">
+                  Reminds about an upcoming appointment and asks for confirmation. One-turn call.
+                </p>
               )}
             </div>
           )}

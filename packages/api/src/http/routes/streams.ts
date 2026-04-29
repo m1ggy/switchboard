@@ -55,10 +55,9 @@ function runFfmpeg(args: string[]): Promise<void> {
 
 function resolveCallModeFromScheduleTemplate(
   template: string | null | undefined
-): 'reassurance' | 'medication_reminder' | 'appointment_reminder' {
+): 'reassurance' | 'medication_reminder' | 'appointment_reminder' | 'wellness_check' {
   const t = (template ?? '').trim().toLowerCase();
 
-  // new + legacy values
   if (t === 'medication' || t === 'medication_reminder') {
     return 'medication_reminder';
   }
@@ -67,7 +66,10 @@ function resolveCallModeFromScheduleTemplate(
     return 'appointment_reminder';
   }
 
-  // keep wellness/safety/social/unknown as normal reassurance
+  if (t === 'wellness' || t === 'wellness_check') {
+    return 'wellness_check';
+  }
+
   return 'reassurance';
 }
 
@@ -124,7 +126,7 @@ async function generateRollingMemorySummary(args: {
   openai: OpenAIClient;
   priorSummary: string | null;
   callTranscriptSummary: string;
-  callMode: 'reassurance' | 'medication_reminder' | 'appointment_reminder';
+  callMode: 'reassurance' | 'medication_reminder' | 'appointment_reminder' | 'wellness_check';
 }): Promise<string> {
   const { openai, priorSummary, callTranscriptSummary, callMode } = args;
 
@@ -133,7 +135,9 @@ async function generateRollingMemorySummary(args: {
       ? `This was a quick medication reminder call. Keep the summary extremely short.`
       : callMode === 'appointment_reminder'
         ? `This was a quick appointment reminder call. Keep the summary extremely short.`
-        : `This was a reassurance call. Keep the summary short and practical.`;
+        : callMode === 'wellness_check'
+          ? `This was a quick wellness check call. Keep the summary short and practical.`
+          : `This was a reassurance call. Keep the summary short and practical.`;
 
   const input = [
     {
@@ -178,7 +182,7 @@ async function generateRollingMemorySummary(args: {
 async function generateSessionAiSummary(args: {
   openai: OpenAIClient;
   transcriptText: string;
-  callMode: 'reassurance' | 'medication_reminder' | 'appointment_reminder';
+  callMode: 'reassurance' | 'medication_reminder' | 'appointment_reminder' | 'wellness_check';
 }): Promise<string> {
   const { openai, transcriptText, callMode } = args;
 
@@ -187,7 +191,9 @@ async function generateSessionAiSummary(args: {
       ? `This was a medication reminder call. Keep it extremely short.`
       : callMode === 'appointment_reminder'
         ? `This was an appointment reminder call. Keep it extremely short.`
-        : `This was a reassurance check-in. Keep it short and practical.`;
+        : callMode === 'wellness_check'
+          ? `This was a wellness check call. Keep it short and practical.`
+          : `This was a reassurance check-in. Keep it short and practical.`;
 
   const input = [
     {
@@ -448,7 +454,8 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       let callMode:
         | 'reassurance'
         | 'medication_reminder'
-        | 'appointment_reminder' = 'reassurance';
+        | 'appointment_reminder'
+        | 'wellness_check' = 'reassurance';
 
       let assistantReplyCount = 0;
       let MAX_ASSISTANT_REPLIES = 3;
