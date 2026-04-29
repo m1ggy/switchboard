@@ -6,12 +6,14 @@ export type ScriptIntent =
   | 'followup'
   | 'closing'
   | 'medication_reminder'
-  | 'appointment_reminder';
+  | 'appointment_reminder'
+  | 'wellness_check';
 
 export type CallMode =
   | 'reassurance'
   | 'medication_reminder'
-  | 'appointment_reminder';
+  | 'appointment_reminder'
+  | 'wellness_check';
 
 export interface ScriptSegment {
   id: string;
@@ -92,6 +94,7 @@ const scriptPayloadSchema = {
           'closing',
           'medication_reminder',
           'appointment_reminder',
+          'wellness_check',
         ],
       },
       segments: {
@@ -183,6 +186,7 @@ export class ScriptGeneratorAgent {
       riskLevel = 'low',
       callMode,
       appointmentDetails,
+      lastCheckInSummary,
     } = context;
 
     const calleeName = userProfile.preferredName ?? userProfile.name ?? 'there';
@@ -193,7 +197,9 @@ export class ScriptGeneratorAgent {
         ? 'medication_reminder'
         : callMode === 'appointment_reminder'
           ? 'appointment_reminder'
-          : 'opening';
+          : callMode === 'wellness_check'
+            ? 'wellness_check'
+            : 'opening';
 
     const input: SimpleMessage[] = [
       { role: 'system', content: this.systemInstructions },
@@ -227,6 +233,13 @@ export class ScriptGeneratorAgent {
           `- Do NOT invent appointment details.`,
           `- Do NOT include overly sensitive medical detail.`,
           ``,
+          `If callMode="wellness_check":`,
+          `- Purpose must be "a quick wellness check".`,
+          `- Ask how they are feeling today in a warm, simple way.`,
+          `- You may briefly ask about comfort, mood, or general well-being.`,
+          `- Do NOT diagnose or give medical advice.`,
+          `- Do NOT ask too many questions at once.`,
+          ``,
           `If callMode="reassurance":`,
           `- Purpose must be "a quick reassurance check-in".`,
           ``,
@@ -234,6 +247,7 @@ export class ScriptGeneratorAgent {
           safeLine(`User name (callee)`, calleeName),
           safeLine(`Locale`, userProfile.locale ?? 'Unknown'),
           safeLine(`Risk level`, riskLevel),
+          safeLine(`Last check-in summary`, lastCheckInSummary),
           ``,
           `Appointment details (only relevant when callMode="appointment_reminder"):`,
           safeLine(`appointment_title`, appointmentDetails?.appointment_title),
@@ -282,14 +296,21 @@ export class ScriptGeneratorAgent {
     runningSummary?: string;
   }): Promise<ScriptPayload> {
     const { context, lastUserUtterance, runningSummary } = params;
-    const { callMode, riskLevel = 'low', appointmentDetails } = context;
+    const {
+      callMode,
+      riskLevel = 'low',
+      appointmentDetails,
+      lastCheckInSummary,
+    } = context;
 
     const expectedIntent: ScriptIntent =
       callMode === 'medication_reminder'
         ? 'medication_reminder'
         : callMode === 'appointment_reminder'
           ? 'appointment_reminder'
-          : 'followup';
+          : callMode === 'wellness_check'
+            ? 'wellness_check'
+            : 'followup';
 
     const callbackNumber = context.callbackNumber ?? '';
     const callbackSpokenDigits = toSpokenDigits(callbackNumber);
@@ -319,6 +340,13 @@ export class ScriptGeneratorAgent {
           `- Keep it very brief; do NOT ask many questions.`,
           `- Do NOT invent appointment details.`,
           ``,
+          `If callMode="wellness_check":`,
+          `- Ask one short, supportive follow-up question about how they are doing.`,
+          `- You may ask if they are comfortable, okay, or need any help.`,
+          `- Keep it calm and practical.`,
+          `- Do NOT diagnose or give medical advice.`,
+          `- If they say they feel unwell or unsafe, reflect that in handoffSignal conservatively.`,
+          ``,
           `If callMode="reassurance":`,
           `- Ask a short, supportive follow-up question.`,
           `- Keep it calm and practical.`,
@@ -327,6 +355,7 @@ export class ScriptGeneratorAgent {
           lastUserUtterance,
           ``,
           safeLine(`Risk level`, riskLevel),
+          safeLine(`Last check-in summary`, lastCheckInSummary),
           safeLine(`Callback number (raw)`, callbackNumber || '(none)'),
           safeLine(
             `Callback number (spoken digits)`,
@@ -380,6 +409,7 @@ export class ScriptGeneratorAgent {
       callMode,
       riskLevel = 'low',
       appointmentDetails,
+      lastCheckInSummary,
     } = context;
 
     const expectedIntent: ScriptIntent =
@@ -387,7 +417,9 @@ export class ScriptGeneratorAgent {
         ? 'medication_reminder'
         : callMode === 'appointment_reminder'
           ? 'appointment_reminder'
-          : 'closing';
+          : callMode === 'wellness_check'
+            ? 'wellness_check'
+            : 'closing';
 
     const companyName = context.companyName ?? 'our team';
     const callbackNumber = context.callbackNumber ?? '';
@@ -409,6 +441,7 @@ export class ScriptGeneratorAgent {
           `- If a callbackNumber is provided, tell them to call it and recite it as spoken digits.`,
           `- If callbackSpokenDigits is empty, do NOT invent a number; omit the callback instruction.`,
           `- For appointment reminder closings, do not restate a long list of appointment details.`,
+          `- For wellness check closings, keep the tone warm and supportive.`,
           ``,
           safeLine(`Company name`, companyName),
           safeLine(`Callback number (raw)`, callbackNumber || '(none)'),
@@ -419,6 +452,7 @@ export class ScriptGeneratorAgent {
           ``,
           safeLine(`User name`, userProfile.preferredName ?? 'there'),
           safeLine(`Risk level`, riskLevel),
+          safeLine(`Last check-in summary`, lastCheckInSummary),
           ``,
           `Appointment details (only relevant when callMode="appointment_reminder"):`,
           safeLine(`appointment_title`, appointmentDetails?.appointment_title),
@@ -474,6 +508,13 @@ Appointment reminder rules:
 - Ask if they can confirm attendance or need to reschedule.
 - If rescheduling is needed, direct them to call back if callbackNumber exists.
 - Keep it short and end the call after a single exchange.
+
+Wellness check rules:
+- Ask how the person is feeling in a warm, simple, supportive way.
+- Focus on general well-being, comfort, and whether they need help.
+- Do NOT diagnose symptoms.
+- Do NOT give medical advice.
+- Keep the conversation short and gentle.
 
 Safety:
 - Always return a handoffSignal.

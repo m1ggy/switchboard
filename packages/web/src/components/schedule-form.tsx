@@ -212,11 +212,50 @@ export default function ScheduleForm({
     frequency_days: initialData?.frequency_days ?? 7,
     frequency_time: initialData?.frequency_time || '10:00',
 
-    selected_days: (initialData?.selected_days?.length
-      ? initialData.selected_days.map(
-          (d) => d.charAt(0).toUpperCase() + d.slice(1)
-        )
-      : ['Monday', 'Wednesday', 'Friday']) as (typeof days)[number][],
+    selected_days: (() => {
+      // Defensive: selected_days may arrive as a real array, null/undefined,
+      // or (in some edge cases) a Postgres array literal string like
+      // "{monday,wednesday}" or a JSON-encoded string. Normalize to an array
+      // before calling .map so the dialog can't crash on open.
+      const raw = initialData?.selected_days as unknown;
+
+      let arr: string[] = [];
+      if (Array.isArray(raw)) {
+        arr = raw as string[];
+      } else if (typeof raw === 'string' && raw.length > 0) {
+        const trimmed = raw.trim();
+        try {
+          if (trimmed.startsWith('[')) {
+            // JSON array string
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) arr = parsed.map(String);
+          } else if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+            // Postgres array literal: {monday,wednesday}
+            arr = trimmed
+              .slice(1, -1)
+              .split(',')
+              .map((s) => s.trim().replace(/^"|"$/g, ''))
+              .filter(Boolean);
+          } else {
+            // Comma-separated fallback
+            arr = trimmed
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean);
+          }
+        } catch {
+          arr = [];
+        }
+      }
+
+      if (arr.length === 0) {
+        return ['Monday', 'Wednesday', 'Friday'] as (typeof days)[number][];
+      }
+
+      return arr.map(
+        (d) => d.charAt(0).toUpperCase() + d.slice(1).toLowerCase()
+      ) as (typeof days)[number][];
+    })(),
     calls_per_day: initialData?.calls_per_day || 1,
     max_attempts: initialData?.max_attempts || 3,
     retry_interval: initialData?.retry_interval || 15,
@@ -281,12 +320,17 @@ export default function ScheduleForm({
   ]);
 
   const toggleDay = (day: (typeof days)[number]) => {
-    setFormData((prev) => ({
-      ...prev,
-      selected_days: prev.selected_days.includes(day)
-        ? prev.selected_days.filter((d) => d !== day)
-        : [...prev.selected_days, day],
-    }));
+    setFormData((prev) => {
+      const current = Array.isArray(prev.selected_days)
+        ? prev.selected_days
+        : [];
+      return {
+        ...prev,
+        selected_days: current.includes(day)
+          ? current.filter((d) => d !== day)
+          : [...current, day],
+      };
+    });
     clearError('selected_days');
   };
 
@@ -322,7 +366,10 @@ export default function ScheduleForm({
       frequency_time: formData.frequency_time,
 
       selected_days: should_send_selected_days
-        ? formData.selected_days.map((d) => d.toLowerCase())
+        ? (Array.isArray(formData.selected_days)
+            ? formData.selected_days
+            : []
+          ).map((d) => d.toLowerCase())
         : null,
 
       calls_per_day: formData.calls_per_day,
@@ -1014,7 +1061,10 @@ export default function ScheduleForm({
                     >
                       <input
                         type="checkbox"
-                        checked={formData.selected_days.includes(day)}
+                        checked={
+                          Array.isArray(formData.selected_days) &&
+                          formData.selected_days.includes(day)
+                        }
                         onChange={() => toggleDay(day)}
                         className="h-4 w-4 rounded border-border"
                       />
