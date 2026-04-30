@@ -62,44 +62,75 @@ export async function getNextRunAtForSchedule(
   return computeRecurringNextRun(schedule, now);
 }
 
-/**
- * Existing logic extracted (cleaner)
- */
+const SCHEDULE_TIMEZONE = 'America/Chicago';
+
 function computeRecurringNextRun(
   schedule: ReassuranceCallSchedule,
   now: Date
 ): Date {
   const [hourStr, minuteStr, secondStr] = schedule.frequency_time.split(':');
-
   const hour = parseInt(hourStr, 10) || 0;
   const minute = parseInt(minuteStr ?? '0', 10) || 0;
   const second = parseInt(secondStr ?? '0', 10) || 0;
 
-  let next = new Date(
-    Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
-      hour,
-      minute,
-      second,
-      0
-    )
-  );
-
+  let next = chicagoLocalToUTC(now, 0, hour, minute, second);
   if (next <= now) {
-    next = new Date(
-      Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate() + 1,
-        hour,
-        minute,
-        second,
-        0
-      )
-    );
+    next = chicagoLocalToUTC(now, 1, hour, minute, second);
   }
-
   return next;
+}
+
+// Returns UTC ms offset for a timezone at a given UTC moment: UTC - localAsUTC
+function getTimezoneOffsetMs(date: Date, timezone: string): number {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(date);
+  const get = (type: string) =>
+    parseInt(parts.find((p) => p.type === type)!.value);
+  const localAsUTC = Date.UTC(
+    get('year'),
+    get('month') - 1,
+    get('day'),
+    get('hour'),
+    get('minute'),
+    get('second')
+  );
+  return date.getTime() - localAsUTC;
+}
+
+// Converts a Chicago local H:M:S on a given base date (+dayOffset days) to UTC
+function chicagoLocalToUTC(
+  base: Date,
+  dayOffset: number,
+  hour: number,
+  minute: number,
+  second: number
+): Date {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: SCHEDULE_TIMEZONE,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+  });
+  const parts = fmt.formatToParts(base);
+  const get = (type: string) =>
+    parseInt(parts.find((p) => p.type === type)!.value);
+  const year = get('year');
+  const month = get('month') - 1;
+  const day = get('day') + dayOffset;
+
+  // Treat Chicago local time as UTC to get a probe timestamp
+  const probe = new Date(Date.UTC(year, month, day, hour, minute, second));
+
+  // Correct for actual Chicago UTC offset at the probe moment
+  const offsetMs = getTimezoneOffsetMs(probe, SCHEDULE_TIMEZONE);
+  return new Date(probe.getTime() + offsetMs);
 }
