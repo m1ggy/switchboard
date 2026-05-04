@@ -166,10 +166,10 @@ export default function CallLogsContent() {
     isError,
   } = useQuery({
     ...trpc.reassuranceContactProfiles.getCallLogsByContactId.queryOptions({
-      contactId,
+      contact_id: contactId,
       limit: 50,
-      includeTranscript: true,
-      transcriptLimit: 500,
+      include_transcript: true,
+      transcript_limit: 500,
     }),
     enabled: !!contactId,
   });
