@@ -64,6 +64,15 @@ export async function getNextRunAtForSchedule(
 
 const SCHEDULE_TIMEZONE = 'America/Chicago';
 
+function getChicagoDayName(date: Date): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: SCHEDULE_TIMEZONE,
+    weekday: 'long',
+  })
+    .format(date)
+    .toLowerCase();
+}
+
 function computeRecurringNextRun(
   schedule: ReassuranceCallSchedule,
   now: Date
@@ -73,11 +82,20 @@ function computeRecurringNextRun(
   const minute = parseInt(minuteStr ?? '0', 10) || 0;
   const second = parseInt(secondStr ?? '0', 10) || 0;
 
-  let next = chicagoLocalToUTC(now, 0, hour, minute, second);
-  if (next <= now) {
-    next = chicagoLocalToUTC(now, 1, hour, minute, second);
+  const allowedDays =
+    schedule.selected_days && schedule.selected_days.length > 0
+      ? schedule.selected_days
+      : null;
+
+  for (let dayOffset = 0; dayOffset <= 7; dayOffset++) {
+    const candidate = chicagoLocalToUTC(now, dayOffset, hour, minute, second);
+    if (candidate <= now) continue;
+    if (allowedDays && !allowedDays.includes(getChicagoDayName(candidate))) continue;
+    return candidate;
   }
-  return next;
+
+  // Fallback: should not reach here for valid schedules
+  return chicagoLocalToUTC(now, 1, hour, minute, second);
 }
 
 // Returns UTC ms offset for a timezone at a given UTC moment: UTC - localAsUTC

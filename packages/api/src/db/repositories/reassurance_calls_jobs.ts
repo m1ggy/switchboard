@@ -97,6 +97,26 @@ export const ReassuranceCallJobsRepository = {
   },
 
   /**
+   * Reset jobs stuck in 'processing' for longer than staleAfterMs (default 10 min).
+   * Protects against server restarts leaving jobs permanently in-flight.
+   */
+  async resetStaleProcessing(staleAfterMs = 10 * 60 * 1000): Promise<number> {
+    const cutoff = new Date(Date.now() - staleAfterMs);
+    const res = await pool.query(
+      `
+      UPDATE reassurance_call_jobs
+      SET status = 'failed',
+          last_error = 'Stale processing job reset by cron'
+      WHERE status = 'processing'
+        AND run_at <= $1
+      RETURNING id
+      `,
+      [cutoff.toISOString()]
+    );
+    return res.rowCount ?? 0;
+  },
+
+  /**
    * Mark a job as processing
    */
   async markProcessing(id: string): Promise<void> {

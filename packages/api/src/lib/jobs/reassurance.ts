@@ -133,7 +133,17 @@ export async function registerReassuranceCron(app: FastifyInstance) {
     const startTime = Date.now();
     app.log.info('Reassurance cron started');
 
-    // 0) Ensure upcoming jobs exist for active schedules
+    // 0a) Reset stale processing jobs so their schedules can be re-seeded
+    try {
+      const resetCount = await ReassuranceCallJobsRepository.resetStaleProcessing();
+      if (resetCount > 0) {
+        app.log.warn({ resetCount }, 'Reset stale processing reassurance jobs');
+      }
+    } catch (err: any) {
+      app.log.error({ err }, 'Failed to reset stale reassurance jobs');
+    }
+
+    // 0b) Ensure upcoming jobs exist for active schedules
     try {
       await seedUpcomingJobs(app);
     } catch (err: any) {
