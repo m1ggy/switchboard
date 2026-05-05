@@ -2,6 +2,10 @@
 
 import { AppointmentReminderDetailsRepository } from '@/db/repositories/appointment_reminder_details';
 import { ReassuranceCallSchedule } from '@/types/db';
+import { DateTime } from 'luxon';
+
+const SCHEDULE_TIMEZONE = 'America/Chicago';
+const FAR_FUTURE_DAYS = 365;
 
 /**
  * Computes next run time for both:
@@ -11,7 +15,7 @@ import { ReassuranceCallSchedule } from '@/types/db';
 export async function getNextRunAtForSchedule(
   schedule: ReassuranceCallSchedule
 ): Promise<Date> {
-  const now = new Date();
+  const now = DateTime.now();
 
   /**
    * ✅ APPOINTMENT-BASED REMINDER
@@ -25,7 +29,7 @@ export async function getNextRunAtForSchedule(
     );
 
     if (!detail) {
-      // fallback to normal logic (failsafe)
+      // fallback to normal recurring logic
       return computeRecurringNextRun(schedule, now);
     }
 
@@ -35,25 +39,31 @@ export async function getNextRunAtForSchedule(
       detail.status === 'completed' ||
       detail.status === 'missed'
     ) {
-      // Return a far future date so it doesn't run again
-      return new Date(Date.now() + 1000 * 60 * 60 * 24 * 365);
+      return farFutureDate(now);
     }
 
-    const appointmentDate = new Date(detail.appointment_datetime);
-
-    const runAt = new Date(
-      appointmentDate.getTime() - detail.reminder_offset_minutes * 60 * 1000
+    /**
+     * appointment_datetime is timestamptz from DB.
+     * Convert it to a Luxon DateTime, subtract reminder offset,
+     * and return the exact UTC instant as JS Date.
+     */
+    const appointmentDate = DateTime.fromJSDate(
+      new Date(detail.appointment_datetime)
     );
+
+    const runAt = appointmentDate.minus({
+      minutes: detail.reminder_offset_minutes,
+    });
 
     /**
      * If already past → do NOT re-run
-     * (important to avoid spamming missed reminders)
+     * important to avoid spamming missed reminders
      */
     if (runAt <= now) {
-      return new Date(Date.now() + 1000 * 60 * 60 * 24 * 365);
+      return farFutureDate(now);
     }
 
-    return runAt;
+    return runAt.toJSDate();
   }
 
   /**
@@ -62,93 +72,78 @@ export async function getNextRunAtForSchedule(
   return computeRecurringNextRun(schedule, now);
 }
 
-const SCHEDULE_TIMEZONE = 'America/Chicago';
-
-function getChicagoDayName(date: Date): string {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: SCHEDULE_TIMEZONE,
-    weekday: 'long',
-  })
-    .format(date)
-    .toLowerCase();
-}
-
 function computeRecurringNextRun(
   schedule: ReassuranceCallSchedule,
-  now: Date
+  now: DateTime
 ): Date {
-  const [hourStr, minuteStr, secondStr] = schedule.frequency_time.split(':');
-  const hour = parseInt(hourStr, 10) || 0;
-  const minute = parseInt(minuteStr ?? '0', 10) || 0;
-  const second = parseInt(secondStr ?? '0', 10) || 0;
+  const timezone = SCHEDULE_TIMEZONE;
 
-  const allowedDays =
-    schedule.selected_days && schedule.selected_days.length > 0
-      ? schedule.selected_days
-      : null;
+  const nowInScheduleZone = now.setZone(timezone);
+
+  const { hour, minute, second } = parseFrequencyTime(schedule.frequency_time);
+
+  const allowedDays = normalizeAllowedDays(schedule.selected_days);
 
   for (let dayOffset = 0; dayOffset <= 7; dayOffset++) {
-    const candidate = chicagoLocalToUTC(now, dayOffset, hour, minute, second);
-    if (candidate <= now) continue;
-    if (allowedDays && !allowedDays.includes(getChicagoDayName(candidate))) continue;
-    return candidate;
+    const candidate = nowInScheduleZone.plus({ days: dayOffset }).set({
+      hour,
+      minute,
+      second,
+      millisecond: 0,
+    });
+
+    if (candidate <= nowInScheduleZone) continue;
+
+    const candidateDayName = candidate?.weekdayLong?.toLowerCase() as string;
+
+    if (allowedDays && !allowedDays.includes(candidateDayName)) {
+      continue;
+    }
+
+    /**
+     * This returns the same instant as a JS Date.
+     * Postgres timestamptz will store the instant correctly.
+     */
+    return candidate.toJSDate();
   }
 
-  // Fallback: should not reach here for valid schedules
-  return chicagoLocalToUTC(now, 1, hour, minute, second);
+  /**
+   * Fallback: should not reach here for valid schedules.
+   * Uses tomorrow in Chicago at the scheduled time.
+   */
+  return nowInScheduleZone
+    .plus({ days: 1 })
+    .set({
+      hour,
+      minute,
+      second,
+      millisecond: 0,
+    })
+    .toJSDate();
 }
 
-// Returns UTC ms offset for a timezone at a given UTC moment: UTC - localAsUTC
-function getTimezoneOffsetMs(date: Date, timezone: string): number {
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
-  const parts = fmt.formatToParts(date);
-  const get = (type: string) =>
-    parseInt(parts.find((p) => p.type === type)!.value);
-  const localAsUTC = Date.UTC(
-    get('year'),
-    get('month') - 1,
-    get('day'),
-    get('hour'),
-    get('minute'),
-    get('second')
-  );
-  return date.getTime() - localAsUTC;
+function parseFrequencyTime(frequencyTime: string): {
+  hour: number;
+  minute: number;
+  second: number;
+} {
+  const [hourStr, minuteStr = '0', secondStr = '0'] = frequencyTime.split(':');
+
+  return {
+    hour: parseInt(hourStr, 10) || 0,
+    minute: parseInt(minuteStr, 10) || 0,
+    second: parseInt(secondStr, 10) || 0,
+  };
 }
 
-// Converts a Chicago local H:M:S on a given base date (+dayOffset days) to UTC
-function chicagoLocalToUTC(
-  base: Date,
-  dayOffset: number,
-  hour: number,
-  minute: number,
-  second: number
-): Date {
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: SCHEDULE_TIMEZONE,
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-  });
-  const parts = fmt.formatToParts(base);
-  const get = (type: string) =>
-    parseInt(parts.find((p) => p.type === type)!.value);
-  const year = get('year');
-  const month = get('month') - 1;
-  const day = get('day') + dayOffset;
+function normalizeAllowedDays(selectedDays?: string[] | null): string[] | null {
+  if (!selectedDays || selectedDays.length === 0) {
+    return null;
+  }
 
-  // Treat Chicago local time as UTC to get a probe timestamp
-  const probe = new Date(Date.UTC(year, month, day, hour, minute, second));
+  return selectedDays.map((day) => day.toLowerCase());
+}
 
-  // Correct for actual Chicago UTC offset at the probe moment
-  const offsetMs = getTimezoneOffsetMs(probe, SCHEDULE_TIMEZONE);
-  return new Date(probe.getTime() + offsetMs);
+function farFutureDate(now: DateTime): Date {
+  return now.plus({ days: FAR_FUTURE_DAYS }).toJSDate();
 }
