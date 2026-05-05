@@ -131,7 +131,7 @@ async function seedUpcomingJobs(app: FastifyInstance) {
 export async function registerReassuranceCron(app: FastifyInstance) {
   cron.schedule('* * * * *', async () => {
     const startTime = Date.now();
-    app.log.info('Reassurance cron started');
+    app.log.debug('Reassurance cron tick');
 
     // 0a) Reset stale processing jobs so their schedules can be re-seeded
     try {
@@ -155,15 +155,16 @@ export async function registerReassuranceCron(app: FastifyInstance) {
 
     try {
       jobs = await ReassuranceCallJobsRepository.findDue(50);
-      app.log.info(
-        { jobCount: jobs.length },
-        'Reassurance cron fetched due jobs'
-      );
 
       if (!jobs.length) {
-        app.log.info('Reassurance cron found no pending jobs');
+        app.log.debug('Reassurance cron: no due jobs');
         return;
       }
+
+      app.log.info(
+        { jobCount: jobs.length },
+        'Reassurance cron: processing due jobs'
+      );
     } catch (err: any) {
       app.log.error({ err }, 'Failed to fetch reassurance jobs');
       return;
@@ -227,15 +228,6 @@ export async function registerReassuranceCron(app: FastifyInstance) {
         let fromNumber: string;
 
         try {
-          app.log.debug(
-            {
-              jobId: job.id,
-              scheduleId: schedule.id,
-              numberId: schedule.number_id,
-            },
-            'Resolving from-number for reassurance call'
-          );
-
           const numberEntry = await NumbersRepository.findById(
             schedule.number_id
           );
@@ -336,17 +328,6 @@ export async function registerReassuranceCron(app: FastifyInstance) {
           const contactLabel =
             schedule.name || schedule.phone_number || 'Unknown';
 
-          app.log.info(
-            {
-              jobId: job.id,
-              scheduleId: schedule.id,
-              companyId: schedule.company_id,
-              number: schedule.phone_number,
-              label: contactLabel,
-            },
-            'Resolving contact for reassurance call'
-          );
-
           const contact = await ContactsRepository.findOrCreate({
             number: schedule.phone_number,
             companyId: schedule.company_id,
@@ -443,7 +424,7 @@ export async function registerReassuranceCron(app: FastifyInstance) {
     }
 
     app.log.info(
-      { durationMs: Date.now() - startTime },
+      { durationMs: Date.now() - startTime, jobsProcessed: jobs.length },
       'Reassurance cron finished'
     );
   });
