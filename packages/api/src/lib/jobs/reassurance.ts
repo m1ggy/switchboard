@@ -63,7 +63,16 @@ async function ensureNextJobForSchedule(
     return;
   }
 
-  // If it's pending, we can safely reschedule to the correct nextRunAt
+  // If it's pending and already overdue, leave it — findDue will pick it up this tick
+  if (existing.status === 'pending' && existingRunAt <= new Date()) {
+    app.log.debug(
+      { scheduleId, jobId: existing.id, existingRunAt },
+      'Pending reassurance job is due; skipping reschedule'
+    );
+    return;
+  }
+
+  // If it's pending and not yet due, we can safely reschedule to the correct nextRunAt
   if (existing.status === 'pending') {
     await ReassuranceCallJobsRepository.reschedule(existing.id, {
       run_at: nextRunAt,
