@@ -54,12 +54,16 @@ async function ensureNextJobForSchedule(
   const existingRunAt = new Date(existing.run_at as any);
   const diffMs = Math.abs(existingRunAt.getTime() - nextRunAt.getTime());
 
-  // If it's already effectively the same time, do nothing
+  // If it's already effectively the same time, cancel any duplicate pending jobs
   if (diffMs < 1000) {
     app.log.debug(
       { scheduleId, existingJobId: existing.id, runAt: existingRunAt },
       'Upcoming reassurance job already matches nextRunAt'
     );
+    const cancelled = await ReassuranceCallJobsRepository.cancelOtherPendingJobs(scheduleId, existing.id);
+    if (cancelled > 0) {
+      app.log.warn({ scheduleId, cancelled }, 'Cancelled duplicate pending reassurance jobs');
+    }
     return;
   }
 
@@ -69,6 +73,10 @@ async function ensureNextJobForSchedule(
       { scheduleId, jobId: existing.id, existingRunAt },
       'Pending reassurance job is due; skipping reschedule'
     );
+    const cancelled = await ReassuranceCallJobsRepository.cancelOtherPendingJobs(scheduleId, existing.id);
+    if (cancelled > 0) {
+      app.log.warn({ scheduleId, cancelled }, 'Cancelled duplicate pending reassurance jobs');
+    }
     return;
   }
 
@@ -78,19 +86,23 @@ async function ensureNextJobForSchedule(
       run_at: nextRunAt,
     });
 
+    const cancelled = await ReassuranceCallJobsRepository.cancelOtherPendingJobs(scheduleId, existing.id);
+
     app.log.info(
       {
         scheduleId,
         jobId: existing.id,
         fromRunAt: existingRunAt,
         toRunAt: nextRunAt,
+        cancelledDuplicates: cancelled,
       },
       'Rescheduled existing pending reassurance job to match nextRunAt'
     );
     return;
   }
 
-  // If processing, leave it as-is (in-flight); cron will seed again next minute
+  // If processing, leave it as-is (in-flight); cancel any other pending duplicates
+  const cancelled = await ReassuranceCallJobsRepository.cancelOtherPendingJobs(scheduleId, existing.id);
   app.log.warn(
     {
       scheduleId,
@@ -98,6 +110,7 @@ async function ensureNextJobForSchedule(
       status: existing.status,
       existingRunAt,
       desiredNextRunAt: nextRunAt,
+      cancelledDuplicates: cancelled,
     },
     'Active reassurance job is in-flight; not rescheduling'
   );
