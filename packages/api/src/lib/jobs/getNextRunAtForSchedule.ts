@@ -5,16 +5,17 @@ import { ReassuranceCallSchedule } from '@/types/db';
 import { DateTime } from 'luxon';
 
 const SCHEDULE_TIMEZONE = 'America/Chicago';
-const FAR_FUTURE_DAYS = 365;
 
 /**
  * Computes next run time for both:
  * - recurring reassurance schedules
  * - appointment-based reminders
+ *
+ * Returns null when the schedule should not create a job today.
  */
 export async function getNextRunAtForSchedule(
   schedule: ReassuranceCallSchedule
-): Promise<Date> {
+): Promise<Date | null> {
   const now = DateTime.now();
 
   /**
@@ -29,24 +30,17 @@ export async function getNextRunAtForSchedule(
     );
 
     if (!detail) {
-      // fallback to normal recurring logic
       return computeRecurringNextRun(schedule, now);
     }
 
-    // Skip non-active appointment states
     if (
       detail.status === 'cancelled' ||
       detail.status === 'completed' ||
       detail.status === 'missed'
     ) {
-      return farFutureDate(now);
+      return null;
     }
 
-    /**
-     * appointment_datetime is timestamptz from DB.
-     * Convert it to a Luxon DateTime, subtract reminder offset,
-     * and return the exact UTC instant as JS Date.
-     */
     const appointmentDate = DateTime.fromJSDate(
       new Date(detail.appointment_datetime)
     );
@@ -56,11 +50,11 @@ export async function getNextRunAtForSchedule(
     });
 
     /**
-     * If already past → do NOT re-run
-     * important to avoid spamming missed reminders
+     * If already past, skip.
+     * Do not create a reminder job for a past appointment reminder.
      */
     if (runAt <= now) {
-      return farFutureDate(now);
+      return null;
     }
 
     return runAt.toJSDate();
@@ -75,51 +69,39 @@ export async function getNextRunAtForSchedule(
 function computeRecurringNextRun(
   schedule: ReassuranceCallSchedule,
   now: DateTime
-): Date {
-  const timezone = SCHEDULE_TIMEZONE;
-
-  const nowInScheduleZone = now.setZone(timezone);
+): Date | null {
+  const nowInScheduleZone = now.setZone(SCHEDULE_TIMEZONE);
 
   const { hour, minute, second } = parseFrequencyTime(schedule.frequency_time);
 
   const allowedDays = normalizeAllowedDays(schedule.selected_days);
 
-  for (let dayOffset = 0; dayOffset <= 7; dayOffset++) {
-    const candidate = nowInScheduleZone.plus({ days: dayOffset }).set({
-      hour,
-      minute,
-      second,
-      millisecond: 0,
-    });
+  const candidate = nowInScheduleZone.set({
+    hour,
+    minute,
+    second,
+    millisecond: 0,
+  });
 
-    if (candidate <= nowInScheduleZone) continue;
+  const candidateDayName = candidate.weekdayLong?.toLowerCase() as string;
 
-    const candidateDayName = candidate?.weekdayLong?.toLowerCase() as string;
-
-    if (allowedDays && !allowedDays.includes(candidateDayName)) {
-      continue;
-    }
-
-    /**
-     * This returns the same instant as a JS Date.
-     * Postgres timestamptz will store the instant correctly.
-     */
-    return candidate.toJSDate();
+  /**
+   * If today is not an allowed day, skip.
+   * Do not create tomorrow's job yet.
+   */
+  if (allowedDays && !allowedDays.includes(candidateDayName)) {
+    return null;
   }
 
   /**
-   * Fallback: should not reach here for valid schedules.
-   * Uses tomorrow in Chicago at the scheduled time.
+   * If today's scheduled time already passed, skip.
+   * Do not create tomorrow's job yet.
    */
-  return nowInScheduleZone
-    .plus({ days: 1 })
-    .set({
-      hour,
-      minute,
-      second,
-      millisecond: 0,
-    })
-    .toJSDate();
+  if (candidate <= nowInScheduleZone) {
+    return null;
+  }
+
+  return candidate.toJSDate();
 }
 
 function parseFrequencyTime(frequencyTime: string): {
@@ -142,8 +124,4 @@ function normalizeAllowedDays(selectedDays?: string[] | null): string[] | null {
   }
 
   return selectedDays.map((day) => day.toLowerCase());
-}
-
-function farFutureDate(now: DateTime): Date {
-  return now.plus({ days: FAR_FUTURE_DAYS }).toJSDate();
 }
