@@ -1439,6 +1439,11 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         await speakScriptPayload(openingPayload);
         openingDelivered = true;
         runningSummary = `Opening delivered.`;
+
+        app.log.info(
+          { sessionId, contactId, callSid, scheduleId, callMode },
+          '[ReassuranceStream] session bootstrapped'
+        );
       }
 
       async function finalizeAndUpload(
@@ -1446,6 +1451,8 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       ) {
         if (finalized) return;
         finalized = true;
+
+        const finalizeStart = Date.now();
 
         try {
           try {
@@ -1464,7 +1471,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
           if (!sessionId || !contactId) {
             app.log.warn(
-              { sessionId, contactId },
+              { sessionId, contactId, callSid, scheduleId, jobId, status },
               '[ReassuranceStream] finalize: missing sessionId/contactId'
             );
             return;
@@ -1485,7 +1492,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             await mulawToMp3(outboundPath, outboundMp3Path);
           } catch (e) {
             app.log.error(
-              { e, sessionId },
+              { err: e, sessionId, callSid },
               '[ReassuranceStream] ffmpeg convert failed (in/out mp3 may be missing)'
             );
           }
@@ -1494,7 +1501,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             await mixMulawToMp3(inboundPath, outboundPath, mixedMp3Path);
           } catch (e) {
             app.log.error(
-              { e, sessionId },
+              { err: e, sessionId, callSid },
               '[ReassuranceStream] ffmpeg mix convert failed (mixed mp3 will be missing)'
             );
           }
@@ -1530,7 +1537,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             }
           } catch (e) {
             app.log.error(
-              { e, sessionId },
+              { err: e, sessionId, callSid },
               '[ReassuranceStream] mp3 upload failed'
             );
           }
@@ -1549,7 +1556,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             );
           } catch (e) {
             app.log.error(
-              { e, sessionId },
+              { err: e, sessionId, callSid },
               '[ReassuranceStream] mulaw upload failed'
             );
           }
@@ -1604,7 +1611,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               recordingId = rec.id;
             } catch (e) {
               app.log.error(
-                { e, sessionId, companyId, contactId },
+                { err: e, sessionId, companyId, contactId, callSid },
                 '[ReassuranceStream] failed to create recording row'
               );
             }
@@ -1631,7 +1638,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             }
           } catch (e) {
             app.log.warn(
-              { e, sessionId },
+              { err: e, sessionId, callSid },
               '[ReassuranceStream] session ai_summary gen failed'
             );
           }
@@ -1644,7 +1651,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             });
           } catch (e) {
             app.log.error(
-              { e, sessionId },
+              { err: e, sessionId, callSid },
               '[ReassuranceStream] finalizeSession failed'
             );
           }
@@ -1686,7 +1693,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             }
           } catch (e) {
             app.log.warn(
-              { e, sessionId, contactId },
+              { err: e, sessionId, contactId, callSid },
               '[ReassuranceStream] rolling summary upsert failed'
             );
           }
@@ -1694,7 +1701,10 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           app.log.info(
             {
               sessionId,
+              callSid,
+              scheduleId,
               status,
+              durationMs: Date.now() - finalizeStart,
               inboundUrl: primaryInboundUrl,
               outboundUrl: primaryOutboundUrl,
               mixedMp3Url,

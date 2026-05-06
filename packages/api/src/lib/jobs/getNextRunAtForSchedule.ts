@@ -118,10 +118,20 @@ function parseFrequencyTime(frequencyTime: string): {
   };
 }
 
-function normalizeAllowedDays(selectedDays?: string[] | null): string[] | null {
-  if (!selectedDays || selectedDays.length === 0) {
-    return null;
+function normalizeAllowedDays(selectedDays?: string[] | string | null): string[] | null {
+  if (!selectedDays) return null;
+
+  // pg can return text[] as "{monday,tuesday}" instead of a JS array
+  if (typeof selectedDays === 'string') {
+    const days = selectedDays
+      .replace(/^\{|\}$/g, '')
+      .split(',')
+      .map((d) => d.trim().toLowerCase())
+      .filter(Boolean);
+    return days.length ? days : null;
   }
+
+  if (!Array.isArray(selectedDays) || selectedDays.length === 0) return null;
 
   return selectedDays.map((day) => day.toLowerCase());
 }
