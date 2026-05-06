@@ -2,7 +2,7 @@ import { TwilioClient } from '@/lib/twilio';
 import crypto from 'crypto';
 import type { FastifyInstance } from 'fastify';
 import cron from 'node-cron';
-// jobs/reassuranceCron.ts
+
 import { CallsRepository } from '@/db/repositories/calls';
 import { ContactsRepository } from '@/db/repositories/contacts';
 import { NumbersRepository } from '@/db/repositories/numbers';
@@ -14,17 +14,12 @@ const twilioClient = new TwilioClient(
   process.env.TWILIO_ACCOUNT_SID!,
   process.env.TWILIO_AUTH_TOKEN!
 );
+
 const SERVER_DOMAIN = process.env.SERVER_DOMAIN!;
 
 /**
- * Ensures there is exactly one active (pending/processing) job per schedule,
+ * Ensures there is exactly one active pending/processing job per schedule,
  * and that its run_at matches the currently computed nextRunAt.
- *
- * - If none exists -> create pending job at nextRunAt
- * - If one exists and is pending but run_at differs -> reschedule it to nextRunAt
- * - If one exists and is processing -> leave it alone (avoid moving an in-flight job)
- *
- * This prevents "stale pending jobs" from old schedule times causing unexpected runs.
  */
 async function ensureNextJobForSchedule(
   app: FastifyInstance,
@@ -34,7 +29,6 @@ async function ensureNextJobForSchedule(
   const existing =
     await ReassuranceCallJobsRepository.findActiveForSchedule(scheduleId);
 
-  // No active job => create one
   if (!existing) {
     await ReassuranceCallJobsRepository.include({
       id: crypto.randomUUID(),
@@ -44,26 +38,19 @@ async function ensureNextJobForSchedule(
       status: 'pending',
     });
 
-    app.log.info(
-      { scheduleId, nextRunAt },
-      'Seeded upcoming reassurance job (created new)'
-    );
+    app.log.info({ scheduleId, nextRunAt }, 'Seeded upcoming reassurance job');
+
     return;
   }
 
   const existingRunAt = new Date(existing.run_at as any);
   const diffMs = Math.abs(existingRunAt.getTime() - nextRunAt.getTime());
 
-  // If it's already effectively the same time, cancel any duplicate pending jobs
   if (diffMs < 1000) {
     app.log.debug(
       { scheduleId, existingJobId: existing.id, runAt: existingRunAt },
       'Upcoming reassurance job already matches nextRunAt'
     );
-    const cancelled = await ReassuranceCallJobsRepository.cancelOtherPendingJobs(scheduleId, existing.id);
-    if (cancelled > 0) {
-      app.log.warn({ scheduleId, cancelled }, 'Cancelled duplicate pending reassurance jobs');
-    }
     return;
   }
 
@@ -73,9 +60,16 @@ async function ensureNextJobForSchedule(
       { scheduleId, jobId: existing.id, existingRunAt },
       'Pending reassurance job is due; skipping reschedule'
     );
-    const cancelled = await ReassuranceCallJobsRepository.cancelOtherPendingJobs(scheduleId, existing.id);
+    const cancelled =
+      await ReassuranceCallJobsRepository.cancelOtherPendingJobs(
+        scheduleId,
+        existing.id
+      );
     if (cancelled > 0) {
-      app.log.warn({ scheduleId, cancelled }, 'Cancelled duplicate pending reassurance jobs');
+      app.log.warn(
+        { scheduleId, cancelled },
+        'Cancelled duplicate pending reassurance jobs'
+      );
     }
     return;
   }
@@ -86,7 +80,11 @@ async function ensureNextJobForSchedule(
       run_at: nextRunAt,
     });
 
-    const cancelled = await ReassuranceCallJobsRepository.cancelOtherPendingJobs(scheduleId, existing.id);
+    const cancelled =
+      await ReassuranceCallJobsRepository.cancelOtherPendingJobs(
+        scheduleId,
+        existing.id
+      );
 
     app.log.info(
       {
@@ -96,13 +94,12 @@ async function ensureNextJobForSchedule(
         toRunAt: nextRunAt,
         cancelledDuplicates: cancelled,
       },
-      'Rescheduled existing pending reassurance job to match nextRunAt'
+      'Rescheduled existing pending reassurance job'
     );
+
     return;
   }
 
-  // If processing, leave it as-is (in-flight); cancel any other pending duplicates
-  const cancelled = await ReassuranceCallJobsRepository.cancelOtherPendingJobs(scheduleId, existing.id);
   app.log.warn(
     {
       scheduleId,
@@ -116,8 +113,49 @@ async function ensureNextJobForSchedule(
   );
 }
 
+/**
+ * If there is no valid run left today, remove/close stale pending jobs.
+ * This prevents yesterday/tomorrow jobs from blocking the schedule.
+ */
+async function skipActivePendingJobForSchedule(
+  app: FastifyInstance,
+  scheduleId: number,
+  reason: string
+) {
+  const existing =
+    await ReassuranceCallJobsRepository.findActiveForSchedule(scheduleId);
+
+  if (!existing) return;
+
+  if (existing.status === 'pending') {
+    await ReassuranceCallJobsRepository.markFailed(existing.id, reason);
+
+    app.log.info(
+      {
+        scheduleId,
+        jobId: existing.id,
+        runAt: existing.run_at,
+        reason,
+      },
+      'Skipped stale pending reassurance job'
+    );
+
+    return;
+  }
+
+  app.log.warn(
+    {
+      scheduleId,
+      jobId: existing.id,
+      status: existing.status,
+      runAt: existing.run_at,
+      reason,
+    },
+    'Did not skip active reassurance job because it is not pending'
+  );
+}
+
 async function seedUpcomingJobs(app: FastifyInstance) {
-  // Batch through active schedules and ensure each has an upcoming job
   const limit = 500;
   let offset = 0;
 
@@ -135,7 +173,25 @@ async function seedUpcomingJobs(app: FastifyInstance) {
 
         const nextRunAt = await getNextRunAtForSchedule(schedule);
 
-        // FIX: enforce one active job per schedule; reschedule stale pending jobs
+        if (!nextRunAt) {
+          await skipActivePendingJobForSchedule(
+            app,
+            schedule.id,
+            'No remaining run today'
+          );
+
+          app.log.info(
+            {
+              scheduleId: schedule.id,
+              frequencyTime: schedule.frequency_time,
+              selectedDays: schedule.selected_days,
+            },
+            'Skipping reassurance schedule; no valid run left today'
+          );
+
+          continue;
+        }
+
         await ensureNextJobForSchedule(app, schedule.id, nextRunAt);
       } catch (err: any) {
         app.log.error(
@@ -146,6 +202,7 @@ async function seedUpcomingJobs(app: FastifyInstance) {
     }
 
     offset += schedules.length;
+
     if (schedules.length < limit) break;
   }
 }
@@ -155,9 +212,10 @@ export async function registerReassuranceCron(app: FastifyInstance) {
     const startTime = Date.now();
     app.log.debug('Reassurance cron tick');
 
-    // 0a) Reset stale processing jobs so their schedules can be re-seeded
     try {
-      const resetCount = await ReassuranceCallJobsRepository.resetStaleProcessing();
+      const resetCount =
+        await ReassuranceCallJobsRepository.resetStaleProcessing();
+
       if (resetCount > 0) {
         app.log.warn({ resetCount }, 'Reset stale processing reassurance jobs');
       }
@@ -165,12 +223,10 @@ export async function registerReassuranceCron(app: FastifyInstance) {
       app.log.error({ err }, 'Failed to reset stale reassurance jobs');
     }
 
-    // 0b) Ensure upcoming jobs exist for active schedules
     try {
       await seedUpcomingJobs(app);
     } catch (err: any) {
       app.log.error({ err }, 'Failed to seed upcoming reassurance jobs');
-      // continue anyway; due-job processing can still run
     }
 
     let jobs: any[] = [];
@@ -199,22 +255,20 @@ export async function registerReassuranceCron(app: FastifyInstance) {
       );
 
       try {
-        // FIX: atomically claim the job to avoid double-processing across workers
         const claimed = await ReassuranceCallJobsRepository.claimPending(
           job.id
         );
+
         if (!claimed) {
           app.log.debug(
             { jobId: job.id },
             'Skipped job; already claimed by another worker'
           );
+
           continue;
         }
 
-        app.log.debug(
-          { jobId: job.id },
-          'Claimed reassurance job (marked processing)'
-        );
+        app.log.debug({ jobId: job.id }, 'Claimed reassurance job');
 
         const schedule = await ReassuranceSchedulesRepository.find(
           job.schedule_id
@@ -230,6 +284,7 @@ export async function registerReassuranceCron(app: FastifyInstance) {
             job.id,
             'Schedule not found'
           );
+
           continue;
         }
 
@@ -243,10 +298,10 @@ export async function registerReassuranceCron(app: FastifyInstance) {
             job.id,
             'Schedule inactive'
           );
+
           continue;
         }
 
-        // Resolve the from-number from schedule.number_id
         let fromNumber: string;
 
         try {
@@ -268,12 +323,12 @@ export async function registerReassuranceCron(app: FastifyInstance) {
               job.id,
               'From number not found'
             );
+
             continue;
           }
 
           fromNumber = numberEntry.number;
 
-          // Optional: sanity check that company_id matches
           if (numberEntry.company_id !== schedule.company_id) {
             app.log.warn(
               {
@@ -312,6 +367,7 @@ export async function registerReassuranceCron(app: FastifyInstance) {
             job.id,
             'Failed to resolve from number'
           );
+
           continue;
         }
 
@@ -345,7 +401,6 @@ export async function registerReassuranceCron(app: FastifyInstance) {
           'Twilio call successfully triggered'
         );
 
-        // --- Contact resolution & call logging ------------------------
         try {
           const contactLabel =
             schedule.name || schedule.phone_number || 'Unknown';
@@ -397,7 +452,6 @@ export async function registerReassuranceCron(app: FastifyInstance) {
             'Reassurance call logged to database'
           );
         } catch (err: any) {
-          // We don't want to fail the job if logging fails, just report it.
           app.log.error(
             {
               err,
@@ -410,15 +464,25 @@ export async function registerReassuranceCron(app: FastifyInstance) {
             'Failed to log reassurance call to database'
           );
         }
-        // -------------------------------------------------------------
 
-        // Mark job completed (call has been successfully triggered)
         await ReassuranceCallJobsRepository.markCompleted(job.id);
 
-        // Seed the next run for this schedule:
-        // FIX: enforce one active job per schedule; reschedule stale pending jobs
+        /**
+         * After completion, do not create tomorrow's job.
+         * Only create another job if there is still a valid run today.
+         */
         try {
           const nextRunAt = await getNextRunAtForSchedule(schedule);
+
+          if (!nextRunAt) {
+            app.log.info(
+              { scheduleId: schedule.id, completedJobId: job.id },
+              'No remaining reassurance run today after completion'
+            );
+
+            continue;
+          }
+
           await ensureNextJobForSchedule(app, schedule.id, nextRunAt);
 
           app.log.info(
@@ -426,7 +490,6 @@ export async function registerReassuranceCron(app: FastifyInstance) {
             'Ensured next reassurance job after completion'
           );
         } catch (err: any) {
-          // Don't fail the completed job if seeding next run fails; cron will retry next minute
           app.log.error(
             { err, scheduleId: schedule.id, completedJobId: job.id },
             'Failed to ensure next reassurance job after completion'
