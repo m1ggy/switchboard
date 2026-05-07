@@ -76,32 +76,21 @@ function computeRecurringNextRun(
 
   const allowedDays = normalizeAllowedDays(schedule.selected_days);
 
-  const candidate = nowInScheduleZone.set({
-    hour,
-    minute,
-    second,
-    millisecond: 0,
-  });
+  // Try today first, then advance up to 7 days to find next valid run
+  for (let daysAhead = 0; daysAhead < 7; daysAhead++) {
+    const candidate = nowInScheduleZone
+      .plus({ days: daysAhead })
+      .set({ hour, minute, second, millisecond: 0 });
 
-  const candidateDayName = candidate.weekdayLong?.toLowerCase() as string;
+    if (candidate <= nowInScheduleZone) continue;
 
-  /**
-   * If today is not an allowed day, skip.
-   * Do not create tomorrow's job yet.
-   */
-  if (allowedDays && !allowedDays.includes(candidateDayName)) {
-    return null;
+    const dayName = candidate.weekdayLong?.toLowerCase() as string;
+    if (allowedDays && !allowedDays.includes(dayName)) continue;
+
+    return candidate.toJSDate();
   }
 
-  /**
-   * If today's scheduled time already passed, skip.
-   * Do not create tomorrow's job yet.
-   */
-  if (candidate <= nowInScheduleZone) {
-    return null;
-  }
-
-  return candidate.toJSDate();
+  return null;
 }
 
 function parseFrequencyTime(frequencyTime: string): {

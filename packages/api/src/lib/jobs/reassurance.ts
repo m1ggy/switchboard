@@ -155,6 +155,8 @@ async function skipActivePendingJobForSchedule(
   );
 }
 
+const SEED_WINDOW_MS = 10 * 60 * 1000; // seed jobs 10 minutes before run_at
+
 async function seedUpcomingJobs(app: FastifyInstance) {
   const limit = 500;
   let offset = 0;
@@ -177,7 +179,7 @@ async function seedUpcomingJobs(app: FastifyInstance) {
           await skipActivePendingJobForSchedule(
             app,
             schedule.id,
-            'No remaining run today'
+            'No valid run found in next 7 days'
           );
 
           app.log.info(
@@ -186,11 +188,14 @@ async function seedUpcomingJobs(app: FastifyInstance) {
               frequencyTime: schedule.frequency_time,
               selectedDays: schedule.selected_days,
             },
-            'Skipping reassurance schedule; no valid run left today'
+            'Skipping reassurance schedule; no valid run found in next 7 days'
           );
 
           continue;
         }
+
+        const msUntilRun = nextRunAt.getTime() - Date.now();
+        if (msUntilRun > SEED_WINDOW_MS) continue;
 
         await ensureNextJobForSchedule(app, schedule.id, nextRunAt);
       } catch (err: any) {
