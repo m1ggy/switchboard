@@ -252,9 +252,9 @@ export interface PlanUsageLimit {
 
 export interface ReassuranceCallSchedule {
   id: number;
-  name: string; // now the single source of truth for display / labeling
+  name: string;
   phone_number: string;
-  caller_name: string | null; // keep if DB still has it, but no longer used for labeling
+  caller_name: string | null;
   script_type: 'template' | 'custom';
   template: string | null;
   script_content: string | null;
@@ -268,9 +268,11 @@ export interface ReassuranceCallSchedule {
   retry_interval: number;
   created_at: string;
   is_active: boolean | null;
+  emergency_contact_name: string | null;
+  emergency_contact_phone_number: string | null;
 
-  company_id: string; // uuid
-  number_id: string; // uuid (number to use for calling)
+  company_id: string;
+  number_id: string;
 }
 
 export interface ReassuranceCallJob {
@@ -364,6 +366,56 @@ export type ReassuranceCallTranscript = {
   raw: any | null;
 
   created_at: string;
+};
+
+export interface ClientOrganization {
+  id: string;
+  company_id: string;
+  name: string;
+  slug: string | null;
+  description: string | null;
+  is_active: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export type ClientOrganizationUserRole = 'owner' | 'admin' | 'viewer';
+
+export interface ClientOrganizationUser {
+  id: string;
+  client_organization_id: string;
+  user_id: string;
+  role: ClientOrganizationUserRole;
+  is_active: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface ClientOrganizationContact {
+  id: string;
+  client_organization_id: string;
+  contact_id: string;
+  is_active: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface ClientOrganizationDashboardStats {
+  total_contacts: number;
+  total_members: number;
+  total_calls: number;
+  total_messages: number;
+}
+
+export type ClientOrganizationLog = {
+  type: 'call' | 'message';
+  id: string;
+  contact_id: string;
+  created_at: string;
+  duration: number | null;
+  message: string | null;
+  direction: 'inbound' | 'outbound' | null;
+  meta: Record<string, unknown> | null;
 };
 
 export interface AppointmentReminderDetail {

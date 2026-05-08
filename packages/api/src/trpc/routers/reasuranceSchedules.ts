@@ -1,5 +1,5 @@
 import { ReassuranceCallJobsRepository } from '@/db/repositories/reassurance_calls_jobs';
-import { ReassuranceSchedulesRepository } from '@/db/repositories/reassurance_schedules';
+import { ReassuranceSchedulesRepository, type UpdateScheduleInput } from '@/db/repositories/reassurance_schedules';
 import { getNextRunAtForSchedule } from '@/lib/jobs/getNextRunAtForSchedule';
 import { ReassuranceCallSchedule } from '@/types/db';
 import crypto from 'crypto';
@@ -76,7 +76,7 @@ export const reassuranceSchedulesRouter = t.router({
         frequency: input.frequency,
         frequency_days: input.frequencyDays ?? null,
         frequency_time: input.frequencyTime,
-        selected_days: input.selectedDays ?? ['monday'],
+        selected_days: input.selectedDays ?? null,
         calls_per_day: input.callsPerDay,
         max_attempts: input.maxAttempts,
         retry_interval: input.retryInterval,
@@ -86,13 +86,15 @@ export const reassuranceSchedulesRouter = t.router({
 
       const runAt = await getNextRunAtForSchedule(schedule);
 
-      await ReassuranceCallJobsRepository.include({
-        id: crypto.randomUUID() as string,
-        schedule_id: schedule.id,
-        run_at: runAt,
-        attempt: 1,
-        status: 'pending',
-      });
+      if (runAt) {
+        await ReassuranceCallJobsRepository.include({
+          id: crypto.randomUUID() as string,
+          schedule_id: schedule.id,
+          run_at: runAt,
+          attempt: 1,
+          status: 'pending',
+        });
+      }
 
       return schedule as ReassuranceCallSchedule;
     }),
@@ -191,11 +193,28 @@ export const reassuranceSchedulesRouter = t.router({
       if (data.retryInterval !== undefined)
         updates.retry_interval = data.retryInterval;
 
-      const updated = await ReassuranceSchedulesRepository.update(
-        id,
-        input.companyId,
-        updates
-      );
+      const existing = await ReassuranceSchedulesRepository.find(id, input.companyId);
+      if (!existing) return null;
+
+      const updated = await ReassuranceSchedulesRepository.update({
+        id: existing.id,
+        name: updates.name ?? existing.name,
+        caller_name: updates.caller_name !== undefined ? updates.caller_name : existing.caller_name,
+        script_type: updates.script_type ?? existing.script_type,
+        template: (updates.template !== undefined ? updates.template : existing.template) as UpdateScheduleInput['template'],
+        script_content: updates.script_content !== undefined ? updates.script_content : existing.script_content,
+        name_in_script: updates.name_in_script ?? existing.name_in_script,
+        frequency: updates.frequency ?? existing.frequency,
+        frequency_days: updates.frequency_days !== undefined ? updates.frequency_days : existing.frequency_days,
+        frequency_time: updates.frequency_time ?? existing.frequency_time,
+        selected_days: updates.selected_days !== undefined ? updates.selected_days : existing.selected_days,
+        calls_per_day: updates.calls_per_day ?? existing.calls_per_day,
+        max_attempts: updates.max_attempts ?? existing.max_attempts,
+        retry_interval: updates.retry_interval ?? existing.retry_interval,
+        is_active: updates.is_active !== undefined ? updates.is_active : existing.is_active,
+        emergency_contact_name: updates.emergency_contact_name !== undefined ? updates.emergency_contact_name : existing.emergency_contact_name,
+        emergency_contact_phone: updates.emergency_contact_phone_number !== undefined ? updates.emergency_contact_phone_number : existing.emergency_contact_phone_number,
+      });
       if (!updated) {
         return null;
       }
@@ -213,10 +232,12 @@ export const reassuranceSchedulesRouter = t.router({
           updated as ReassuranceCallSchedule
         );
 
-        await ReassuranceCallJobsRepository.reschedulePendingForSchedule(
-          updated.id,
-          runAt
-        );
+        if (runAt) {
+          await ReassuranceCallJobsRepository.reschedulePendingForSchedule(
+            updated.id,
+            runAt
+          );
+        }
       }
 
       return updated as ReassuranceCallSchedule | null;
@@ -233,12 +254,10 @@ export const reassuranceSchedulesRouter = t.router({
       })
     )
     .mutation(async ({ input }) => {
-      const schedule = await ReassuranceSchedulesRepository.update(
+      const schedule = await ReassuranceSchedulesRepository.setActive(
         input.id,
         input.companyId,
-        {
-          is_active: true as any,
-        }
+        true
       );
 
       if (!schedule) {
@@ -252,13 +271,15 @@ export const reassuranceSchedulesRouter = t.router({
       if (!existing) {
         const runAt = await getNextRunAtForSchedule(schedule);
 
-        await ReassuranceCallJobsRepository.include({
-          id: crypto.randomUUID(),
-          schedule_id: schedule.id,
-          run_at: runAt,
-          attempt: 1,
-          status: 'pending',
-        });
+        if (runAt) {
+          await ReassuranceCallJobsRepository.include({
+            id: crypto.randomUUID(),
+            schedule_id: schedule.id,
+            run_at: runAt,
+            attempt: 1,
+            status: 'pending',
+          });
+        }
       }
 
       return schedule as ReassuranceCallSchedule;
@@ -275,12 +296,10 @@ export const reassuranceSchedulesRouter = t.router({
       })
     )
     .mutation(async ({ input }) => {
-      const updated = await ReassuranceSchedulesRepository.update(
+      const updated = await ReassuranceSchedulesRepository.setActive(
         input.id,
         input.companyId,
-        {
-          is_active: false as boolean,
-        }
+        false
       );
 
       return updated as ReassuranceCallSchedule | null;
@@ -301,7 +320,7 @@ export const reassuranceSchedulesRouter = t.router({
         await ReassuranceSchedulesRepository.getPaginatedScheduleCallLogs({
           page,
           pageSize,
-          companyId: input.companyId,
+          company_id: input.companyId,
         });
 
       return result;

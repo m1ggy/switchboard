@@ -393,6 +393,10 @@ export async function registerReassuranceCron(app: FastifyInstance) {
           statusCallback: `${SERVER_DOMAIN}/twilio/reassurance/status?jobId=${job.id}`,
           statusCallbackMethod: 'POST',
           statusCallbackEvent: ['completed', 'busy', 'no-answer', 'failed'],
+          record: 'record-from-answer-dual',
+          recordingStatusCallback: `${SERVER_DOMAIN}/twilio/voice/recording-status`,
+          recordingStatusCallbackMethod: 'POST',
+          recordingStatusCallbackEvent: ['completed'],
         });
 
         app.log.info(

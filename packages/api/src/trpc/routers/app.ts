@@ -1,4 +1,5 @@
 import { protectedProcedure, t } from '../trpc';
+import { clientOrganizationsRouter } from './clientOrganizations';
 import { companiesRouter } from './companies';
 import { contactsRouter } from './contacts';
 import { inboxesRouter } from './inboxes';
@@ -38,6 +39,7 @@ export const appRouter = t.router({
   subscription: subscriptionRouter,
   reassuranceSchedules: reassuranceSchedulesRouter,
   reassuranceContactProfiles: reassuranceContactProfilesRouter,
+  clientOrganizations: clientOrganizationsRouter,
 });
 
 export type AppRouter = typeof appRouter;

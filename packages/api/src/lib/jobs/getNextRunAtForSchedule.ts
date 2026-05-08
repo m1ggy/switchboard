@@ -77,7 +77,7 @@ function computeRecurringNextRun(
   const allowedDays = normalizeAllowedDays(schedule.selected_days);
 
   // Try today first, then advance up to 7 days to find next valid run
-  for (let daysAhead = 0; daysAhead < 7; daysAhead++) {
+  for (let daysAhead = 0; daysAhead < 8; daysAhead++) {
     const candidate = nowInScheduleZone
       .plus({ days: daysAhead })
       .set({ hour, minute, second, millisecond: 0 });
