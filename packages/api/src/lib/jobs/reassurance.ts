@@ -144,6 +144,7 @@ export async function registerReassuranceCron(app: FastifyInstance) {
 
     try {
       jobs = await ReassuranceCallJobsRepository.findDue(50);
+      console.log('[cron] due jobs found:', jobs.length, jobs.map(j => ({ id: j.id, scheduleId: j.schedule_id, runAt: j.run_at })));
     } catch (err: any) {
       app.log.error({ err }, 'Failed to fetch due jobs');
       return;
