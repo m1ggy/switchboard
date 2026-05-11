@@ -113,12 +113,31 @@ async function processJob(
   }
 }
 
+async function recoverMissingJobs(app: FastifyInstance): Promise<void> {
+  const schedules =
+    await ReassuranceSchedulesRepository.findActiveWithNoJob();
+
+  for (const schedule of schedules) {
+    try {
+      await createNextJobForSchedule(schedule);
+    } catch (err: any) {
+      app.log.error({ err, scheduleId: schedule.id }, 'Failed to recover job for schedule');
+    }
+  }
+}
+
 export async function registerReassuranceCron(app: FastifyInstance) {
   cron.schedule('* * * * *', async () => {
     try {
       await ReassuranceCallJobsRepository.resetStaleProcessing();
     } catch (err: any) {
       app.log.error({ err }, 'Failed to reset stale jobs');
+    }
+
+    try {
+      await recoverMissingJobs(app);
+    } catch (err: any) {
+      app.log.error({ err }, 'Failed to recover missing jobs');
     }
 
     let jobs: ReassuranceCallJob[];

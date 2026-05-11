@@ -145,6 +145,7 @@ export const reassuranceSchedulesRouter = t.router({
     )
     .mutation(async ({ input }) => {
       const { id, data } = input;
+      console.log('[updateSchedule] called', { id, data });
 
       // Map camelCase -> snake_case for repository.update
       const updates: Partial<ReassuranceCallSchedule> = {};

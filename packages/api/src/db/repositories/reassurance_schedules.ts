@@ -319,6 +319,23 @@ export const ReassuranceSchedulesRepository = {
     };
   },
 
+  async findActiveWithNoJob(): Promise<ReassuranceCallSchedule[]> {
+    const res = await pool.query<ReassuranceCallSchedule>(
+      `
+      SELECT s.*
+      FROM reassurance_call_schedules s
+      WHERE s.is_active = true
+        AND NOT EXISTS (
+          SELECT 1 FROM reassurance_call_jobs j
+          WHERE j.schedule_id = s.id
+            AND j.status IN ('pending', 'processing')
+        )
+      ORDER BY s.id ASC
+      `
+    );
+    return res.rows;
+  },
+
   async findActive({
     limit = 500,
     offset = 0,
