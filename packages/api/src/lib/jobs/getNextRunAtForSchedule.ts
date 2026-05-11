@@ -115,7 +115,7 @@ function normalizeAllowedDays(selectedDays?: string[] | string | null): string[]
     const days = selectedDays
       .replace(/^\{|\}$/g, '')
       .split(',')
-      .map((d) => d.trim().toLowerCase())
+      .map((d) => d.trim().replace(/^"|"$/g, '').toLowerCase())
       .filter(Boolean);
     return days.length ? days : null;
   }
