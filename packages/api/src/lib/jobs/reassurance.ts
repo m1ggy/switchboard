@@ -22,6 +22,7 @@ export async function createNextJobForSchedule(
   schedule: ReassuranceCallSchedule
 ): Promise<void> {
   const nextRunAt = await getNextRunAtForSchedule(schedule);
+  console.log('[createNextJobForSchedule]', { scheduleId: schedule.id, nextRunAt });
   if (!nextRunAt) return;
 
   await ReassuranceCallJobsRepository.cancelAllPendingForSchedule(schedule.id);
