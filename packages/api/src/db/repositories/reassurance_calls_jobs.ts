@@ -284,4 +284,19 @@ export const ReassuranceCallJobsRepository = {
     );
     return res.rowCount ?? 0;
   },
+
+  async cancelAllPendingForSchedule(scheduleId: number): Promise<number> {
+    const res = await pool.query(
+      `
+      UPDATE reassurance_call_jobs
+      SET status = 'cancelled',
+          last_error = 'Superseded by new job'
+      WHERE schedule_id = $1
+        AND status = 'pending'
+      RETURNING id
+      `,
+      [scheduleId]
+    );
+    return res.rowCount ?? 0;
+  },
 };

@@ -1,8 +1,6 @@
-import { ReassuranceCallJobsRepository } from '@/db/repositories/reassurance_calls_jobs';
 import { ReassuranceSchedulesRepository, type UpdateScheduleInput } from '@/db/repositories/reassurance_schedules';
-import { getNextRunAtForSchedule } from '@/lib/jobs/getNextRunAtForSchedule';
+import { createNextJobForSchedule } from '@/lib/jobs/reassurance';
 import { ReassuranceCallSchedule } from '@/types/db';
-import crypto from 'crypto';
 import { z } from 'zod';
 import { protectedProcedure, t } from '../trpc';
 
@@ -84,17 +82,7 @@ export const reassuranceSchedulesRouter = t.router({
         number_id: input.numberId,
       });
 
-      const runAt = await getNextRunAtForSchedule(schedule);
-
-      if (runAt) {
-        await ReassuranceCallJobsRepository.include({
-          id: crypto.randomUUID() as string,
-          schedule_id: schedule.id,
-          run_at: runAt,
-          attempt: 1,
-          status: 'pending',
-        });
-      }
+      await createNextJobForSchedule(schedule as ReassuranceCallSchedule);
 
       return schedule as ReassuranceCallSchedule;
     }),
@@ -228,16 +216,7 @@ export const reassuranceSchedulesRouter = t.router({
         data.retryInterval !== undefined;
 
       if (timingFieldsTouched && updated.is_active) {
-        const runAt = await getNextRunAtForSchedule(
-          updated as ReassuranceCallSchedule
-        );
-
-        if (runAt) {
-          await ReassuranceCallJobsRepository.reschedulePendingForSchedule(
-            updated.id,
-            runAt
-          );
-        }
+        await createNextJobForSchedule(updated as ReassuranceCallSchedule);
       }
 
       return updated as ReassuranceCallSchedule | null;
@@ -264,23 +243,7 @@ export const reassuranceSchedulesRouter = t.router({
         return null;
       }
 
-      // Check if an active job already exists
-      const existing =
-        await ReassuranceCallJobsRepository.findActiveForSchedule(schedule.id);
-
-      if (!existing) {
-        const runAt = await getNextRunAtForSchedule(schedule);
-
-        if (runAt) {
-          await ReassuranceCallJobsRepository.include({
-            id: crypto.randomUUID(),
-            schedule_id: schedule.id,
-            run_at: runAt,
-            attempt: 1,
-            status: 'pending',
-          });
-        }
-      }
+      await createNextJobForSchedule(schedule as ReassuranceCallSchedule);
 
       return schedule as ReassuranceCallSchedule;
     }),
