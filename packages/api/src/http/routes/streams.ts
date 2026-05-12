@@ -817,7 +817,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         interimResults: true,
         smartFormat: true,
         punctuate: true,
-        endpointingMs: 30,
+        endpointingMs: 400,
       });
 
       function buildContextBlock(args: {
@@ -903,7 +903,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       }
 
       const utteranceBuffer = new FinalUtteranceBuffer(
-        300,
+        700,
         async (finalUtterance) => {
           if (!sessionId || !contactId) return;
           if (busyGenerating) return;
