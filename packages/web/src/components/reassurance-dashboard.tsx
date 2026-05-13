@@ -53,11 +53,24 @@ interface Schedule {
   id: number;
   phone_number: string;
   name: string;
+  caller_name?: string | null;
+  script_type?: string | null;
+  template?: string | null;
+  script_content?: string | null;
+  name_in_script?: string | null;
   frequency: string;
+  frequency_days?: number | null;
+  frequency_time?: string | null;
+  selected_days?: string[] | null;
+  calls_per_day?: number | null;
+  max_attempts?: number | null;
+  retry_interval?: number | null;
   is_active: boolean;
   emergency_contact_name?: string | null;
-  selected_days?: string[] | null;
-  frequency_time?: string | null;
+  emergency_contact_phone_number?: string | null;
+  company_id?: string | null;
+  number_id?: string | null;
+  appointment_details?: Record<string, unknown> | null;
 }
 
 type Row = {

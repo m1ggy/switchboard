@@ -195,8 +195,13 @@ export const ReassuranceContactProfilesRepository = {
       row_to_json(c) AS contact,
       row_to_json(p) AS profile,
       COALESCE(
-        json_agg(s ORDER BY s.created_at DESC)
-          FILTER (WHERE s.id IS NOT NULL),
+        json_agg(
+          (row_to_json(s)::jsonb || jsonb_build_object(
+            'appointment_details',
+            (SELECT row_to_json(a) FROM appointment_reminder_details a WHERE a.schedule_id = s.id LIMIT 1)
+          ))
+          ORDER BY s.created_at DESC
+        ) FILTER (WHERE s.id IS NOT NULL),
         '[]'
       ) AS schedules
     FROM contacts c

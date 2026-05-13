@@ -11,7 +11,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import type { Contact, Profile, Schedule } from '@/lib/schemas';
+import type { Contact, Profile } from '@/lib/schemas';
+import type { ScheduleFormSubmitData } from './schedule-form';
 import { AlertCircle, CheckCircle2, Circle } from 'lucide-react';
 import { useState } from 'react';
 
@@ -37,9 +38,7 @@ export default function CreateDialog({
 }: CreateDialogProps) {
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<Profile | null>(null);
-  const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(
-    null
-  );
+  const [selectedSchedule, setSelectedSchedule] = useState<ScheduleFormSubmitData | null>(null);
   const [activeTab, setActiveTab] = useState('contact');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -106,7 +105,7 @@ export default function CreateDialog({
     setActiveTab('schedule');
   };
 
-  const handleScheduleSubmit = async (scheduleData: Schedule) => {
+  const handleScheduleSubmit = async (scheduleData: ScheduleFormSubmitData) => {
     setSelectedSchedule(scheduleData);
     setActiveTab('summary');
   };
@@ -127,50 +126,26 @@ export default function CreateDialog({
     setIsSubmitting(true);
 
     try {
-      const should_send_selected_days = ['weekly', 'biweekly'].includes(
-        selectedSchedule.frequency
-      );
-
-      const computed_frequency_days =
-        selectedSchedule.frequency === 'custom'
-          ? (selectedSchedule.frequency_days ?? null)
-          : selectedSchedule.frequency === 'monthly'
-            ? 30
-            : null;
-
       const payload = {
         number: selectedContact.number,
         label: selectedContact.label,
         companyId: activeCompany.id,
 
         profile: {
-          preferredName: selectedProfile.preferred_name ?? null,
+          preferred_name: selectedProfile.preferred_name ?? null,
           timezone: selectedProfile.timezone ?? null,
           locale: selectedProfile.locale ?? null,
-          medicalNotes: selectedProfile.medical_notes ?? null,
+          medical_notes: selectedProfile.medical_notes ?? null,
           goals: selectedProfile.goals ?? null,
-          riskFlags: selectedProfile.risk_flags ?? null,
+          risk_flags: selectedProfile.risk_flags ?? null,
         },
 
         schedule: {
           name: selectedSchedule.name,
-          frequency: selectedSchedule.frequency,
-          frequency_time: selectedSchedule.frequency_time,
-
-          selected_days: should_send_selected_days
-            ? (selectedSchedule.selected_days?.map((x) => x.toLowerCase()) ?? [
-                'monday',
-              ])
-            : null,
-
-          emergency_contact_name: selectedSchedule.emergency_contact_name ?? '',
-          emergency_contact_phone:
-            selectedSchedule.emergency_contact_phone ?? '',
+          caller_name: selectedSchedule.caller_name ?? null,
 
           script_type: selectedSchedule.script_type,
           name_in_script: selectedSchedule.name_in_script,
-
-          caller_name: selectedSchedule.caller_name ?? null,
           template:
             selectedSchedule.script_type === 'template'
               ? (selectedSchedule.template ?? 'wellness')
@@ -180,45 +155,25 @@ export default function CreateDialog({
               ? (selectedSchedule.script_content ?? null)
               : null,
 
-          appointmentDetails:
-            selectedSchedule.script_type === 'template' &&
-            selectedSchedule.template === 'appointment'
-              ? {
-                  appointment_title:
-                    selectedSchedule.appointmentDetails?.appointment_title ??
-                    '',
-                  appointment_datetime:
-                    selectedSchedule.appointmentDetails?.appointment_datetime ??
-                    '',
-                  appointment_timezone:
-                    selectedSchedule.appointmentDetails?.appointment_timezone ??
-                    '',
-                  provider_name:
-                    selectedSchedule.appointmentDetails?.provider_name ?? null,
-                  provider_phone:
-                    selectedSchedule.appointmentDetails?.provider_phone ?? null,
-                  location_name:
-                    selectedSchedule.appointmentDetails?.location_name ?? null,
-                  location_address:
-                    selectedSchedule.appointmentDetails?.location_address ??
-                    null,
-                  notes: selectedSchedule.appointmentDetails?.notes ?? null,
-                  reminder_offset_minutes:
-                    selectedSchedule.appointmentDetails
-                      ?.reminder_offset_minutes ?? 60,
-                  requires_confirmation:
-                    selectedSchedule.appointmentDetails
-                      ?.requires_confirmation ?? true,
-                }
+          frequency: selectedSchedule.frequency,
+          frequency_time: selectedSchedule.frequency_time,
+          frequency_days: selectedSchedule.frequency_days ?? null,
+
+          selected_days:
+            selectedSchedule.selected_days && selectedSchedule.selected_days.length > 0
+              ? selectedSchedule.selected_days
               : null,
 
-          frequency_days: computed_frequency_days,
+          emergency_contact_name: selectedSchedule.emergency_contact_name ?? null,
+          emergency_contact_phone: selectedSchedule.emergency_contact_phone ?? null,
 
           calls_per_day: selectedSchedule.calls_per_day,
           max_attempts: selectedSchedule.max_attempts,
           retry_interval: selectedSchedule.retry_interval,
 
           number_id: activeNumber.id,
+
+          appointment_details: selectedSchedule.appointmentDetails ?? null,
         },
       };
 
