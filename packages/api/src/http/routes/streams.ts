@@ -1584,6 +1584,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
                 stream_sid: streamSid,
                 inbound_url: primaryInboundUrl,
                 outbound_url: primaryOutboundUrl,
+                combined_url: mixedMp3Url ?? null,
                 codec: hasAnyMp3 ? 'mp3' : 'mulaw',
                 sample_rate: hasAnyMp3 ? 44100 : 8000,
                 channels: 1,
