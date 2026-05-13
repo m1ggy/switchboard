@@ -167,7 +167,7 @@ export const ReassuranceCallLogsRepository = {
         ON r.session_id = s.id
 
       LEFT JOIN calls c
-        ON c.call_sid = s.call_id
+        ON c.call_sid = s.call_id::text
 
       LEFT JOIN (
         SELECT
