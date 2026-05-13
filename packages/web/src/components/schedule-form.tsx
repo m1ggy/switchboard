@@ -71,7 +71,7 @@ const REMINDER_OFFSETS = [
 const TEMPLATE_DESCRIPTIONS: Record<string, string> = {
   wellness: 'Warm check-in asking how they feel today. Up to 3 exchanges.',
   safety: 'Reassurance check-in focused on safety and comfort. Up to 3 exchanges.',
-  medication: 'Asks if they've taken their medication. Ends after one response.',
+  medication: "Asks if they've taken their medication. Ends after one response.",
   social: 'Friendly call for connection and companionship. Up to 3 exchanges.',
   appointment: 'Reminds about an upcoming appointment and asks for confirmation.',
 };
