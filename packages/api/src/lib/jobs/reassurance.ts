@@ -23,7 +23,15 @@ export async function createNextJobForSchedule(
 ): Promise<void> {
   const nextRunAt = await getNextRunAtForSchedule(schedule);
   console.log('[createNextJobForSchedule]', { scheduleId: schedule.id, nextRunAt });
-  if (!nextRunAt) return;
+
+  if (!nextRunAt) {
+    // Appointment schedules have no recurrence — deactivate when no future run exists
+    if (schedule.script_type === 'template' && schedule.template === 'appointment') {
+      await ReassuranceSchedulesRepository.setActive(schedule.id, schedule.company_id, false);
+      console.log('[createNextJobForSchedule] appointment schedule deactivated', schedule.id);
+    }
+    return;
+  }
 
   await ReassuranceCallJobsRepository.cancelAllPendingForSchedule(schedule.id);
 

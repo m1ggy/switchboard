@@ -254,8 +254,11 @@ export default function ScheduleForm({
 
   const handleSubmit = form.handleSubmit((values) => {
     const effectiveFrequency = isAppointment ? 'daily' : values.frequency;
-    const effectiveSelectedDays =
-      !isAppointment && (frequency === 'weekly' || frequency === 'biweekly')
+    // For appointments: lock selected_days to the weekday of the appointment date
+    const apptWeekday = apptDate ? DAYS[(apptDate.getDay() + 6) % 7] : null;
+    const effectiveSelectedDays = isAppointment
+      ? apptWeekday ? [apptWeekday] : []
+      : frequency === 'weekly' || frequency === 'biweekly'
         ? (values.selected_days ?? [])
         : [];
 
