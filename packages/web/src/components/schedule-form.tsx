@@ -39,8 +39,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { scheduleSchema } from '@/lib/schemas';
 import { cn } from '@/lib/utils';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
 const DAYS = [
   'monday',
   'tuesday',
@@ -87,8 +85,6 @@ const FREQUENCY_DESCRIPTIONS: Record<string, string> = {
   monthly: 'Every 30 days at the selected time.',
   custom: 'Every N days at the selected time.',
 };
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getDatePart(dt?: string): Date | undefined {
   if (!dt) return undefined;
@@ -209,8 +205,6 @@ function getErrorMessages(errors: Record<string, unknown>): string[] {
   return Array.from(new Set(messages));
 }
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 type ScheduleFormInput = z.input<typeof scheduleSchema>;
 type ScheduleFormOutput = z.output<typeof scheduleSchema>;
 
@@ -226,8 +220,6 @@ interface ScheduleFormProps {
   onSubmit: (data: ScheduleFormSubmitData) => void | Promise<void>;
   onCancel?: () => void;
 }
-
-// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function ScheduleForm({
   contactId,
@@ -254,7 +246,11 @@ export default function ScheduleForm({
 
   const form = useForm<ScheduleFormInput, unknown, ScheduleFormOutput>({
     resolver: zodResolver(scheduleSchema),
-    shouldUnregister: true,
+
+    // Important:
+    // Keep hidden/default-only fields like contact_id and number_id in form state.
+    shouldUnregister: false,
+
     defaultValues: {
       contact_id: contactId,
       number_id: numberId || (initialData?.number_id as string) || '',
@@ -432,6 +428,10 @@ export default function ScheduleForm({
   return (
     <Form {...form}>
       <form onSubmit={handleSubmit} className="space-y-8">
+        {/* Hidden required fields */}
+        <input type="hidden" {...form.register('contact_id')} />
+        <input type="hidden" {...form.register('number_id')} />
+
         {showValidationAlert && (
           <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
@@ -448,7 +448,7 @@ export default function ScheduleForm({
           </Alert>
         )}
 
-        {/* ── Basic Info ────────────────────────────────────────── */}
+        {/* Schedule */}
         <div className="space-y-4">
           <div>
             <h3 className="text-sm font-semibold">Schedule</h3>
@@ -494,7 +494,7 @@ export default function ScheduleForm({
 
         <Separator />
 
-        {/* ── Script ────────────────────────────────────────────── */}
+        {/* Script */}
         <div className="space-y-4">
           <h3 className="text-sm font-semibold">Script</h3>
 
@@ -617,7 +617,7 @@ export default function ScheduleForm({
 
         <Separator />
 
-        {/* ── Appointment Details ────────────────────────────────── */}
+        {/* Appointment Details */}
         {isAppointment && (
           <>
             <div className="space-y-4">
@@ -890,7 +890,7 @@ export default function ScheduleForm({
           </>
         )}
 
-        {/* ── Frequency ──────────────────────────────────────────── */}
+        {/* Frequency */}
         {!isAppointment && (
           <>
             <div className="space-y-4">
@@ -1010,7 +1010,7 @@ export default function ScheduleForm({
           </>
         )}
 
-        {/* ── Call Settings ─────────────────────────────────────── */}
+        {/* Call Settings */}
         <div className="space-y-4">
           <div>
             <h3 className="text-sm font-semibold">Call Settings</h3>
@@ -1087,7 +1087,7 @@ export default function ScheduleForm({
 
         <Separator />
 
-        {/* ── Emergency Contact ─────────────────────────────────── */}
+        {/* Emergency Contact */}
         <div className="space-y-4">
           <h3 className="text-sm font-semibold">Emergency Contact</h3>
 
@@ -1133,7 +1133,7 @@ export default function ScheduleForm({
 
         <Separator />
 
-        {/* ── Status ────────────────────────────────────────────── */}
+        {/* Status */}
         <FormField
           control={form.control}
           name="is_active"
@@ -1155,7 +1155,7 @@ export default function ScheduleForm({
           )}
         />
 
-        {/* ── Actions ───────────────────────────────────────────── */}
+        {/* Actions */}
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="outline" onClick={onCancel}>
             Cancel
