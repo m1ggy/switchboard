@@ -74,7 +74,7 @@ export default function EditScheduleDialog({
   contact,
 }: EditScheduleDialogProps) {
   const trpc = useTRPC();
-  const { activeNumber } = useMainStore();
+  const { activeNumber, activeCompany } = useMainStore();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [errorDialogOpen, setErrorDialogOpen] = useState(false);
@@ -159,6 +159,7 @@ export default function EditScheduleDialog({
             onSubmit={handleSubmit}
             onCancel={() => onOpenChange(false)}
             numberId={activeNumber?.id as string}
+            companyId={activeCompany?.id as string}
           />
         </DialogContent>
       </Dialog>
