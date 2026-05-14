@@ -10,7 +10,7 @@ export interface NumberRow {
   label: string | null;
 }
 
-type UpdateScheduleInput = {
+export type UpdateScheduleInput = {
   id: number;
 
   name: string;
@@ -177,7 +177,7 @@ export const ReassuranceSchedulesRepository = {
   async update(
     input: UpdateScheduleInput,
     client?: PoolClient
-  ): Promise<ReassuranceCallSchedule> {
+  ): Promise<ReassuranceCallSchedule | null> {
     const db = client ?? pool;
 
     const res = await db.query<ReassuranceCallSchedule>(
@@ -237,7 +237,25 @@ export const ReassuranceSchedulesRepository = {
       ]
     );
 
-    return res.rows[0];
+    return res.rows[0] ?? null;
+  },
+
+  async setActive(
+    id: number,
+    companyId: string,
+    isActive: boolean
+  ): Promise<ReassuranceCallSchedule | null> {
+    const res = await pool.query<ReassuranceCallSchedule>(
+      `
+      UPDATE reassurance_call_schedules
+      SET is_active = $3
+      WHERE id = $1
+        AND company_id = $2
+      RETURNING *
+      `,
+      [id, companyId, isActive]
+    );
+    return res.rows[0] ?? null;
   },
 
   async getPaginatedScheduleCallLogs({
@@ -299,6 +317,23 @@ export const ReassuranceSchedulesRepository = {
       pageSize: limit,
       total,
     };
+  },
+
+  async findActiveWithNoJob(): Promise<ReassuranceCallSchedule[]> {
+    const res = await pool.query<ReassuranceCallSchedule>(
+      `
+      SELECT s.*
+      FROM reassurance_call_schedules s
+      WHERE s.is_active = true
+        AND NOT EXISTS (
+          SELECT 1 FROM reassurance_call_jobs j
+          WHERE j.schedule_id = s.id
+            AND j.status IN ('pending', 'processing')
+        )
+      ORDER BY s.id ASC
+      `
+    );
+    return res.rows;
   },
 
   async findActive({

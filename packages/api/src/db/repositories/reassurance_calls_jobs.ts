@@ -49,7 +49,7 @@ export const ReassuranceCallJobsRepository = {
       schedule_id: number;
       run_at: Date;
       attempt: number;
-      status: 'pending' | 'running' | 'completed' | 'failed';
+      status: 'pending' | 'processing' | 'completed' | 'failed';
     },
     db: PoolClient | typeof pool = pool
   ) {
@@ -264,5 +264,39 @@ export const ReassuranceCallJobsRepository = {
     );
 
     return res.rowCount === 1;
+  },
+
+  async cancelOtherPendingJobs(
+    scheduleId: number,
+    keepJobId: string
+  ): Promise<number> {
+    const res = await pool.query(
+      `
+      UPDATE reassurance_call_jobs
+      SET status = 'cancelled',
+          last_error = 'Duplicate pending job cancelled by seeder'
+      WHERE schedule_id = $1
+        AND id != $2
+        AND status = 'pending'
+      RETURNING id
+      `,
+      [scheduleId, keepJobId]
+    );
+    return res.rowCount ?? 0;
+  },
+
+  async cancelAllPendingForSchedule(scheduleId: number): Promise<number> {
+    const res = await pool.query(
+      `
+      UPDATE reassurance_call_jobs
+      SET status = 'cancelled',
+          last_error = 'Superseded by new job'
+      WHERE schedule_id = $1
+        AND status = 'pending'
+      RETURNING id
+      `,
+      [scheduleId]
+    );
+    return res.rowCount ?? 0;
   },
 };

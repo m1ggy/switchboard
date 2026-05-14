@@ -52,6 +52,17 @@ export type ReassuranceCallLog = {
     meta: any | null;
     created_at: string | null;
   };
+  /** Twilio recording from the calls table (meta.recording) */
+  call_recording: null | {
+    sid: string | null;
+    url: string | null;
+    duration: number | null;
+    channels: string | null;
+    source: string | null;
+    status: string | null;
+    callSid: string | null;
+    parentCallSid: string | null;
+  };
   transcript: {
     count: number;
     first_ms: number | null;
@@ -105,6 +116,8 @@ export const ReassuranceCallLogsRepository = {
       recording_meta: any | null;
       recording_created_at: string | null;
 
+      call_recording: any | null;
+
       transcript_count: number;
       transcript_first_ms: number | null;
       transcript_last_ms: number | null;
@@ -140,6 +153,8 @@ export const ReassuranceCallLogsRepository = {
         r.meta AS recording_meta,
         r.created_at AS recording_created_at,
 
+        c.meta->'recording' AS call_recording,
+
         COALESCE(tstats.transcript_count, 0) AS transcript_count,
         tstats.first_ms AS transcript_first_ms,
         tstats.last_ms AS transcript_last_ms
@@ -150,6 +165,9 @@ export const ReassuranceCallLogsRepository = {
 
       LEFT JOIN reassurance_call_recordings r
         ON r.session_id = s.id
+
+      LEFT JOIN calls c
+        ON c.call_sid = s.call_id::text
 
       LEFT JOIN (
         SELECT
@@ -210,6 +228,7 @@ export const ReassuranceCallLogsRepository = {
               created_at: row.recording_created_at,
             }
           : null,
+        call_recording: row.call_recording ?? null,
         transcript: {
           count: row.transcript_count,
           first_ms: row.transcript_first_ms,
@@ -299,6 +318,7 @@ export const ReassuranceCallLogsRepository = {
             created_at: row.recording_created_at,
           }
         : null,
+      call_recording: row.call_recording ?? null,
       transcript: {
         count: row.transcript_count,
         first_ms: row.transcript_first_ms,

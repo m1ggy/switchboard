@@ -21,16 +21,49 @@ import type { Schedule } from '@/lib/schemas';
 import { useMemo, useState } from 'react';
 import ScheduleForm from './schedule-form';
 
+import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
 import { useMutation } from '@tanstack/react-query';
-import type { Contact } from 'api/types/db';
+
+interface RawSchedule {
+  id: number;
+  name?: string | null;
+  phone_number?: string | null;
+  caller_name?: string | null;
+  script_type?: string | null;
+  template?: string | null;
+  script_content?: string | null;
+  name_in_script?: string | null;
+  frequency?: string | null;
+  frequency_days?: number | null;
+  frequency_time?: string | null;
+  selected_days?: string[] | null;
+  calls_per_day?: number | null;
+  max_attempts?: number | null;
+  retry_interval?: number | null;
+  is_active?: boolean | null;
+  emergency_contact_name?: string | null;
+  emergency_contact_phone?: string | null;
+  emergency_contact_phone_number?: string | null;
+  company_id?: string | null;
+  number_id?: string | null;
+  appointment_details?: Record<string, unknown> | null;
+}
+
+interface RawContact {
+  id: string;
+  number: string;
+  label: string;
+  created_at?: string | Date | null;
+  company_id: string;
+}
 
 interface EditScheduleDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  schedule: Schedule;
+  schedule: RawSchedule;
   onSuccess: () => void;
-  contact: Contact;
+  contact: RawContact;
 }
 
 export default function EditScheduleDialog({
@@ -41,6 +74,7 @@ export default function EditScheduleDialog({
   contact,
 }: EditScheduleDialogProps) {
   const trpc = useTRPC();
+  const { activeNumber } = useMainStore();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [errorDialogOpen, setErrorDialogOpen] = useState(false);

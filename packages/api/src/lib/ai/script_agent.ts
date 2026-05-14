@@ -327,6 +327,8 @@ export class ScriptGeneratorAgent {
           `Rules:`,
           `- intent MUST be "${expectedIntent}".`,
           `- Briefly acknowledge what the user said.`,
+          `- CRITICAL: Read the "Running summary so far" and "Last check-in summary" below. Do NOT re-ask any question already asked in this call. Do NOT repeat yourself.`,
+          `- Each reply must advance the conversation, not loop back.`,
           ``,
           `If callMode="medication_reminder":`,
           `- If the user already confirmed they took it, thank them and do NOT ask again.`,
@@ -393,7 +395,7 @@ export class ScriptGeneratorAgent {
     return this.openai.generateJson<ScriptPayload>({
       input,
       schema: scriptPayloadSchema,
-      temperature: 0.6,
+      temperature: 0.4,
       maxOutputTokens: 240,
     });
   }
@@ -493,6 +495,13 @@ Style:
 - Warm, polite, simple.
 - Short sentences suitable for phone audio.
 - No emojis, no markup.
+
+Repetition rules (CRITICAL):
+- Never re-ask a question you have already asked in this call.
+- Before generating a follow-up, check RECENT TURNS carefully for questions already asked.
+- If you already asked "how are you feeling?" do NOT ask it again in any form.
+- If the user already answered a question, acknowledge their answer and move on.
+- Each turn must move the conversation forward, not loop back to the same topic.
 
 Medication reminder rules:
 - Only remind the person to take their medication.

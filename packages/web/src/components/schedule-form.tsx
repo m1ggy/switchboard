@@ -1,11 +1,25 @@
 'use client';
 
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { format } from 'date-fns';
+import { CalendarIcon } from 'lucide-react';
+import { useState } from 'react';
+import { useForm, useWatch } from 'react-hook-form';
+import type { z } from 'zod';
+
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
-import { Card } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   Popover,
   PopoverContent,
@@ -18,46 +32,35 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
 import { scheduleSchema } from '@/lib/schemas';
 import { cn } from '@/lib/utils';
-import { format } from 'date-fns';
-import { AlertCircle, CalendarIcon } from 'lucide-react';
-import type React from 'react';
-import { useMemo, useState } from 'react';
-import { ZodError, type z } from 'zod';
 
-const frequencies = [
-  'daily',
-  'weekly',
-  'biweekly',
-  'monthly',
-  'custom',
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const DAYS = [
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+  'sunday',
 ] as const;
 
-const scriptTypes = ['template', 'custom'] as const;
-
-
-const days = [
-  'Monday',
-  'Tuesday',
-  'Wednesday',
-  'Thursday',
-  'Friday',
-  'Saturday',
-  'Sunday',
+const TIMEZONES = [
+  { label: 'Eastern (ET)', value: 'America/New_York' },
+  { label: 'Central (CT)', value: 'America/Chicago' },
+  { label: 'Mountain (MT)', value: 'America/Denver' },
+  { label: 'Mountain – AZ (MT)', value: 'America/Phoenix' },
+  { label: 'Pacific (PT)', value: 'America/Los_Angeles' },
+  { label: 'Alaska (AKT)', value: 'America/Anchorage' },
+  { label: 'Hawaii (HST)', value: 'Pacific/Honolulu' },
 ] as const;
 
-const appointmentTimezones = [
-  { label: 'Eastern Time (ET)', value: 'America/New_York' },
-  { label: 'Central Time (CT)', value: 'America/Chicago' },
-  { label: 'Mountain Time (MT)', value: 'America/Denver' },
-  { label: 'Mountain Time (MT)', value: 'America/Phoenix' },
-  { label: 'Pacific Time (PT)', value: 'America/Los_Angeles' },
-  { label: 'Alaska Time (AKT)', value: 'America/Anchorage' },
-  { label: 'Hawaii Time (HST)', value: 'Pacific/Honolulu' },
-] as const;
-
-const reminderOffsets = [
+const REMINDER_OFFSETS = [
   { label: '15 minutes before', value: 15 },
   { label: '30 minutes before', value: 30 },
   { label: '1 hour before', value: 60 },
@@ -65,89 +68,105 @@ const reminderOffsets = [
   { label: '1 day before', value: 1440 },
 ] as const;
 
-const frequencyHelpText: Record<(typeof frequencies)[number], string> = {
-  daily: 'Calls happen every day at the selected time.',
-  weekly: 'Calls happen on the selected days every week.',
-  biweekly: 'Calls happen every 2 weeks on the selected days.',
-  monthly: 'Calls happen every 30 days at the selected time.',
-  custom: 'Calls happen every N days at the selected time.',
+const TEMPLATE_DESCRIPTIONS: Record<string, string> = {
+  wellness: 'Warm check-in asking how they feel today. Up to 3 exchanges.',
+  safety: 'Reassurance check-in focused on safety and comfort. Up to 3 exchanges.',
+  medication: "Asks if they've taken their medication. Ends after one response.",
+  social: 'Friendly call for connection and companionship. Up to 3 exchanges.',
+  appointment: 'Reminds about an upcoming appointment and asks for confirmation.',
 };
 
-type ScheduleFormSubmitData = z.infer<typeof scheduleSchema> & {
-  company_id: string;
-  number_id: string;
-  template?: 'wellness' | 'safety' | 'medication' | 'social' | null;
+const FREQUENCY_DESCRIPTIONS: Record<string, string> = {
+  daily: 'Every day at the selected time.',
+  weekly: 'On the selected days every week.',
+  biweekly: 'On the selected days every 2 weeks.',
+  monthly: 'Every 30 days at the selected time.',
+  custom: 'Every N days at the selected time.',
 };
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function getDatePart(dt?: string): Date | undefined {
+  if (!dt) return undefined;
+  const [datePart] = dt.split('T');
+  if (!datePart) return undefined;
+  const [y, m, d] = datePart.split('-').map(Number);
+  if (!y || !m || !d) return undefined;
+  return new Date(y, m - 1, d);
+}
+
+function getTimePart(dt?: string): string {
+  if (!dt || !dt.includes('T')) return '';
+  return dt.split('T')[1]?.slice(0, 5) ?? '';
+}
+
+function combineDateAndTime(date?: Date, time?: string): string {
+  if (!date || !time) return '';
+  const [h, min] = time.split(':').map(Number);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  const hh = String(h ?? 0).padStart(2, '0');
+  const mm = String(min ?? 0).padStart(2, '0');
+  return `${y}-${m}-${d}T${hh}:${mm}`;
+}
+
+function parseLocalDateTime(dt?: string): Date | null {
+  if (!dt || !dt.includes('T')) return null;
+  const [datePart, timePart] = dt.split('T');
+  if (!datePart || !timePart) return null;
+  const [y, mo, d] = datePart.split('-').map(Number);
+  const [h, mi] = timePart.split(':').map(Number);
+  if (!y || !mo || !d || Number.isNaN(h) || Number.isNaN(mi)) return null;
+  return new Date(y, mo - 1, d, h, mi, 0, 0);
+}
+
+function formatReminderLabel(dt?: string, offsetMinutes?: number): string {
+  const parsed = parseLocalDateTime(dt);
+  if (!parsed || offsetMinutes === undefined) return '';
+  const reminder = new Date(parsed.getTime() - offsetMinutes * 60_000);
+  return format(reminder, 'PPP p');
+}
+
+function normalizeSelectedDays(raw: unknown): string[] {
+  if (Array.isArray(raw)) return (raw as string[]).map((d) => d.toLowerCase());
+  if (typeof raw === 'string' && raw.length > 0) {
+    const t = raw.trim();
+    try {
+      if (t.startsWith('[')) {
+        const p = JSON.parse(t);
+        if (Array.isArray(p)) return p.map((d: string) => String(d).toLowerCase());
+      } else if (t.startsWith('{') && t.endsWith('}')) {
+        return t
+          .slice(1, -1)
+          .split(',')
+          .map((s) => s.trim().replace(/^"|"$/g, '').toLowerCase())
+          .filter(Boolean);
+      }
+      return t.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type ScheduleFormValues = z.infer<typeof scheduleSchema>;
+
+export type ScheduleFormSubmitData = ScheduleFormValues & { company_id: string };
 
 interface ScheduleFormProps {
   contactId: string;
   companyId?: string;
   numberId?: string;
-  initialData?: Partial<ScheduleFormSubmitData>;
+  initialData?: Partial<ScheduleFormSubmitData & Record<string, unknown>>;
   onSubmit: (data: ScheduleFormSubmitData) => void;
   onCancel?: () => void;
 }
 
-function getDatePart(dateTime?: string) {
-  if (!dateTime) return undefined;
-
-  const [datePart] = dateTime.split('T');
-  if (!datePart) return undefined;
-
-  const [year, month, day] = datePart.split('-').map(Number);
-  if (!year || !month || !day) return undefined;
-
-  return new Date(year, month - 1, day);
-}
-
-function getTimePart(dateTime?: string) {
-  if (!dateTime) return '';
-  if (!dateTime.includes('T')) return '';
-  return dateTime.split('T')[1]?.slice(0, 5) || '';
-}
-
-function combineDateAndTime(date?: Date, time?: string) {
-  if (!date || !time) return '';
-
-  const [hours, minutes] = time.split(':').map(Number);
-
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const hh = String(hours || 0).padStart(2, '0');
-  const mm = String(minutes || 0).padStart(2, '0');
-
-  return `${year}-${month}-${day}T${hh}:${mm}`;
-}
-
-function parseLocalDateTime(dateTime?: string) {
-  if (!dateTime || !dateTime.includes('T')) return null;
-
-  const [datePart, timePart] = dateTime.split('T');
-  if (!datePart || !timePart) return null;
-
-  const [year, month, day] = datePart.split('-').map(Number);
-  const [hours, minutes] = timePart.split(':').map(Number);
-
-  if (!year || !month || !day || Number.isNaN(hours) || Number.isNaN(minutes)) {
-    return null;
-  }
-
-  return new Date(year, month - 1, day, hours, minutes, 0, 0);
-}
-
-function formatReminderDateTime(
-  appointmentDateTime?: string,
-  offsetMinutes?: number
-) {
-  const parsed = parseLocalDateTime(appointmentDateTime);
-  if (!parsed || offsetMinutes === undefined || Number.isNaN(offsetMinutes)) {
-    return '';
-  }
-
-  const reminderDate = new Date(parsed.getTime() - offsetMinutes * 60 * 1000);
-  return format(reminderDate, 'PPP p');
-}
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function ScheduleForm({
   contactId,
@@ -157,1117 +176,737 @@ export default function ScheduleForm({
   onSubmit,
   onCancel,
 }: ScheduleFormProps) {
-  const [loading, setLoading] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const initialApptDt = initialData?.appointmentDetails?.appointment_datetime ?? '';
 
-  const initialAppointmentDateTime =
-    initialData?.appointmentDetails?.appointment_datetime || '';
+  const [apptDate, setApptDate] = useState<Date | undefined>(getDatePart(initialApptDt));
+  const [apptTime, setApptTime] = useState(getTimePart(initialApptDt));
 
-  const [appointmentDate, setAppointmentDate] = useState<Date | undefined>(
-    getDatePart(initialAppointmentDateTime)
-  );
+  const initialDays = (() => {
+    const days = normalizeSelectedDays(initialData?.selected_days);
+    return days.length > 0 ? days : ['monday', 'wednesday', 'friday'];
+  })();
 
-  const [appointmentTime, setAppointmentTime] = useState(
-    getTimePart(initialAppointmentDateTime)
-  );
-
-  const [formData, setFormData] = useState({
-    contact_id: contactId,
-    company_id: companyId || (initialData as any)?.company_id || '',
-    number_id: numberId || (initialData as any)?.number_id || '',
-
-    name: initialData?.name || '',
-    caller_name: initialData?.caller_name || '',
-
-    script_type: (initialData?.script_type || 'template') as
-      | 'template'
-      | 'custom',
-
-    template: (initialData?.template || 'wellness') as
-      | 'wellness'
-      | 'safety'
-      | 'medication'
-      | 'social'
-      | 'appointment',
-
-    script_content: initialData?.script_content || '',
-    name_in_script: (initialData?.name_in_script || 'contact') as
-      | 'contact'
-      | 'caller',
-
-    frequency: (initialData?.frequency || 'weekly') as
-      | 'daily'
-      | 'weekly'
-      | 'biweekly'
-      | 'monthly'
-      | 'custom',
-
-    frequency_days: initialData?.frequency_days ?? 7,
-    frequency_time: initialData?.frequency_time || '10:00',
-
-    selected_days: (() => {
-      // Defensive: selected_days may arrive as a real array, null/undefined,
-      // or (in some edge cases) a Postgres array literal string like
-      // "{monday,wednesday}" or a JSON-encoded string. Normalize to an array
-      // before calling .map so the dialog can't crash on open.
-      const raw = initialData?.selected_days as unknown;
-
-      let arr: string[] = [];
-      if (Array.isArray(raw)) {
-        arr = raw as string[];
-      } else if (typeof raw === 'string' && raw.length > 0) {
-        const trimmed = raw.trim();
-        try {
-          if (trimmed.startsWith('[')) {
-            // JSON array string
-            const parsed = JSON.parse(trimmed);
-            if (Array.isArray(parsed)) arr = parsed.map(String);
-          } else if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-            // Postgres array literal: {monday,wednesday}
-            arr = trimmed
-              .slice(1, -1)
-              .split(',')
-              .map((s) => s.trim().replace(/^"|"$/g, ''))
-              .filter(Boolean);
-          } else {
-            // Comma-separated fallback
-            arr = trimmed
-              .split(',')
-              .map((s) => s.trim())
-              .filter(Boolean);
-          }
-        } catch {
-          arr = [];
-        }
-      }
-
-      if (arr.length === 0) {
-        return ['Monday', 'Wednesday', 'Friday'] as (typeof days)[number][];
-      }
-
-      return arr.map(
-        (d) => d.charAt(0).toUpperCase() + d.slice(1).toLowerCase()
-      ) as (typeof days)[number][];
-    })(),
-    calls_per_day: initialData?.calls_per_day || 1,
-    max_attempts: initialData?.max_attempts || 3,
-    retry_interval: initialData?.retry_interval || 15,
-
-    emergency_contact_name: initialData?.emergency_contact_name || '',
-    emergency_contact_phone: initialData?.emergency_contact_phone || '',
-
-    is_active:
-      initialData?.is_active !== undefined ? initialData.is_active : true,
-
-    appointmentDetails: {
-      appointment_title:
-        initialData?.appointmentDetails?.appointment_title || '',
-      appointment_datetime: initialAppointmentDateTime,
-      appointment_timezone:
-        initialData?.appointmentDetails?.appointment_timezone ||
-        'America/Chicago',
-      provider_name: initialData?.appointmentDetails?.provider_name || '',
-      provider_phone: initialData?.appointmentDetails?.provider_phone || '',
-      location_name: initialData?.appointmentDetails?.location_name || '',
-      location_address: initialData?.appointmentDetails?.location_address || '',
-      notes: initialData?.appointmentDetails?.notes || '',
-      reminder_offset_minutes:
-        initialData?.appointmentDetails?.reminder_offset_minutes ?? 60,
-      requires_confirmation:
-        initialData?.appointmentDetails?.requires_confirmation ?? true,
+  const form = useForm<ScheduleFormValues>({
+    resolver: zodResolver(scheduleSchema),
+    defaultValues: {
+      contact_id: contactId,
+      number_id: numberId || (initialData?.number_id as string) || '',
+      name: initialData?.name ?? '',
+      caller_name: initialData?.caller_name ?? '',
+      script_type: (initialData?.script_type as 'template' | 'custom') ?? 'template',
+      template: (initialData?.template as ScheduleFormValues['template']) ?? 'wellness',
+      script_content: initialData?.script_content ?? '',
+      name_in_script: (initialData?.name_in_script as 'contact' | 'caller') ?? 'contact',
+      frequency: (initialData?.frequency as ScheduleFormValues['frequency']) ?? 'weekly',
+      frequency_days: initialData?.frequency_days ?? 7,
+      frequency_time: initialData?.frequency_time ?? '10:00',
+      selected_days: initialDays as ScheduleFormValues['selected_days'],
+      calls_per_day: initialData?.calls_per_day ?? 1,
+      max_attempts: initialData?.max_attempts ?? 3,
+      retry_interval: initialData?.retry_interval ?? 15,
+      emergency_contact_name: initialData?.emergency_contact_name ?? '',
+      emergency_contact_phone:
+        (initialData?.emergency_contact_phone as string) ||
+        (initialData?.emergency_contact_phone_number as string) ||
+        '',
+      is_active: initialData?.is_active ?? true,
+      appointmentDetails: {
+        appointment_title: initialData?.appointmentDetails?.appointment_title ?? '',
+        appointment_datetime: initialApptDt,
+        appointment_timezone:
+          initialData?.appointmentDetails?.appointment_timezone ?? 'America/Chicago',
+        provider_name: initialData?.appointmentDetails?.provider_name ?? '',
+        provider_phone: initialData?.appointmentDetails?.provider_phone ?? '',
+        location_name: initialData?.appointmentDetails?.location_name ?? '',
+        location_address: initialData?.appointmentDetails?.location_address ?? '',
+        notes: initialData?.appointmentDetails?.notes ?? '',
+        reminder_offset_minutes:
+          initialData?.appointmentDetails?.reminder_offset_minutes ?? 60,
+        requires_confirmation:
+          initialData?.appointmentDetails?.requires_confirmation ?? true,
+      },
     },
   });
 
-  const clearError = (field: string) => {
-    setErrors((prev) => ({ ...prev, [field]: '' }));
-  };
+  const scriptType = useWatch({ control: form.control, name: 'script_type' });
+  const template = useWatch({ control: form.control, name: 'template' });
+  const frequency = useWatch({ control: form.control, name: 'frequency' });
+  const selectedDays = useWatch({ control: form.control, name: 'selected_days' }) ?? [];
+  const apptDetails = useWatch({ control: form.control, name: 'appointmentDetails' });
+  const reminderOffset = apptDetails?.reminder_offset_minutes;
 
-  const hasErrors = Object.values(errors).some(Boolean);
+  const isAppointment = scriptType === 'template' && template === 'appointment';
+  const showDayPicker = !isAppointment && (frequency === 'weekly' || frequency === 'biweekly');
+  const showCustomDays = !isAppointment && frequency === 'custom';
 
-  const showDayPicker = useMemo(() => {
-    return ['weekly', 'biweekly'].includes(formData.frequency);
-  }, [formData.frequency]);
+  const computedApptDt = combineDateAndTime(apptDate, apptTime);
+  const reminderLabel = formatReminderLabel(computedApptDt, reminderOffset);
 
-  const showCustomDays = useMemo(() => {
-    return formData.frequency === 'custom';
-  }, [formData.frequency]);
-
-  const showAppointmentFields = useMemo(() => {
-    return (
-      formData.script_type === 'template' && formData.template === 'appointment'
-    );
-  }, [formData.script_type, formData.template]);
-
-  const computedAppointmentDateTime = useMemo(() => {
-    return combineDateAndTime(appointmentDate, appointmentTime);
-  }, [appointmentDate, appointmentTime]);
-
-  const computedReminderTimeLabel = useMemo(() => {
-    return formatReminderDateTime(
-      computedAppointmentDateTime,
-      formData.appointmentDetails.reminder_offset_minutes
-    );
-  }, [
-    computedAppointmentDateTime,
-    formData.appointmentDetails.reminder_offset_minutes,
-  ]);
-
-  const toggleDay = (day: (typeof days)[number]) => {
-    setFormData((prev) => {
-      const current = Array.isArray(prev.selected_days)
-        ? prev.selected_days
-        : [];
-      return {
-        ...prev,
-        selected_days: current.includes(day)
-          ? current.filter((d) => d !== day)
-          : [...current, day],
-      };
+  const toggleDay = (day: string) => {
+    const current = (form.getValues('selected_days') ?? []) as string[];
+    const next = current.includes(day)
+      ? current.filter((d) => d !== day)
+      : [...current, day];
+    form.setValue('selected_days', next as ScheduleFormValues['selected_days'], {
+      shouldValidate: true,
     });
-    clearError('selected_days');
   };
 
-  const buildPayload = () => {
-    const should_send_selected_days =
-      !showAppointmentFields &&
-      ['weekly', 'biweekly'].includes(formData.frequency);
+  const handleSubmit = form.handleSubmit((values) => {
+    const effectiveFrequency = isAppointment ? 'daily' : values.frequency;
+    // For appointments: lock selected_days to the weekday of the appointment date
+    const apptWeekday = apptDate ? DAYS[(apptDate.getDay() + 6) % 7] : null;
+    const effectiveSelectedDays = isAppointment
+      ? apptWeekday ? [apptWeekday] : []
+      : frequency === 'weekly' || frequency === 'biweekly'
+        ? (values.selected_days ?? [])
+        : [];
 
-    const computed_frequency_days = showAppointmentFields
-      ? null
-      : formData.frequency === 'custom'
-        ? (formData.frequency_days ?? null)
-        : formData.frequency === 'monthly'
-          ? 30
-          : null;
-
-    return {
-      contact_id: formData.contact_id,
-      number_id: formData.number_id,
-
-      name: formData.name,
-      caller_name: formData.caller_name || null,
-
-      script_type: formData.script_type,
-      template: formData.script_type === 'template' ? formData.template : null,
-      script_content:
-        formData.script_type === 'custom' ? formData.script_content : null,
-
-      name_in_script: formData.name_in_script,
-
-      frequency: formData.frequency,
-      frequency_days: computed_frequency_days,
-      frequency_time: formData.frequency_time,
-
-      selected_days: should_send_selected_days
-        ? (Array.isArray(formData.selected_days)
-            ? formData.selected_days
-            : []
-          ).map((d) => d.toLowerCase())
+    onSubmit({
+      ...values,
+      frequency: effectiveFrequency,
+      selected_days: effectiveSelectedDays,
+      frequency_days:
+        isAppointment
+          ? null
+          : effectiveFrequency === 'custom'
+            ? values.frequency_days
+            : effectiveFrequency === 'monthly'
+              ? 30
+              : null,
+      appointmentDetails: isAppointment
+        ? { ...values.appointmentDetails!, appointment_datetime: computedApptDt }
         : null,
-
-      calls_per_day: formData.calls_per_day,
-      max_attempts: formData.max_attempts,
-      retry_interval: formData.retry_interval,
-
-      emergency_contact_name: formData.emergency_contact_name || null,
-      emergency_contact_phone: formData.emergency_contact_phone || null,
-
-      is_active: formData.is_active,
-
-      appointmentDetails: showAppointmentFields
-        ? {
-            appointment_title:
-              formData.appointmentDetails.appointment_title || '',
-            appointment_datetime: computedAppointmentDateTime,
-            appointment_timezone:
-              formData.appointmentDetails.appointment_timezone || '',
-            provider_name: formData.appointmentDetails.provider_name || null,
-            provider_phone: formData.appointmentDetails.provider_phone || null,
-            location_name: formData.appointmentDetails.location_name || null,
-            location_address:
-              formData.appointmentDetails.location_address || null,
-            notes: formData.appointmentDetails.notes || null,
-            reminder_offset_minutes:
-              formData.appointmentDetails.reminder_offset_minutes,
-            requires_confirmation:
-              formData.appointmentDetails.requires_confirmation,
-          }
-        : null,
-    };
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setErrors({});
-
-    console.log({ e });
-
-    try {
-      const payload = buildPayload();
-
-      const validated = scheduleSchema.parse({
-        contact_id: payload.contact_id,
-        number_id: payload.number_id,
-        name: payload.name,
-        caller_name: payload.caller_name,
-        script_type: payload.script_type,
-        template: payload.template,
-        script_content: payload.script_content,
-        name_in_script: payload.name_in_script,
-        frequency: payload.frequency,
-        frequency_days: payload.frequency_days,
-        frequency_time: payload.frequency_time,
-        selected_days: payload.selected_days,
-        calls_per_day: payload.calls_per_day,
-        max_attempts: payload.max_attempts,
-        retry_interval: payload.retry_interval,
-        emergency_contact_name: payload.emergency_contact_name,
-        emergency_contact_phone: payload.emergency_contact_phone,
-        is_active: payload.is_active,
-        appointmentDetails: payload.appointmentDetails,
-      });
-
-      onSubmit({
-        ...validated,
-        company_id: payload.company_id,
-        number_id: payload.number_id,
-        template: payload.template,
-      });
-    } catch (err) {
-      if (err instanceof ZodError) {
-        const fieldErrors: Record<string, string> = {};
-        err.errors.forEach((error) => {
-          const fieldName = error.path.join('.');
-          fieldErrors[fieldName] = error.message;
-        });
-        setErrors(fieldErrors);
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
+      company_id: companyId || (initialData?.company_id as string) || '',
+    });
+  });
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="space-y-6 max-h-[calc(100vh-200px)] overflow-y-auto pr-2"
-    >
-      {hasErrors && (
-        <Alert variant="destructive">
-          <AlertCircle className="w-4 h-4" />
-          <AlertDescription>Please fix the errors below</AlertDescription>
-        </Alert>
-      )}
+    <Form {...form}>
+      <form onSubmit={handleSubmit} className="space-y-8">
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="name">Schedule Name</Label>
-          <Input
-            id="name"
-            placeholder="e.g., Weekly Check-in"
-            value={formData.name}
-            aria-invalid={!!errors.name}
-            className={
-              errors.name
-                ? 'border-destructive focus-visible:ring-destructive'
-                : ''
-            }
-            onChange={(e) => {
-              setFormData((prev) => ({ ...prev, name: e.target.value }));
-              clearError('name');
-            }}
-          />
-          {errors.name && (
-            <p className="text-sm text-destructive">{errors.name}</p>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="callerName">Caller Name</Label>
-          <Input
-            id="callerName"
-            placeholder="Name of person making calls"
-            value={formData.caller_name}
-            aria-invalid={!!errors.caller_name}
-            className={
-              errors.caller_name
-                ? 'border-destructive focus-visible:ring-destructive'
-                : ''
-            }
-            onChange={(e) => {
-              setFormData((prev) => ({ ...prev, caller_name: e.target.value }));
-              clearError('caller_name');
-            }}
-          />
-          {errors.caller_name && (
-            <p className="text-sm text-destructive">{errors.caller_name}</p>
-          )}
-        </div>
-      </div>
-
-      <Card className="bg-muted/50 p-4">
-        <h3 className="mb-4 font-semibold">Script Settings</h3>
-
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <div className="space-y-2">
-            <Label>Script Type</Label>
-            <Select
-              value={formData.script_type}
-              onValueChange={(value: any) => {
-                setFormData((prev) => ({
-                  ...prev,
-                  script_type: value,
-                }));
-                clearError('script_type');
-                clearError('template');
-                clearError('script_content');
-              }}
-            >
-              <SelectTrigger
-                className={
-                  errors.script_type
-                    ? 'border-destructive focus:ring-destructive'
-                    : ''
-                }
-              >
-                <SelectValue placeholder="Select type" />
-              </SelectTrigger>
-              <SelectContent>
-                {scriptTypes.map((type) => (
-                  <SelectItem key={type} value={type}>
-                    {type.charAt(0).toUpperCase() + type.slice(1)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {errors.script_type && (
-              <p className="text-sm text-destructive">{errors.script_type}</p>
-            )}
+        {/* ── Basic Info ────────────────────────────────────────── */}
+        <div className="space-y-4">
+          <div>
+            <h3 className="text-sm font-semibold">Schedule</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">Name this schedule and set the caller identity.</p>
           </div>
 
-          {formData.script_type === 'template' && (
-            <div className="space-y-2">
-              <Label>Template</Label>
-              <Select
-                value={formData.template}
-                onValueChange={(value: any) => {
-                  setFormData((prev) => ({
-                    ...prev,
-                    template: value,
-                  }));
-                  clearError('template');
-                  clearError('appointmentDetails');
-                }}
-              >
-                <SelectTrigger
-                  className={
-                    errors.template
-                      ? 'border-destructive focus:ring-destructive'
-                      : ''
-                  }
-                >
-                  <SelectValue placeholder="Select template" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="wellness">Wellness</SelectItem>
-                  <SelectItem value="safety">Safety</SelectItem>
-                  <SelectItem value="medication">Medication Reminder</SelectItem>
-                  <SelectItem value="social">Social</SelectItem>
-                  <SelectItem value="appointment">Appointment Reminder</SelectItem>
-                </SelectContent>
-              </Select>
-              {errors.template && (
-                <p className="text-sm text-destructive">{errors.template}</p>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField
+              control={form.control}
+              name="name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Schedule Name</FormLabel>
+                  <FormControl>
+                    <Input placeholder="e.g. Weekly Check-in" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
               )}
-              {formData.template === 'wellness' && (
-                <p className="text-xs text-muted-foreground">
-                  Asks how the person is feeling today. Warm, supportive tone. Up to 3 exchanges.
-                </p>
-              )}
-              {formData.template === 'safety' && (
-                <p className="text-xs text-muted-foreground">
-                  General reassurance check-in focused on safety and comfort. Up to 3 exchanges.
-                </p>
-              )}
-              {formData.template === 'medication' && (
-                <p className="text-xs text-muted-foreground">
-                  Asks if the person has taken their medication. One-turn call, ends after response.
-                </p>
-              )}
-              {formData.template === 'social' && (
-                <p className="text-xs text-muted-foreground">
-                  Friendly social check-in for connection and companionship. Up to 3 exchanges.
-                </p>
-              )}
-              {formData.template === 'appointment' && (
-                <p className="text-xs text-muted-foreground">
-                  Reminds about an upcoming appointment and asks for confirmation. One-turn call.
-                </p>
-              )}
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <Label>Name Usage in Script</Label>
-            <Select
-              value={formData.name_in_script}
-              onValueChange={(value: 'contact' | 'caller') => {
-                setFormData((prev) => ({ ...prev, name_in_script: value }));
-                clearError('name_in_script');
-              }}
-            >
-              <SelectTrigger
-                className={
-                  errors.name_in_script
-                    ? 'border-destructive focus:ring-destructive'
-                    : ''
-                }
-              >
-                <SelectValue placeholder="Select usage" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="contact">Contact Name</SelectItem>
-                <SelectItem value="caller">Caller Name</SelectItem>
-              </SelectContent>
-            </Select>
-            {errors.name_in_script && (
-              <p className="text-sm text-destructive">
-                {errors.name_in_script}
-              </p>
-            )}
-          </div>
-        </div>
-
-        {formData.script_type === 'custom' && (
-          <div className="mt-4 space-y-2">
-            <Label>Custom Script</Label>
-            <textarea
-              className="min-h-[120px] w-full rounded-md border bg-background px-3 py-2 text-sm"
-              value={formData.script_content}
-              onChange={(e) => {
-                setFormData((prev) => ({
-                  ...prev,
-                  script_content: e.target.value,
-                }));
-                clearError('script_content');
-              }}
             />
-            {errors.script_content && (
-              <p className="text-sm text-destructive">
-                {errors.script_content}
-              </p>
-            )}
-          </div>
-        )}
-      </Card>
 
-      {showAppointmentFields && (
-        <>
-          <Card className="bg-muted/50 p-4">
-            <h3 className="mb-4 font-semibold">Appointment Details</h3>
-
-            {errors.appointmentDetails && (
-              <p className="mb-3 text-sm text-destructive">
-                {errors.appointmentDetails}
-              </p>
-            )}
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label>Appointment Title</Label>
-                <Input
-                  value={formData.appointmentDetails.appointment_title}
-                  onChange={(e) => {
-                    setFormData((prev) => ({
-                      ...prev,
-                      appointmentDetails: {
-                        ...prev.appointmentDetails,
-                        appointment_title: e.target.value,
-                      },
-                    }));
-                    clearError('appointmentDetails.appointment_title');
-                  }}
-                />
-                {errors['appointmentDetails.appointment_title'] && (
-                  <p className="text-sm text-destructive">
-                    {errors['appointmentDetails.appointment_title']}
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Appointment Timezone</Label>
-                <Select
-                  value={formData.appointmentDetails.appointment_timezone}
-                  onValueChange={(value) => {
-                    setFormData((prev) => ({
-                      ...prev,
-                      appointmentDetails: {
-                        ...prev.appointmentDetails,
-                        appointment_timezone: value,
-                      },
-                    }));
-                    clearError('appointmentDetails.appointment_timezone');
-                  }}
-                >
-                  <SelectTrigger
-                    className={
-                      errors['appointmentDetails.appointment_timezone']
-                        ? 'border-destructive focus:ring-destructive'
-                        : ''
-                    }
-                  >
-                    <SelectValue placeholder="Select timezone" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {appointmentTimezones.map((tz) => (
-                      <SelectItem
-                        key={`${tz.value}-${tz.label}`}
-                        value={tz.value}
-                      >
-                        {tz.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {errors['appointmentDetails.appointment_timezone'] && (
-                  <p className="text-sm text-destructive">
-                    {errors['appointmentDetails.appointment_timezone']}
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Appointment Date</Label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className={cn(
-                        'w-full justify-start text-left font-normal',
-                        !appointmentDate && 'text-muted-foreground',
-                        errors['appointmentDetails.appointment_datetime'] &&
-                          'border-destructive'
-                      )}
-                    >
-                      <CalendarIcon className="mr-2 h-4 w-4" />
-                      {appointmentDate
-                        ? format(appointmentDate, 'PPP')
-                        : 'Pick a date'}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="start">
-                    <Calendar
-                      mode="single"
-                      selected={appointmentDate}
-                      onSelect={(date) => {
-                        setAppointmentDate(date);
-                        clearError('appointmentDetails.appointment_datetime');
-                      }}
-                      initialFocus
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Appointment Time</Label>
-                <Input
-                  type="time"
-                  value={appointmentTime}
-                  onChange={(e) => {
-                    setAppointmentTime(e.target.value);
-                    clearError('appointmentDetails.appointment_datetime');
-                  }}
-                  className={
-                    errors['appointmentDetails.appointment_datetime']
-                      ? 'border-destructive focus-visible:ring-destructive'
-                      : ''
-                  }
-                />
-                {errors['appointmentDetails.appointment_datetime'] && (
-                  <p className="text-sm text-destructive">
-                    {errors['appointmentDetails.appointment_datetime']}
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Reminder Offset</Label>
-                <Select
-                  value={String(
-                    formData.appointmentDetails.reminder_offset_minutes
-                  )}
-                  onValueChange={(value) => {
-                    setFormData((prev) => ({
-                      ...prev,
-                      appointmentDetails: {
-                        ...prev.appointmentDetails,
-                        reminder_offset_minutes: Number(value),
-                      },
-                    }));
-                    clearError('appointmentDetails.reminder_offset_minutes');
-                  }}
-                >
-                  <SelectTrigger
-                    className={
-                      errors['appointmentDetails.reminder_offset_minutes']
-                        ? 'border-destructive focus:ring-destructive'
-                        : ''
-                    }
-                  >
-                    <SelectValue placeholder="Select reminder timing" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {reminderOffsets.map((option) => (
-                      <SelectItem
-                        key={option.value}
-                        value={String(option.value)}
-                      >
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {errors['appointmentDetails.reminder_offset_minutes'] && (
-                  <p className="text-sm text-destructive">
-                    {errors['appointmentDetails.reminder_offset_minutes']}
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Requires Confirmation</Label>
-                <Select
-                  value={
-                    formData.appointmentDetails.requires_confirmation
-                      ? 'yes'
-                      : 'no'
-                  }
-                  onValueChange={(value) => {
-                    setFormData((prev) => ({
-                      ...prev,
-                      appointmentDetails: {
-                        ...prev.appointmentDetails,
-                        requires_confirmation: value === 'yes',
-                      },
-                    }));
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select option" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="yes">Yes</SelectItem>
-                    <SelectItem value="no">No</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Provider Name</Label>
-                <Input
-                  value={formData.appointmentDetails.provider_name}
-                  onChange={(e) => {
-                    setFormData((prev) => ({
-                      ...prev,
-                      appointmentDetails: {
-                        ...prev.appointmentDetails,
-                        provider_name: e.target.value,
-                      },
-                    }));
-                  }}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Provider Phone</Label>
-                <Input
-                  type="tel"
-                  value={formData.appointmentDetails.provider_phone}
-                  onChange={(e) => {
-                    setFormData((prev) => ({
-                      ...prev,
-                      appointmentDetails: {
-                        ...prev.appointmentDetails,
-                        provider_phone: e.target.value,
-                      },
-                    }));
-                  }}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Location Name</Label>
-                <Input
-                  value={formData.appointmentDetails.location_name}
-                  onChange={(e) => {
-                    setFormData((prev) => ({
-                      ...prev,
-                      appointmentDetails: {
-                        ...prev.appointmentDetails,
-                        location_name: e.target.value,
-                      },
-                    }));
-                  }}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Location Address</Label>
-                <Input
-                  value={formData.appointmentDetails.location_address}
-                  onChange={(e) => {
-                    setFormData((prev) => ({
-                      ...prev,
-                      appointmentDetails: {
-                        ...prev.appointmentDetails,
-                        location_address: e.target.value,
-                      },
-                    }));
-                  }}
-                />
-              </div>
-            </div>
-
-            <div className="mt-4 space-y-2">
-              <Label>Notes</Label>
-              <textarea
-                className="min-h-[100px] w-full rounded-md border bg-background px-3 py-2 text-sm"
-                value={formData.appointmentDetails.notes}
-                onChange={(e) => {
-                  setFormData((prev) => ({
-                    ...prev,
-                    appointmentDetails: {
-                      ...prev.appointmentDetails,
-                      notes: e.target.value,
-                    },
-                  }));
-                }}
-              />
-            </div>
-          </Card>
-
-          <Card className="bg-muted/50 p-4">
-            <h3 className="mb-1 font-semibold">Reminder Schedule</h3>
-            <p className="mb-4 text-sm text-muted-foreground">
-              This reminder is based on the appointment date and reminder
-              offset.
-            </p>
-
-            <div className="space-y-2">
-              <Label>Reminder Will Be Sent At</Label>
-              <div className="rounded-md border bg-background px-3 py-2 text-sm">
-                {computedReminderTimeLabel ||
-                  'Select appointment date and time'}
-              </div>
-            </div>
-          </Card>
-        </>
-      )}
-
-      {!showAppointmentFields && (
-        <Card className="bg-muted/50 p-4">
-          <h3 className="mb-1 font-semibold">Schedule Frequency</h3>
-          <p className="mb-4 text-sm text-muted-foreground">
-            {frequencyHelpText[formData.frequency]}
-          </p>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label>Frequency</Label>
-              <Select
-                value={formData.frequency}
-                onValueChange={(value: any) => {
-                  setFormData((prev) => {
-                    const next = { ...prev, frequency: value };
-
-                    if (value === 'custom') {
-                      next.frequency_days = 7;
-                    }
-
-                    return next;
-                  });
-                  clearError('frequency');
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select frequency" />
-                </SelectTrigger>
-                <SelectContent>
-                  {frequencies.map((freq) => (
-                    <SelectItem key={freq} value={freq}>
-                      {freq.charAt(0).toUpperCase() + freq.slice(1)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Time of Day</Label>
-              <Input
-                type="time"
-                value={formData.frequency_time}
-                aria-invalid={!!errors.frequency_time}
-                className={
-                  errors.frequency_time
-                    ? 'border-destructive focus-visible:ring-destructive'
-                    : ''
-                }
-                onChange={(e) => {
-                  setFormData((prev) => ({
-                    ...prev,
-                    frequency_time: e.target.value,
-                  }));
-                  clearError('frequency_time');
-                }}
-              />
-              {errors.frequency_time && (
-                <p className="text-sm text-destructive">
-                  {errors.frequency_time}
-                </p>
+            <FormField
+              control={form.control}
+              name="caller_name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Caller Name</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Name the AI uses when calling" {...field} value={field.value ?? ''} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
               )}
-            </div>
+            />
           </div>
+        </div>
 
-          {showCustomDays && (
-            <div className="mt-4 space-y-2">
-              <Label>Days Between Calls</Label>
-              <Input
-                type="number"
-                min="1"
-                value={formData.frequency_days}
-                aria-invalid={!!errors.frequency_days}
-                className={
-                  errors.frequency_days
-                    ? 'border-destructive focus-visible:ring-destructive'
-                    : ''
-                }
-                onChange={(e) => {
-                  setFormData((prev) => ({
-                    ...prev,
-                    frequency_days: Number.parseInt(e.target.value || '0'),
-                  }));
-                  clearError('frequency_days');
-                }}
-              />
-              {errors.frequency_days && (
-                <p className="text-sm text-destructive">
-                  {errors.frequency_days}
-                </p>
+        <Separator />
+
+        {/* ── Script ────────────────────────────────────────────── */}
+        <div className="space-y-4">
+          <h3 className="text-sm font-semibold">Script</h3>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <FormField
+              control={form.control}
+              name="script_type"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Type</FormLabel>
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="template">Template</SelectItem>
+                      <SelectItem value="custom">Custom</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
               )}
-            </div>
-          )}
+            />
 
-          {showDayPicker && (
-            <div className="mt-4 space-y-3">
-              <Label>Select Days</Label>
-
-              <div
-                className={
-                  errors.selected_days
-                    ? 'rounded-md border border-destructive p-3'
-                    : ''
-                }
-              >
-                <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                  {days.map((day) => (
-                    <label
-                      key={day}
-                      className="flex cursor-pointer items-center space-x-2"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={
-                          Array.isArray(formData.selected_days) &&
-                          formData.selected_days.includes(day)
+            {scriptType === 'template' && (
+              <FormField
+                control={form.control}
+                name="template"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Template</FormLabel>
+                    <Select
+                      value={field.value ?? ''}
+                      onValueChange={(v) => {
+                        field.onChange(v);
+                        if (v === 'appointment') {
+                          form.setValue('frequency', 'daily');
                         }
-                        onChange={() => toggleDay(day)}
-                        className="h-4 w-4 rounded border-border"
+                      }}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="wellness">Wellness</SelectItem>
+                        <SelectItem value="safety">Safety</SelectItem>
+                        <SelectItem value="medication">Medication</SelectItem>
+                        <SelectItem value="social">Social</SelectItem>
+                        <SelectItem value="appointment">Appointment</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
+            <FormField
+              control={form.control}
+              name="name_in_script"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Name in Script</FormLabel>
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="contact">Contact's Name</SelectItem>
+                      <SelectItem value="caller">Caller's Name</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+
+          {scriptType === 'template' && template && TEMPLATE_DESCRIPTIONS[template] && (
+            <p className="text-xs text-muted-foreground">{TEMPLATE_DESCRIPTIONS[template]}</p>
+          )}
+
+          {scriptType === 'custom' && (
+            <FormField
+              control={form.control}
+              name="script_content"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Script Content</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      rows={5}
+                      placeholder="Write the custom script the AI will follow..."
+                      {...field}
+                      value={field.value ?? ''}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          )}
+        </div>
+
+        <Separator />
+
+        {/* ── Appointment Details ────────────────────────────────── */}
+        {isAppointment && (
+          <>
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold">Appointment Details</h3>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <FormField
+                  control={form.control}
+                  name="appointmentDetails.appointment_title"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Appointment Title</FormLabel>
+                      <FormControl>
+                        <Input placeholder="e.g. Cardiology Follow-up" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="appointmentDetails.appointment_timezone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Timezone</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {TIMEZONES.map((tz) => (
+                            <SelectItem key={tz.value} value={tz.value}>
+                              {tz.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* Date picker */}
+                <FormItem>
+                  <FormLabel>Appointment Date</FormLabel>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={cn(
+                          'w-full justify-start text-left font-normal',
+                          !apptDate && 'text-muted-foreground'
+                        )}
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {apptDate ? format(apptDate, 'PPP') : 'Pick a date'}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar
+                        mode="single"
+                        selected={apptDate}
+                        onSelect={setApptDate}
+                        initialFocus
                       />
-                      <span className="text-sm">{day.slice(0, 3)}</span>
-                    </label>
-                  ))}
-                </div>
+                    </PopoverContent>
+                  </Popover>
+                </FormItem>
+
+                {/* Time input */}
+                <FormItem>
+                  <FormLabel>Appointment Time</FormLabel>
+                  <Input
+                    type="time"
+                    value={apptTime}
+                    onChange={(e) => setApptTime(e.target.value)}
+                  />
+                </FormItem>
+
+                <FormField
+                  control={form.control}
+                  name="appointmentDetails.reminder_offset_minutes"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Remind</FormLabel>
+                      <Select
+                        value={String(field.value)}
+                        onValueChange={(v) => field.onChange(Number(v))}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {REMINDER_OFFSETS.map((o) => (
+                            <SelectItem key={o.value} value={String(o.value)}>
+                              {o.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="appointmentDetails.requires_confirmation"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
+                      <div>
+                        <FormLabel>Requires Confirmation</FormLabel>
+                        <FormDescription>Ask the contact to confirm the appointment</FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
               </div>
 
-              {errors.selected_days && (
-                <p className="text-sm text-destructive">
-                  {errors.selected_days}
+              {reminderLabel && (
+                <p className="text-xs text-muted-foreground">
+                  Reminder call scheduled for <span className="font-medium text-foreground">{reminderLabel}</span>
                 </p>
               )}
+
+              <Separator />
+
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Provider & Location</h4>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <FormField
+                  control={form.control}
+                  name="appointmentDetails.provider_name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Provider Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Dr. Smith" {...field} value={field.value ?? ''} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="appointmentDetails.provider_phone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Provider Phone</FormLabel>
+                      <FormControl>
+                        <Input type="tel" placeholder="+1 (555) 000-0000" {...field} value={field.value ?? ''} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="appointmentDetails.location_name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Location Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Memorial Hospital" {...field} value={field.value ?? ''} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="appointmentDetails.location_address"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Location Address</FormLabel>
+                      <FormControl>
+                        <Input placeholder="123 Main St, Suite 4" {...field} value={field.value ?? ''} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <FormField
+                control={form.control}
+                name="appointmentDetails.notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Notes</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        rows={3}
+                        placeholder="Any additional notes for the call..."
+                        {...field}
+                        value={field.value ?? ''}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </div>
+
+            <Separator />
+          </>
+        )}
+
+        {/* ── Frequency ──────────────────────────────────────────── */}
+        {!isAppointment && (
+          <>
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold">Frequency</h3>
+                {FREQUENCY_DESCRIPTIONS[frequency] && (
+                  <p className="text-xs text-muted-foreground mt-0.5">{FREQUENCY_DESCRIPTIONS[frequency]}</p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <FormField
+                  control={form.control}
+                  name="frequency"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Repeat</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="daily">Daily</SelectItem>
+                          <SelectItem value="weekly">Weekly</SelectItem>
+                          <SelectItem value="biweekly">Biweekly</SelectItem>
+                          <SelectItem value="monthly">Monthly</SelectItem>
+                          <SelectItem value="custom">Custom</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="frequency_time"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Time of Day</FormLabel>
+                      <FormControl>
+                        <Input type="time" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              {showCustomDays && (
+                <FormField
+                  control={form.control}
+                  name="frequency_days"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Days Between Calls</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          min="1"
+                          {...field}
+                          onChange={(e) => field.onChange(parseInt(e.target.value || '1', 10))}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+
+              {showDayPicker && (
+                <FormField
+                  control={form.control}
+                  name="selected_days"
+                  render={() => (
+                    <FormItem>
+                      <FormLabel>Days</FormLabel>
+                      <div className="flex flex-wrap gap-2">
+                        {DAYS.map((day) => (
+                          <label
+                            key={day}
+                            className={cn(
+                              'flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm cursor-pointer transition-colors select-none',
+                              selectedDays.includes(day)
+                                ? 'border-primary bg-primary/5 text-primary'
+                                : 'border-border hover:bg-muted'
+                            )}
+                          >
+                            <Checkbox
+                              checked={selectedDays.includes(day)}
+                              onCheckedChange={() => toggleDay(day)}
+                              className="sr-only"
+                            />
+                            {day.charAt(0).toUpperCase() + day.slice(1, 3)}
+                          </label>
+                        ))}
+                      </div>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+            </div>
+
+            <Separator />
+          </>
+        )}
+
+        {/* ── Call Settings ─────────────────────────────────────── */}
+        <div className="space-y-4">
+          <div>
+            <h3 className="text-sm font-semibold">Call Settings</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">Control retry behavior when the contact doesn't answer.</p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <FormField
+              control={form.control}
+              name="calls_per_day"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Calls per Day</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min="1"
+                      {...field}
+                      onChange={(e) => field.onChange(parseInt(e.target.value || '1', 10))}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="max_attempts"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Max Attempts</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min="1"
+                      {...field}
+                      onChange={(e) => field.onChange(parseInt(e.target.value || '1', 10))}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="retry_interval"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Retry Every (min)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min="1"
+                      {...field}
+                      onChange={(e) => field.onChange(parseInt(e.target.value || '1', 10))}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* ── Emergency Contact ─────────────────────────────────── */}
+        <div className="space-y-4">
+          <h3 className="text-sm font-semibold">Emergency Contact</h3>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField
+              control={form.control}
+              name="emergency_contact_name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Name</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Contact's emergency contact" {...field} value={field.value ?? ''} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="emergency_contact_phone"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Phone</FormLabel>
+                  <FormControl>
+                    <Input type="tel" placeholder="+1 (555) 000-0000" {...field} value={field.value ?? ''} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* ── Status ────────────────────────────────────────────── */}
+        <FormField
+          control={form.control}
+          name="is_active"
+          render={({ field }) => (
+            <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
+              <div>
+                <FormLabel>Active</FormLabel>
+                <FormDescription>Schedule calls immediately when saved</FormDescription>
+              </div>
+              <FormControl>
+                <Switch checked={field.value} onCheckedChange={field.onChange} />
+              </FormControl>
+            </FormItem>
           )}
-        </Card>
-      )}
-
-      <Card className="bg-muted/50 p-4">
-        <h3 className="mb-4 font-semibold">Call Settings</h3>
-
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <div className="space-y-2">
-            <Label>Calls Per Day</Label>
-            <Input
-              type="number"
-              min="1"
-              value={formData.calls_per_day}
-              aria-invalid={!!errors.calls_per_day}
-              className={
-                errors.calls_per_day
-                  ? 'border-destructive focus-visible:ring-destructive'
-                  : ''
-              }
-              onChange={(e) => {
-                setFormData((prev) => ({
-                  ...prev,
-                  calls_per_day: Number.parseInt(e.target.value || '0', 10),
-                }));
-                clearError('calls_per_day');
-              }}
-            />
-            {errors.calls_per_day && (
-              <p className="text-sm text-destructive">{errors.calls_per_day}</p>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <Label>Max Attempts</Label>
-            <Input
-              type="number"
-              min="1"
-              value={formData.max_attempts}
-              aria-invalid={!!errors.max_attempts}
-              className={
-                errors.max_attempts
-                  ? 'border-destructive focus-visible:ring-destructive'
-                  : ''
-              }
-              onChange={(e) => {
-                setFormData((prev) => ({
-                  ...prev,
-                  max_attempts: Number.parseInt(e.target.value || '0', 10),
-                }));
-                clearError('max_attempts');
-              }}
-            />
-            {errors.max_attempts && (
-              <p className="text-sm text-destructive">{errors.max_attempts}</p>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <Label>Retry Interval (minutes)</Label>
-            <Input
-              type="number"
-              min="1"
-              value={formData.retry_interval}
-              aria-invalid={!!errors.retry_interval}
-              className={
-                errors.retry_interval
-                  ? 'border-destructive focus-visible:ring-destructive'
-                  : ''
-              }
-              onChange={(e) => {
-                setFormData((prev) => ({
-                  ...prev,
-                  retry_interval: Number.parseInt(e.target.value || '0', 10),
-                }));
-                clearError('retry_interval');
-              }}
-            />
-            {errors.retry_interval && (
-              <p className="text-sm text-destructive">
-                {errors.retry_interval}
-              </p>
-            )}
-          </div>
-        </div>
-      </Card>
-
-      <Card className="bg-muted/50 p-4">
-        <h3 className="mb-4 font-semibold">Emergency Contact</h3>
-
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div className="space-y-2">
-            <Label>Emergency Contact Name</Label>
-            <Input
-              value={formData.emergency_contact_name}
-              aria-invalid={!!errors.emergency_contact_name}
-              className={
-                errors.emergency_contact_name
-                  ? 'border-destructive focus-visible:ring-destructive'
-                  : ''
-              }
-              onChange={(e) => {
-                setFormData((prev) => ({
-                  ...prev,
-                  emergency_contact_name: e.target.value,
-                }));
-                clearError('emergency_contact_name');
-              }}
-            />
-            {errors.emergency_contact_name && (
-              <p className="text-sm text-destructive">
-                {errors.emergency_contact_name}
-              </p>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <Label>Emergency Contact Phone</Label>
-            <Input
-              type="tel"
-              value={formData.emergency_contact_phone}
-              aria-invalid={!!errors.emergency_contact_phone}
-              className={
-                errors.emergency_contact_phone
-                  ? 'border-destructive focus-visible:ring-destructive'
-                  : ''
-              }
-              onChange={(e) => {
-                setFormData((prev) => ({
-                  ...prev,
-                  emergency_contact_phone: e.target.value,
-                }));
-                clearError('emergency_contact_phone');
-              }}
-            />
-            {errors.emergency_contact_phone && (
-              <p className="text-sm text-destructive">
-                {errors.emergency_contact_phone}
-              </p>
-            )}
-          </div>
-        </div>
-      </Card>
-
-      <div className="flex items-center space-x-2">
-        <input
-          id="is_active"
-          type="checkbox"
-          checked={formData.is_active}
-          onChange={(e) => {
-            setFormData((prev) => ({ ...prev, is_active: e.target.checked }));
-            clearError('is_active');
-          }}
-          className="h-4 w-4 rounded border-border"
         />
-        <Label htmlFor="is_active" className="cursor-pointer">
-          Schedule is Active
-        </Label>
-      </div>
 
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="outline" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" disabled={loading} className="w-full md:w-auto">
-          {loading ? 'Saving...' : 'Review & Continue'}
-        </Button>
-      </div>
-    </form>
+        {/* ── Actions ───────────────────────────────────────────── */}
+        <div className="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="outline" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={form.formState.isSubmitting}>
+            {form.formState.isSubmitting ? 'Saving…' : 'Save Schedule'}
+          </Button>
+        </div>
+
+      </form>
+    </Form>
   );
 }
