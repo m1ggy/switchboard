@@ -187,17 +187,19 @@ function getErrorMessages(errors: Record<string, unknown>): string[] {
   const walk = (obj: unknown) => {
     if (!obj || typeof obj !== 'object') return;
 
-    Object.values(obj as Record<string, any>).forEach((value) => {
-      if (!value) return;
+    for (const [key, value] of Object.entries(obj as Record<string, any>)) {
+      // Prevent circular recursion from react-hook-form refs
+      if (key === 'ref' || key === '_f') continue;
+
+      if (!value || typeof value !== 'object') continue;
 
       if (typeof value.message === 'string') {
         messages.push(value.message);
+        continue;
       }
 
-      if (typeof value === 'object') {
-        walk(value);
-      }
-    });
+      walk(value);
+    }
   };
 
   walk(errors);
@@ -232,6 +234,16 @@ export default function ScheduleForm({
   const initialApptDt =
     initialData?.appointmentDetails?.appointment_datetime ?? '';
 
+  const initialScriptType =
+    (initialData?.script_type as ScheduleFormInput['script_type']) ??
+    'template';
+
+  const initialTemplate =
+    (initialData?.template as ScheduleFormInput['template']) ?? 'wellness';
+
+  const initialIsAppointment =
+    initialScriptType === 'template' && initialTemplate === 'appointment';
+
   const [apptDate, setApptDate] = useState<Date | undefined>(
     getDatePart(initialApptDt)
   );
@@ -248,19 +260,17 @@ export default function ScheduleForm({
     resolver: zodResolver(scheduleSchema),
 
     // Important:
-    // Keep hidden/default-only fields like contact_id and number_id in form state.
-    shouldUnregister: false,
+    // This removes hidden conditional fields like appointmentDetails
+    // when the appointment section is not rendered.
+    shouldUnregister: true,
 
     defaultValues: {
       contact_id: contactId,
       number_id: numberId || (initialData?.number_id as string) || '',
       name: (initialData?.name as string) ?? '',
       caller_name: (initialData?.caller_name as string) ?? '',
-      script_type:
-        (initialData?.script_type as ScheduleFormInput['script_type']) ??
-        'template',
-      template:
-        (initialData?.template as ScheduleFormInput['template']) ?? 'wellness',
+      script_type: initialScriptType,
+      template: initialTemplate,
       script_content: (initialData?.script_content as string) ?? '',
       name_in_script:
         (initialData?.name_in_script as ScheduleFormInput['name_in_script']) ??
@@ -280,24 +290,27 @@ export default function ScheduleForm({
         (initialData?.emergency_contact_phone_number as string) ||
         '',
       is_active: (initialData?.is_active as boolean) ?? true,
-      appointmentDetails: {
-        appointment_title:
-          initialData?.appointmentDetails?.appointment_title ?? '',
-        appointment_datetime: initialApptDt,
-        appointment_timezone:
-          initialData?.appointmentDetails?.appointment_timezone ??
-          'America/Chicago',
-        provider_name: initialData?.appointmentDetails?.provider_name ?? '',
-        provider_phone: initialData?.appointmentDetails?.provider_phone ?? '',
-        location_name: initialData?.appointmentDetails?.location_name ?? '',
-        location_address:
-          initialData?.appointmentDetails?.location_address ?? '',
-        notes: initialData?.appointmentDetails?.notes ?? '',
-        reminder_offset_minutes:
-          initialData?.appointmentDetails?.reminder_offset_minutes ?? 60,
-        requires_confirmation:
-          initialData?.appointmentDetails?.requires_confirmation ?? true,
-      },
+      appointmentDetails: initialIsAppointment
+        ? {
+            appointment_title:
+              initialData?.appointmentDetails?.appointment_title ?? '',
+            appointment_datetime: initialApptDt,
+            appointment_timezone:
+              initialData?.appointmentDetails?.appointment_timezone ??
+              'America/Chicago',
+            provider_name: initialData?.appointmentDetails?.provider_name ?? '',
+            provider_phone:
+              initialData?.appointmentDetails?.provider_phone ?? '',
+            location_name: initialData?.appointmentDetails?.location_name ?? '',
+            location_address:
+              initialData?.appointmentDetails?.location_address ?? '',
+            notes: initialData?.appointmentDetails?.notes ?? '',
+            reminder_offset_minutes:
+              initialData?.appointmentDetails?.reminder_offset_minutes ?? 60,
+            requires_confirmation:
+              initialData?.appointmentDetails?.requires_confirmation ?? true,
+          }
+        : undefined,
     },
   });
 
@@ -376,6 +389,15 @@ export default function ScheduleForm({
     async (values) => {
       setHasSubmitAttempted(true);
 
+      if (!values.number_id) {
+        form.setError('number_id', {
+          type: 'manual',
+          message: 'Please select a phone number before saving this schedule.',
+        });
+
+        return;
+      }
+
       if (isAppointment && !computedApptDt) {
         form.setError('appointmentDetails.appointment_datetime', {
           type: 'manual',
@@ -428,7 +450,7 @@ export default function ScheduleForm({
   return (
     <Form {...form}>
       <form onSubmit={handleSubmit} className="space-y-8">
-        {/* Hidden required fields */}
+        {/* Hidden required fields. These stay mounted even with shouldUnregister: true. */}
         <input type="hidden" {...form.register('contact_id')} />
         <input type="hidden" {...form.register('number_id')} />
 
@@ -448,7 +470,6 @@ export default function ScheduleForm({
           </Alert>
         )}
 
-        {/* Schedule */}
         <div className="space-y-4">
           <div>
             <h3 className="text-sm font-semibold">Schedule</h3>
@@ -494,7 +515,6 @@ export default function ScheduleForm({
 
         <Separator />
 
-        {/* Script */}
         <div className="space-y-4">
           <h3 className="text-sm font-semibold">Script</h3>
 
@@ -538,6 +558,31 @@ export default function ScheduleForm({
                             shouldValidate: true,
                             shouldDirty: true,
                           });
+
+                          form.setValue(
+                            'appointmentDetails',
+                            {
+                              appointment_title: '',
+                              appointment_datetime: computedApptDt,
+                              appointment_timezone: 'America/Chicago',
+                              provider_name: '',
+                              provider_phone: '',
+                              location_name: '',
+                              location_address: '',
+                              notes: '',
+                              reminder_offset_minutes: 60,
+                              requires_confirmation: true,
+                            },
+                            {
+                              shouldValidate: false,
+                              shouldDirty: true,
+                            }
+                          );
+                        } else {
+                          form.unregister('appointmentDetails');
+                          form.clearErrors('appointmentDetails');
+                          setApptDate(undefined);
+                          setApptTime('');
                         }
                       }}
                     >
@@ -617,7 +662,6 @@ export default function ScheduleForm({
 
         <Separator />
 
-        {/* Appointment Details */}
         {isAppointment && (
           <>
             <div className="space-y-4">
@@ -890,7 +934,6 @@ export default function ScheduleForm({
           </>
         )}
 
-        {/* Frequency */}
         {!isAppointment && (
           <>
             <div className="space-y-4">
@@ -1010,7 +1053,6 @@ export default function ScheduleForm({
           </>
         )}
 
-        {/* Call Settings */}
         <div className="space-y-4">
           <div>
             <h3 className="text-sm font-semibold">Call Settings</h3>
@@ -1087,7 +1129,6 @@ export default function ScheduleForm({
 
         <Separator />
 
-        {/* Emergency Contact */}
         <div className="space-y-4">
           <h3 className="text-sm font-semibold">Emergency Contact</h3>
 
@@ -1133,7 +1174,6 @@ export default function ScheduleForm({
 
         <Separator />
 
-        {/* Status */}
         <FormField
           control={form.control}
           name="is_active"
@@ -1155,7 +1195,6 @@ export default function ScheduleForm({
           )}
         />
 
-        {/* Actions */}
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="outline" onClick={onCancel}>
             Cancel

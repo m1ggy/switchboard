@@ -158,6 +158,7 @@ export default function EditScheduleDialog({
             initialData={schedule}
             onSubmit={handleSubmit}
             onCancel={() => onOpenChange(false)}
+            numberId={activeNumber?.id as string}
           />
         </DialogContent>
       </Dialog>
