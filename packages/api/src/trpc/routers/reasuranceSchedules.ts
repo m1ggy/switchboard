@@ -13,7 +13,7 @@ const frequencyEnum = z.enum([
   'monthly',
   'custom',
 ]);
-const templateEnum = z.enum(['wellness', 'safety', 'medication', 'social']);
+const templateEnum = z.enum(['wellness', 'safety', 'medication', 'social', 'appointment']);
 
 const baseScheduleInput = z.object({
   name: z.string().min(1),

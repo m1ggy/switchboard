@@ -70,6 +70,10 @@ function resolveCallModeFromScheduleTemplate(
     return 'wellness_check';
   }
 
+  if (t === 'social' || t === 'safety') {
+    return 'reassurance';
+  }
+
   return 'reassurance';
 }
 
