@@ -6,6 +6,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+
+import type { Schedule } from '@/lib/schemas';
 import { useMemo, useState } from 'react';
 import ScheduleForm from './schedule-form';
 
@@ -62,8 +74,13 @@ export default function EditScheduleDialog({
   contact,
 }: EditScheduleDialogProps) {
   const trpc = useTRPC();
-  const { activeNumber } = useMainStore();
+  const { activeNumber, activeCompany } = useMainStore();
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const [errorDialogOpen, setErrorDialogOpen] = useState(false);
+  const [errorMessage, setErrorMessage] = useState(
+    'Something went wrong while saving the schedule.'
+  );
 
   // Treat id=0 (or missing) as "create"
   const isCreateMode = useMemo(
@@ -71,20 +88,25 @@ export default function EditScheduleDialog({
     [schedule]
   );
 
-  // ✅ Update mutation (you already have this)
   const updateScheduleMutation = useMutation(
     trpc.reassuranceContactProfiles.update.mutationOptions()
   );
 
-  // ✅ Create mutation (CHANGE THIS to your real procedure name)
   const createScheduleMutation = useMutation(
     trpc.reassuranceContactProfiles.createSchedule.mutationOptions()
-    // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    // Replace `createSchedule` with whatever your actual create endpoint is
   );
 
-  const handleSubmit = async (scheduleData: any) => {
+  const getErrorMessage = (err: unknown) => {
+    if (err instanceof Error) {
+      return err.message;
+    }
+
+    return 'Something went wrong while saving the schedule.';
+  };
+
+  const handleSubmit = async (scheduleData: Schedule) => {
     setIsSubmitting(true);
+
     try {
       const { appointmentDetails, ...rest } = scheduleData as any;
       const appointment_details = appointmentDetails ?? null;
@@ -107,46 +129,53 @@ export default function EditScheduleDialog({
       onOpenChange(false);
     } catch (err) {
       console.error('[EditScheduleDialog] submit failed', err);
+
+      setErrorMessage(getErrorMessage(err));
+      setErrorDialogOpen(true);
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(nextOpen) => {
-        if (isSubmitting) return; // optional: prevent closing mid-submit
-        onOpenChange(nextOpen);
-      }}
-    >
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>
-            {isCreateMode ? 'Add Schedule' : 'Edit Schedule'}
-          </DialogTitle>
-        </DialogHeader>
+    <>
+      <Dialog
+        open={open}
+        onOpenChange={(nextOpen) => {
+          if (isSubmitting) return;
+          onOpenChange(nextOpen);
+        }}
+      >
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {isCreateMode ? 'Add Schedule' : 'Edit Schedule'}
+            </DialogTitle>
+          </DialogHeader>
 
-        <ScheduleForm
-          contactId={contact.id}
-          companyId={contact.company_id}
-          numberId={
-            isCreateMode
-              ? (activeNumber?.id ?? '')
-              : ((schedule as any).number_id ?? activeNumber?.id ?? '')
-          }
-          initialData={{
-            ...(schedule as any),
-            emergency_contact_phone:
-              (schedule as any).emergency_contact_phone ??
-              (schedule as any).emergency_contact_phone_number ??
-              '',
-            appointmentDetails: (schedule as any).appointment_details ?? undefined,
-          }}
-          onSubmit={handleSubmit}
-          onCancel={() => onOpenChange(false)}
-        />
-      </DialogContent>
-    </Dialog>
+          <ScheduleForm
+            contactId={contact.id}
+            initialData={schedule}
+            onSubmit={handleSubmit}
+            onCancel={() => onOpenChange(false)}
+            numberId={activeNumber?.id as string}
+            companyId={activeCompany?.id as string}
+          />
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={errorDialogOpen} onOpenChange={setErrorDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unable to save schedule</AlertDialogTitle>
+            <AlertDialogDescription>{errorMessage}</AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <AlertDialogFooter>
+            <AlertDialogAction>Okay</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

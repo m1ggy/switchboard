@@ -88,7 +88,7 @@ function CreateContactDialog({ onCreated, onSuccess }: Props) {
       const created = await createContactFull({
         label: data.label,
         number: data.number,
-        companyId: activeCompany.id,
+        company_id: activeCompany.id,
       });
 
       /**

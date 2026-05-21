@@ -129,7 +129,7 @@ export default function CreateDialog({
       const payload = {
         number: selectedContact.number,
         label: selectedContact.label,
-        companyId: activeCompany.id,
+        company_id: activeCompany.id,
 
         profile: {
           preferred_name: selectedProfile.preferred_name ?? null,
