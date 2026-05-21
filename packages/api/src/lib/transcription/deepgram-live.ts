@@ -51,13 +51,15 @@ export class DeepgramLiveTranscriber {
     this.client = createClient(this.opts.apiKey);
   }
 
-  connect(onTranscript: DeepgramTranscriptHandler) {
+  connect(onTranscript: DeepgramTranscriptHandler, languageOverride?: string) {
     if (this.live) return;
+
+    const lang = languageOverride ?? this.opts.language;
 
     // Deepgram live streaming (WebSocket under the hood)
     this.live = this.client.listen.live({
       model: this.opts.model,
-      language: this.opts.language,
+      language: lang,
       encoding: this.opts.encoding,
       sample_rate: this.opts.sampleRate,
       channels: 1,

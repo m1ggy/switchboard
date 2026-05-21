@@ -19,6 +19,7 @@ import {
   type CallContext,
   type ScriptPayload,
   ScriptGeneratorAgent,
+  defaultSystemInstructions,
 } from '@/lib/ai/script_agent';
 import { uploadAttachmentBuffer } from '@/lib/google/storage';
 import { DeepgramLiveTranscriber } from '@/lib/transcription/deepgram-live';
@@ -232,6 +233,76 @@ async function generateSessionAiSummary(args: {
   return (text || '').trim().slice(0, 2000);
 }
 
+async function compressRunningSummary(args: {
+  openai: OpenAIClient;
+  runningSummary: string;
+}): Promise<string> {
+  const { openai, runningSummary } = args;
+
+  const resp = await (openai as any).client.responses.create({
+    model: 'gpt-4.1-mini',
+    input: [
+      {
+        role: 'system' as const,
+        content:
+          'Compress this in-progress phone call transcript into 2 sentences. Preserve key facts, concerns, and risk signals. Plain text only.',
+      },
+      { role: 'user' as const, content: runningSummary },
+    ],
+    temperature: 0.2,
+    max_output_tokens: 120,
+  });
+
+  const text =
+    resp.output_text ??
+    resp.output
+      ?.map((o: any) => o?.content?.map((c: any) => c?.text).join(''))
+      .join('') ??
+    '';
+
+  return (text || runningSummary).trim().slice(0, 1200);
+}
+
+async function sendHandoffAlertSms(args: {
+  twilioClient: any;
+  level: 'handoff' | 'emergency';
+  schedule: any;
+  fromNumber: string | null;
+  preferredName: string;
+  reasons: string[];
+  logger: any;
+}) {
+  const { twilioClient, level, schedule, fromNumber, preferredName, reasons, logger } = args;
+
+  if (!schedule?.emergency_contact_phone_number) return;
+  if (!fromNumber) return;
+  if (!twilioClient) return;
+
+  const calleeName = preferredName;
+
+  const body =
+    level === 'emergency'
+      ? `URGENT: ${calleeName} may need immediate help. Distress detected during reassurance call. Please check on them right away.${reasons.length ? ' (' + reasons.slice(0, 2).join('; ') + ')' : ''}`
+      : `Alert: ${calleeName} may need assistance after a reassurance call. Please follow up when possible.`;
+
+  try {
+    await twilioClient.messages.create({
+      from: fromNumber,
+      to: schedule.emergency_contact_phone_number,
+      body,
+    });
+    logger.info(
+      { level, to: schedule.emergency_contact_phone_number },
+      '[ReassuranceStream] handoff alert SMS sent'
+    );
+  } catch (err) {
+    logger.error(
+      { err, level, to: schedule.emergency_contact_phone_number },
+      '[ReassuranceStream] handoff alert SMS failed'
+    );
+  }
+}
+
 function formatTranscriptForSummary(
   rows: Array<{ speaker: string; transcript: string }>
 ) {
@@ -443,6 +514,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
       let companyId: string | null = null;
       let companyName: string | null = null;
       let callbackNumber: string | null = null;
+
+      let loadedSchedule: any = null;
+      let handoffSmsSent = false;
 
       let contactProfile: any | null = null;
       let appointmentDetail: Awaited<
@@ -824,8 +898,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         profile: any | null;
         memSummaryText: string | null;
         recentTurns: { role: string; content: string }[];
+        similarChunks?: { chunk_text: string; source_type: string }[];
       }) {
-        const { profile, memSummaryText, recentTurns } = args;
+        const { profile, memSummaryText, recentTurns, similarChunks } = args;
 
         const profileLite = profile
           ? {
@@ -855,7 +930,14 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
                 .join('\n')}`
             : `RECENT TURNS (this call):\n(none)`;
 
-        return [profileBlock, summaryBlock, recentTurnsBlock]
+        const similarBlock =
+          similarChunks && similarChunks.length > 0
+            ? `RELEVANT PAST MEMORIES:\n${similarChunks
+                .map((c) => `- ${clamp(c.chunk_text, 200)}`)
+                .join('\n')}`
+            : null;
+
+        return [profileBlock, summaryBlock, recentTurnsBlock, similarBlock]
           .filter(Boolean)
           .join('\n\n');
       }
@@ -930,21 +1012,25 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
           const tAll = nowMs();
 
           try {
-            const memSummaryPromise =
-              ReassuranceContactMemorySummaryRepository.getByContactId(
-                contactId
-              );
+            const [memSummary, recentTurnsRaw, queryEmbedding] =
+              await Promise.all([
+                ReassuranceContactMemorySummaryRepository.getByContactId(
+                  contactId
+                ),
+                ReassuranceCallTurnsRepository.listBySessionIdWithLimit(
+                  sessionId,
+                  15
+                ),
+                embedText(openai, finalUtterance),
+              ]);
 
-            const recentTurnsPromise =
-              ReassuranceCallTurnsRepository.listBySessionIdWithLimit(
-                sessionId,
-                15
-              );
-
-            const [memSummary, recentTurnsRaw] = await Promise.all([
-              memSummaryPromise,
-              recentTurnsPromise,
-            ]);
+            const similarChunks = await ReassuranceContactMemoryChunksRepository.searchSimilar(
+              {
+                contactId,
+                queryEmbedding,
+                limit: 3,
+              }
+            ).catch(() => [] as { chunk_text: string; source_type: string }[]);
 
             const recentTurns = recentTurnsRaw.map((t) => ({
               role: t.role,
@@ -955,6 +1041,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               profile: contactProfile,
               memSummaryText: memSummary?.summary_text ?? null,
               recentTurns,
+              similarChunks,
             });
 
             const preferredName =
@@ -1001,7 +1088,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             }
 
             if (callMode === 'medication_reminder') {
-              const kind = classifyMedAnswer(finalUtterance);
+              const kind = await scriptAgent
+                .classifyMedAnswer(finalUtterance)
+                .catch(() => classifyMedAnswer(finalUtterance));
               const ttsNumber = callbackNumber;
 
               let reply = '';
@@ -1042,7 +1131,9 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
             }
 
             if (callMode === 'appointment_reminder') {
-              const kind = classifyAppointmentAnswer(finalUtterance);
+              const kind = await scriptAgent
+                .classifyAppointmentAnswer(finalUtterance)
+                .catch(() => classifyAppointmentAnswer(finalUtterance));
               const ttsNumber = callbackNumber;
 
               try {
@@ -1178,6 +1269,35 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
 
             assistantReplyCount += 1;
 
+            // Act on handoff signal — send SMS to emergency contact once per call
+            const { handoffSignal } = payload;
+            if (
+              !handoffSmsSent &&
+              (handoffSignal.level === 'emergency' ||
+                handoffSignal.level === 'handoff')
+            ) {
+              handoffSmsSent = true;
+              sendHandoffAlertSms({
+                twilioClient: twilioClient,
+                level: handoffSignal.level,
+                schedule: loadedSchedule,
+                fromNumber: callbackNumber,
+                preferredName:
+                  contactProfile?.preferred_name ?? preferredName,
+                reasons: handoffSignal.reasons,
+                logger: app.log,
+              }).catch(() => {});
+            }
+
+            // Compress running summary every 2 turns to keep context tight
+            if (assistantReplyCount === 2 && runningSummary.length > 400) {
+              compressRunningSummary({ openai, runningSummary })
+                .then((compressed) => {
+                  runningSummary = compressed;
+                })
+                .catch(() => {});
+            }
+
             if (assistantReplyCount >= MAX_ASSISTANT_REPLIES) {
               await endCallFlow({
                 reason: 'ai_max_turns',
@@ -1190,24 +1310,20 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               return;
             }
 
-            embedText(openai, finalUtterance)
-              .then((userEmb) =>
-                ReassuranceContactMemoryChunksRepository.insert({
-                  id: crypto.randomUUID(),
-                  contact_id: contactId!,
-                  session_id: sessionId!,
-                  source_type: 'user_utterance',
-                  chunk_text: finalUtterance,
-                  embedding: userEmb,
-                  importance: 1,
-                })
+            ReassuranceContactMemoryChunksRepository.insert({
+              id: crypto.randomUUID(),
+              contact_id: contactId!,
+              session_id: sessionId!,
+              source_type: 'user_utterance',
+              chunk_text: finalUtterance,
+              embedding: queryEmbedding,
+              importance: 1,
+            }).catch((err) =>
+              app.log.warn(
+                { err, sessionId, contactId },
+                '[ReassuranceStream] user embedding/memory insert failed'
               )
-              .catch((err) =>
-                app.log.warn(
-                  { err, sessionId, contactId },
-                  '[ReassuranceStream] user embedding/memory insert failed'
-                )
-              );
+            );
 
             embedText(openai, assistantText)
               .then((assistantEmb) =>
@@ -1253,6 +1369,7 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
         if (!schedule) throw new Error('Schedule not found');
         if (!numberId) throw new Error('Number ID not found');
 
+        loadedSchedule = schedule;
         companyId = schedule.company_id;
         const company = companyId
           ? await UserCompaniesRepository.findCompanyById(companyId)
@@ -1778,30 +1895,32 @@ export async function twilioReassuranceStreamRoutes(app: FastifyInstance) {
               '[ReassuranceStream] start received / params resolved'
             );
 
-            deepgram.connect(async (text, info) => {
-              if (isEnding) return;
-              if (!info?.isFinal) return;
-
-              if (!sessionId || !contactId) {
-                pendingFinals.push({ text, info });
-                return;
-              }
-
-              try {
-                await saveInboundTranscript(text, info);
-              } catch (err) {
-                app.log.error(
-                  { err, sessionId, contactId },
-                  '[ReassuranceStream] transcript insert failed'
-                );
-              }
-
-              if (isEnding) return;
-              utteranceBuffer.addFinal(text);
-            });
-
             try {
               await bootstrapSessionAndOpening();
+
+              // Connect Deepgram after bootstrap so we use the contact's locale
+              const locale = (contactProfile?.locale as string | undefined) ?? 'en-US';
+              deepgram.connect(async (text, info) => {
+                if (isEnding) return;
+                if (!info?.isFinal) return;
+
+                if (!sessionId || !contactId) {
+                  pendingFinals.push({ text, info });
+                  return;
+                }
+
+                try {
+                  await saveInboundTranscript(text, info);
+                } catch (err) {
+                  app.log.error(
+                    { err, sessionId, contactId },
+                    '[ReassuranceStream] transcript insert failed'
+                  );
+                }
+
+                if (isEnding) return;
+                utteranceBuffer.addFinal(text);
+              }, locale);
             } catch (err) {
               app.log.error(
                 {
