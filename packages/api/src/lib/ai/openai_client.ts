@@ -33,7 +33,7 @@ export class OpenAIClient {
   private client: OpenAI;
   private defaultModel: string;
 
-  constructor(apiKey: string, defaultModel = 'gpt-4o-mini-2024-07-18') {
+  constructor(apiKey: string, defaultModel = 'gpt-4.1-mini') {
     this.client = new OpenAI({ apiKey });
     this.defaultModel = defaultModel;
   }

@@ -400,6 +400,81 @@ export class ScriptGeneratorAgent {
     });
   }
 
+  // ---------------- CLASSIFY MED ----------------
+  async classifyMedAnswer(
+    utterance: string
+  ): Promise<'took' | 'will_take' | 'not_taking'> {
+    const input: SimpleMessage[] = [
+      {
+        role: 'system',
+        content:
+          'Classify the caller\'s response to a medication reminder. Reply only with the JSON schema.',
+      },
+      {
+        role: 'user',
+        content: [
+          `Caller said: "${utterance}"`,
+          ``,
+          `Options:`,
+          `- "took": they already took their medication`,
+          `- "will_take": they haven't taken it yet but intend to soon`,
+          `- "not_taking": they refuse or say they won't take it`,
+          ``,
+          `Pick the closest option.`,
+        ].join('\n'),
+      },
+    ];
+
+    const res = await this.openai.generateJson<{
+      result: 'took' | 'will_take' | 'not_taking';
+    }>({
+      input,
+      schema: medClassifySchema,
+      temperature: 0.1,
+      maxOutputTokens: 30,
+    });
+
+    return res.result;
+  }
+
+  // ---------------- CLASSIFY APPOINTMENT ----------------
+  async classifyAppointmentAnswer(
+    utterance: string
+  ): Promise<'confirmed' | 'reschedule' | 'cancel' | 'unknown'> {
+    const input: SimpleMessage[] = [
+      {
+        role: 'system',
+        content:
+          'Classify the caller\'s response to an appointment reminder. Reply only with the JSON schema.',
+      },
+      {
+        role: 'user',
+        content: [
+          `Caller said: "${utterance}"`,
+          ``,
+          `Options:`,
+          `- "confirmed": they confirm they will attend`,
+          `- "reschedule": they want to change the time or date`,
+          `- "cancel": they want to cancel the appointment`,
+          `- "unknown": unclear or unrelated response`,
+          ``,
+          `Pick the closest option.`,
+        ].join('\n'),
+      },
+    ];
+
+    const res = await this.openai.generateJson<{
+      result: 'confirmed' | 'reschedule' | 'cancel' | 'unknown';
+    }>({
+      input,
+      schema: apptClassifySchema,
+      temperature: 0.1,
+      maxOutputTokens: 30,
+    });
+
+    return res.result;
+  }
+
   // ---------------- CLOSING ----------------
   async generateClosingScript(params: {
     context: CallContext;
@@ -488,7 +563,34 @@ export class ScriptGeneratorAgent {
   }
 }
 
-const defaultSystemInstructions = `
+const medClassifySchema = {
+  name: 'MedClassification',
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      result: { type: 'string', enum: ['took', 'will_take', 'not_taking'] },
+    },
+    required: ['result'],
+  },
+};
+
+const apptClassifySchema = {
+  name: 'ApptClassification',
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      result: {
+        type: 'string',
+        enum: ['confirmed', 'reschedule', 'cancel', 'unknown'],
+      },
+    },
+    required: ['result'],
+  },
+};
+
+export const defaultSystemInstructions = `
 You are an AI assistant that makes short, calm, voice-based phone calls.
 
 Style:

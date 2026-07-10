@@ -530,7 +530,6 @@ async function routes(app: FastifyInstance) {
       response.say(
         `Welcome to ${company?.name ?? 'our'} Hotline, please wait while we connect you to an agent`
       );
-      response.say('Please note that this call may be recorded for quality and training purposes.');
 
       const userCompany = await UserCompaniesRepository.findUserIdById(
         company?.id as string
