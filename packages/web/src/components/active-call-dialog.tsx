@@ -121,7 +121,8 @@ function ActiveCallDialog() {
   }, []);
 
   useEffect(() => {
-    if (!open || callState !== 'connected') return;
+    if (!open || (callState !== 'connected' && callState !== 'reconnecting'))
+      return;
 
     let cancelled = false;
 
@@ -181,7 +182,7 @@ function ActiveCallDialog() {
   }, [open]);
 
   useEffect(() => {
-    if (activeCall && callState === 'connected') {
+    if (activeCall && (callState === 'connected' || callState === 'reconnecting')) {
       setOpen(true);
 
       const onDisconnect = async () => {
@@ -444,6 +445,12 @@ function ActiveCallDialog() {
             Duration:{' '}
             <span className="font-mono">{formatDuration(callDuration)}</span>
           </div>
+
+          {callState === 'reconnecting' && (
+            <div className="mt-1 text-xs font-medium text-amber-600">
+              Reconnecting audio…
+            </div>
+          )}
 
           {wakeLockSupported && callState === 'connected' && (
             <div className="mt-1 text-xs text-muted-foreground">

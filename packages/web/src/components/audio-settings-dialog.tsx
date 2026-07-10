@@ -213,7 +213,10 @@ function AudioSettingsHoverCard() {
   const lastSyncAtRef = useRef(0);
 
   const hasLiveCall = Boolean(
-    activeCall || incomingCall || callState === 'connected'
+    activeCall ||
+      incomingCall ||
+      callState === 'connected' ||
+      callState === 'reconnecting'
   );
 
   const outputSupported = useMemo(

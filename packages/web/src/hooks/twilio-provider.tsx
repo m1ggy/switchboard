@@ -15,7 +15,50 @@ import {
   useState,
 } from 'react';
 
-type CallState = 'idle' | 'incoming' | 'connected' | 'disconnected' | 'error';
+type CallState =
+  | 'idle'
+  | 'incoming'
+  | 'connected'
+  | 'reconnecting'
+  | 'disconnected'
+  | 'error';
+
+// Registers this tab as an active call with the OS so mobile browsers don't
+// suspend audio playback when the screen locks or the tab backgrounds.
+function markMediaSessionActive(label: string) {
+  if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: label,
+      artist: 'Switchboard',
+    });
+    navigator.mediaSession.playbackState = 'playing';
+
+    // No-op handlers: prevents some mobile browsers from treating this as
+    // unmanaged/orphaned media and pausing it in the background.
+    for (const action of ['play', 'pause', 'stop'] as const) {
+      try {
+        navigator.mediaSession.setActionHandler(action, () => {});
+      } catch {
+        // action not supported by this browser; ignore
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to set media session metadata:', err);
+  }
+}
+
+function clearMediaSessionActive() {
+  if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+
+  try {
+    navigator.mediaSession.playbackState = 'none';
+    navigator.mediaSession.metadata = null;
+  } catch (err) {
+    console.warn('Failed to clear media session metadata:', err);
+  }
+}
 
 interface TwilioVoiceContextValue {
   makeCall: (params: Record<string, string>) => Promise<void>;
@@ -122,6 +165,7 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
     (call: Call, mode: 'incoming' | 'outgoing') => {
       call.addListener('disconnect', () => {
         console.log(`📴 ${mode} call disconnected`);
+        clearMediaSessionActive();
         setIncomingCall((prev) => (prev === call ? null : prev));
         setActiveCall((prev) => (prev === call ? null : prev));
         setCallState('disconnected');
@@ -129,6 +173,7 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
 
       call.addListener('error', (error) => {
         console.error(`❌ ${mode} call error:`, error);
+        clearMediaSessionActive();
         setIncomingCall((prev) => (prev === call ? null : prev));
         setActiveCall((prev) => (prev === call ? null : prev));
         setCallState('error');
@@ -136,6 +181,7 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
 
       call.addListener('cancel', () => {
         console.log(`🚫 ${mode} call canceled`);
+        clearMediaSessionActive();
         setIncomingCall((prev) => (prev === call ? null : prev));
         setActiveCall((prev) => (prev === call ? null : prev));
         setCallState('idle');
@@ -143,9 +189,24 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
 
       call.addListener('accept', () => {
         console.log(`✅ ${mode} call accepted`);
+        markMediaSessionActive('Active call');
         setCallState('connected');
         setActiveCall(call);
         setIncomingCall(null);
+      });
+
+      // The SDK retries ICE/media reconnection silently for up to ~30s
+      // before giving up — surface that window instead of leaving the UI
+      // stuck on "connected" with dead audio.
+      call.addListener('reconnecting', (error) => {
+        console.warn(`⚠️ ${mode} call reconnecting`, error);
+        setCallState((prev) => (prev === 'connected' ? 'reconnecting' : prev));
+      });
+
+      call.addListener('reconnected', () => {
+        console.log(`✅ ${mode} call reconnected`);
+        markMediaSessionActive('Active call');
+        setCallState((prev) => (prev === 'reconnecting' ? 'connected' : prev));
       });
     },
     []
@@ -382,6 +443,7 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
     } catch (err) {
       console.warn('Error while hanging up:', err);
     } finally {
+      clearMediaSessionActive();
       setActiveCall(null);
       setIncomingCall(null);
       setCallState('disconnected');
