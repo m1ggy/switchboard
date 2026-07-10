@@ -60,6 +60,39 @@ function clearMediaSessionActive() {
   }
 }
 
+// The SDK's own low-bytes-received warning (from its internal StatsMonitor)
+// fires whenever inbound RTP audio effectively stops — the classic one-way-
+// audio symptom caused by a mobile carrier NAT rebinding the client's port
+// mid-call. The SDK only auto-recovers this if `iceConnectionState` also
+// reports 'disconnected' (see Call.prototype._onMediaFailure), which mobile
+// NAT rebinding usually does NOT trigger — outbound keepalives keep
+// succeeding, so ICE never reports disconnected and the SDK does nothing.
+// We react to the warning directly and force the same ICE restart the SDK
+// would have run, rate-limited so repeated warnings don't hammer it.
+const ONE_WAY_AUDIO_WARNING = 'network-quality-low-bytes-received';
+const ICE_RESTART_COOLDOWN_MS = 15_000;
+const lastIceRestartAttempt = new WeakMap<Call, number>();
+
+function forceIceRestartForOneWayAudio(call: Call) {
+  const now = Date.now();
+  const last = lastIceRestartAttempt.get(call) ?? 0;
+  if (now - last < ICE_RESTART_COOLDOWN_MS) return;
+  lastIceRestartAttempt.set(call, now);
+
+  try {
+    const mediaHandler = (
+      call as unknown as { _mediaHandler?: { iceRestart?: () => void } }
+    )._mediaHandler;
+
+    if (typeof mediaHandler?.iceRestart === 'function') {
+      console.warn('🔧 Forcing ICE restart to recover one-way audio');
+      mediaHandler.iceRestart();
+    }
+  } catch (err) {
+    console.error('Failed to force ICE restart for one-way audio recovery:', err);
+  }
+}
+
 interface TwilioVoiceContextValue {
   makeCall: (params: Record<string, string>) => Promise<void>;
   hangUp: () => void;
@@ -207,6 +240,26 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
         console.log(`✅ ${mode} call reconnected`);
         markMediaSessionActive('Active call');
         setCallState((prev) => (prev === 'reconnecting' ? 'connected' : prev));
+      });
+
+      // Covers one-way audio: RTP has effectively stopped in one direction,
+      // but ICE never reports 'disconnected', so the SDK's own reconnect
+      // logic (above) never kicks in on its own.
+      call.addListener('warning', (warningName: string) => {
+        console.warn(`⚠️ ${mode} call warning:`, warningName);
+
+        if (warningName === ONE_WAY_AUDIO_WARNING) {
+          setCallState((prev) => (prev === 'connected' ? 'reconnecting' : prev));
+          forceIceRestartForOneWayAudio(call);
+        }
+      });
+
+      call.addListener('warning-cleared', (warningName: string) => {
+        console.log(`✅ ${mode} call warning cleared:`, warningName);
+
+        if (warningName === ONE_WAY_AUDIO_WARNING) {
+          setCallState((prev) => (prev === 'reconnecting' ? 'connected' : prev));
+        }
       });
     },
     []
