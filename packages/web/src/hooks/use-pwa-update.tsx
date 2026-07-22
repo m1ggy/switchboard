@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { isPWAInstalled } from '../lib/pwa-is-installed';
 import { registerSW } from '../lib/register-sw';
 
 export function usePWAUpdate() {
@@ -6,6 +7,8 @@ export function usePWAUpdate() {
   const waitingRegRef = useRef<ServiceWorkerRegistration | null>(null);
 
   useEffect(() => {
+    if (!isPWAInstalled()) return;
+
     registerSW((reg) => {
       waitingRegRef.current = reg;
       setHasUpdate(true);

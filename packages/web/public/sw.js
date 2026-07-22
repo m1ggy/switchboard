@@ -48,11 +48,13 @@ self.addEventListener("activate", (event) => {
           await self.registration.navigationPreload.enable();
         } catch {}
       }
+
+      // Start controlling existing clients ASAP (must stay inside waitUntil
+      // or the SW can be killed before claim() resolves, and clients never
+      // get a controllerchange event → update button appears to do nothing)
+      await self.clients.claim();
     })()
   );
-
-  // Start controlling existing clients ASAP
-  self.clients.claim();
 });
 
 /* --------------------------------- Fetch ---------------------------------- */
