@@ -23,7 +23,10 @@ const isHttp = (urlStr) => {
 // Let the page activate the new SW on demand (after showing an Update button)
 self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "SKIP_WAITING") {
-    self.skipWaiting();
+    // Must stay inside waitUntil (ExtendableMessageEvent supports it) or the
+    // SW can be killed before skipWaiting() resolves, and activate never
+    // fires — the update button silently does nothing.
+    event.waitUntil(self.skipWaiting());
   }
 });
 

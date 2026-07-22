@@ -28,7 +28,12 @@ export function usePWAUpdate() {
 
   const update = () => {
     const reg = waitingRegRef.current;
-    reg?.waiting?.postMessage({ type: 'SKIP_WAITING' }); // will trigger activate → clients.claim
+    if (!reg?.waiting) {
+      console.warn('No waiting service worker to activate; reloading anyway');
+      window.location.reload();
+      return;
+    }
+    reg.waiting.postMessage({ type: 'SKIP_WAITING' }); // will trigger activate → clients.claim
   };
 
   const dismiss = () => setHasUpdate(false);
