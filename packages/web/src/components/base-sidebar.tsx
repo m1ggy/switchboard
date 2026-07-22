@@ -602,6 +602,10 @@ function BaseSidebar() {
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
+
+          <p className="px-2 pb-1 text-center text-xs text-muted-foreground">
+            v{__APP_VERSION__}
+          </p>
         </SidebarFooter>
       </SidebarContent>
 
