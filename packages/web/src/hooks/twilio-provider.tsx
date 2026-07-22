@@ -60,26 +60,6 @@ function clearMediaSessionActive() {
   }
 }
 
-// Matches @twilio/voice-sdk's own browser check (twilio/util.js isChrome).
-// The SDK will only *retry* a failed ICE restart on these browsers — on
-// everything else (notably mobile Safari), it can't tell whether a restart
-// completed, so a single failed attempt hard-terminates the call with no
-// retry (see Call.prototype._onMediaFailure). Since we're the one forcing
-// the restart below, we must respect that same boundary or we risk turning
-// a recoverable one-way-audio glitch into an unrecoverable hangup.
-function isRestartSafeBrowser(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  const ua = navigator.userAgent || '';
-  const isCriOS = /CriOS/.test(ua);
-  const isHeadlessChrome = /HeadlessChrome/.test(ua);
-  const isGoogle =
-    typeof (window as unknown as { chrome?: unknown }).chrome !== 'undefined' &&
-    navigator.vendor === 'Google Inc.' &&
-    ua.indexOf('OPR') === -1 &&
-    ua.indexOf('Edge') === -1;
-  return isCriOS || isGoogle || isHeadlessChrome;
-}
-
 // The SDK's own low-bytes-received warning (from its internal StatsMonitor)
 // fires whenever inbound RTP audio effectively stops — the classic one-way-
 // audio symptom caused by a mobile carrier NAT rebinding the client's port
@@ -88,20 +68,20 @@ function isRestartSafeBrowser(): boolean {
 // NAT rebinding usually does NOT trigger — outbound keepalives keep
 // succeeding, so ICE never reports disconnected and the SDK does nothing.
 // We react to the warning directly and force the same ICE restart the SDK
-// would have run, rate-limited so repeated warnings don't hammer it, and
-// only on browsers where the SDK considers a restart retry-safe (see above).
+// would have run, rate-limited so repeated warnings don't hammer it.
+//
+// This used to be gated to Chrome-family browsers only, since the SDK can't
+// verify a restart completed on other engines (notably Safari) and a single
+// failed attempt can hard-terminate the call with no retry. But on iOS —
+// Safari's engine covers both the browser tab AND the installed PWA — that
+// meant one-way audio was never recovered at all: guaranteed-broken audio
+// for the rest of the call. That's worse than the small chance of an early
+// hangup, so the restart is now attempted on every browser.
 const ONE_WAY_AUDIO_WARNING = 'network-quality-low-bytes-received';
 const ICE_RESTART_COOLDOWN_MS = 15_000;
 const lastIceRestartAttempt = new WeakMap<Call, number>();
 
 function forceIceRestartForOneWayAudio(call: Call) {
-  if (!isRestartSafeBrowser()) {
-    console.warn(
-      '⚠️ One-way audio detected but skipping forced ICE restart on this browser (unsafe to retry per SDK)'
-    );
-    return;
-  }
-
   const now = Date.now();
   const last = lastIceRestartAttempt.get(call) ?? 0;
   if (now - last < ICE_RESTART_COOLDOWN_MS) return;
@@ -277,12 +257,7 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
         console.warn(`⚠️ ${mode} call warning:`, warningName);
 
         if (warningName === ONE_WAY_AUDIO_WARNING) {
-          // Only show "reconnecting" when we're actually attempting a fix —
-          // on browsers where a forced restart is unsafe, surfacing that
-          // banner would be misleading since nothing is being retried.
-          if (isRestartSafeBrowser()) {
-            setCallState((prev) => (prev === 'connected' ? 'reconnecting' : prev));
-          }
+          setCallState((prev) => (prev === 'connected' ? 'reconnecting' : prev));
           forceIceRestartForOneWayAudio(call);
         }
       });
