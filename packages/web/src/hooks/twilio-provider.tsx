@@ -60,15 +60,18 @@ function clearMediaSessionActive() {
   }
 }
 
-// The SDK's own low-bytes-received warning (from its internal StatsMonitor)
-// fires whenever inbound RTP audio effectively stops — the classic one-way-
-// audio symptom caused by a mobile carrier NAT rebinding the client's port
-// mid-call. The SDK only auto-recovers this if `iceConnectionState` also
-// reports 'disconnected' (see Call.prototype._onMediaFailure), which mobile
-// NAT rebinding usually does NOT trigger — outbound keepalives keep
+// The SDK's own low-bytes warnings (from its internal StatsMonitor) fire
+// whenever RTP audio effectively stops in either direction — the classic
+// one-way-audio symptom caused by a mobile carrier NAT rebinding the
+// client's port mid-call. This can hit inbound (low-bytes-received: callee
+// audio stops reaching us) or outbound (low-bytes-sent: our mic audio stops
+// reaching the callee) independently, since each direction's RTP can be
+// rebound separately. The SDK only auto-recovers this if `iceConnectionState`
+// also reports 'disconnected' (see Call.prototype._onMediaFailure), which
+// mobile NAT rebinding usually does NOT trigger — keepalives keep
 // succeeding, so ICE never reports disconnected and the SDK does nothing.
-// We react to the warning directly and force the same ICE restart the SDK
-// would have run, rate-limited so repeated warnings don't hammer it.
+// We react to either warning directly and force the same ICE restart the
+// SDK would have run, rate-limited so repeated warnings don't hammer it.
 //
 // This used to be gated to Chrome-family browsers only, since the SDK can't
 // verify a restart completed on other engines (notably Safari) and a single
@@ -77,7 +80,10 @@ function clearMediaSessionActive() {
 // meant one-way audio was never recovered at all: guaranteed-broken audio
 // for the rest of the call. That's worse than the small chance of an early
 // hangup, so the restart is now attempted on every browser.
-const ONE_WAY_AUDIO_WARNING = 'network-quality-low-bytes-received';
+const ONE_WAY_AUDIO_WARNINGS = new Set([
+  'network-quality-low-bytes-received',
+  'network-quality-low-bytes-sent',
+]);
 const ICE_RESTART_COOLDOWN_MS = 15_000;
 const lastIceRestartAttempt = new WeakMap<Call, number>();
 
@@ -256,7 +262,7 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
       call.addListener('warning', (warningName: string) => {
         console.warn(`⚠️ ${mode} call warning:`, warningName);
 
-        if (warningName === ONE_WAY_AUDIO_WARNING) {
+        if (ONE_WAY_AUDIO_WARNINGS.has(warningName)) {
           setCallState((prev) => (prev === 'connected' ? 'reconnecting' : prev));
           forceIceRestartForOneWayAudio(call);
         }
@@ -265,7 +271,7 @@ export const TwilioVoiceProvider = ({ children }: PropsWithChildren) => {
       call.addListener('warning-cleared', (warningName: string) => {
         console.log(`✅ ${mode} call warning cleared:`, warningName);
 
-        if (warningName === ONE_WAY_AUDIO_WARNING) {
+        if (ONE_WAY_AUDIO_WARNINGS.has(warningName)) {
           setCallState((prev) => (prev === 'reconnecting' ? 'connected' : prev));
         }
       });
