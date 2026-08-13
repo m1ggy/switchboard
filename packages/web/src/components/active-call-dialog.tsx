@@ -6,6 +6,7 @@ import { auth } from '@/lib/firebase';
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { Maximize2, Mic, MicOff, Minimize2, PhoneOff } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from './ui/button';
 import {
@@ -28,6 +29,7 @@ function ActiveCallDialog() {
   const { activeCall, callState, hangUp, setActiveCall } = useTwilioVoice();
   const [callDuration, setCallDuration] = useState(0);
   const [open, setOpen] = useState(false);
+  const [minimized, setMinimized] = useState(false);
   const [muted, setMuted] = useState(false);
   const { activeCompany, activeNumber } = useMainStore();
 
@@ -228,6 +230,7 @@ function ActiveCallDialog() {
         });
 
         setOpen(false);
+        setMinimized(false);
         setMuted(false);
         setCallDuration(0);
         setActiveCall(null);
@@ -265,6 +268,11 @@ function ActiveCallDialog() {
     const interval = setInterval(() => setCallDuration((p) => p + 1), 1000);
     return () => clearInterval(interval);
   }, [open]);
+
+  // Start each new call expanded, even if the previous one was minimized.
+  useEffect(() => {
+    if (activeCall) setMinimized(false);
+  }, [activeCall]);
 
   const toggleMute = () => {
     if (!activeCall) return;
@@ -416,6 +424,60 @@ function ActiveCallDialog() {
     }
   };
 
+  if (open && minimized) {
+    return (
+      <div
+        className={[
+          'fixed right-0 top-1/2 z-50 -translate-y-1/2',
+          'flex items-center gap-2 rounded-l-xl border border-r-0 bg-background',
+          'px-3 py-2 shadow-xl',
+        ].join(' ')}
+        style={{ marginRight: 'env(safe-area-inset-right)' }}
+      >
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0"
+          title="Expand call"
+          onClick={() => setMinimized(false)}
+        >
+          <Maximize2 className="h-4 w-4" />
+        </Button>
+
+        <div className="min-w-0 pr-1">
+          <div className="max-w-[9rem] truncate text-sm font-medium">
+            {callerId}
+          </div>
+          <div className="font-mono text-xs text-muted-foreground">
+            {callState === 'reconnecting'
+              ? 'Reconnecting…'
+              : formatDuration(callDuration)}
+          </div>
+        </div>
+
+        <Button
+          variant="secondary"
+          size="icon"
+          className="h-8 w-8 shrink-0"
+          title={muted ? 'Unmute' : 'Mute'}
+          onClick={toggleMute}
+        >
+          {muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+        </Button>
+
+        <Button
+          variant="destructive"
+          size="icon"
+          className="h-8 w-8 shrink-0"
+          title="End call"
+          onClick={hangupAndCloseDialog}
+        >
+          <PhoneOff className="h-4 w-4" />
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <Dialog open={open}>
       <DialogContent
@@ -434,9 +496,20 @@ function ActiveCallDialog() {
           ].join(' ')}
           style={{ paddingTop: 'max(env(safe-area-inset-top), 1rem)' }}
         >
-          <DialogTitle className="text-base sm:text-lg">
-            📞 Call In Progress
-          </DialogTitle>
+          <div className="flex items-start justify-between gap-2">
+            <DialogTitle className="text-base sm:text-lg">
+              📞 Call In Progress
+            </DialogTitle>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0"
+              title="Minimize call"
+              onClick={() => setMinimized(true)}
+            >
+              <Minimize2 className="h-4 w-4" />
+            </Button>
+          </div>
 
           <div className="mt-1 text-sm text-muted-foreground">
             Talking to: <span className="font-medium">{callerId}</span>
