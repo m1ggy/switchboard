@@ -9,7 +9,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useTwilioVoice } from '@/hooks/twilio-provider';
-import { useMemo, useState } from 'react';
+import { Maximize2, Minimize2, Phone, PhoneOff } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 
 import useMainStore from '@/lib/store';
 import { useTRPC } from '@/lib/trpc';
@@ -44,6 +45,14 @@ export function IncomingCallDialog() {
   });
 
   const open = callState === 'incoming' && !!incomingCall && !activeCall;
+
+  const [minimized, setMinimized] = useState(false);
+
+  // Always ring expanded for a new call, even if the previous one (rare, but
+  // possible if rejected/missed while minimized) left it minimized.
+  useEffect(() => {
+    if (incomingCall) setMinimized(false);
+  }, [incomingCall]);
 
   // Normalize/clean the From number (e.g., strip "client:")
   const normalizedFrom = useMemo(() => {
@@ -137,6 +146,55 @@ export function IncomingCallDialog() {
     }
   };
 
+  if (open && minimized) {
+    return (
+      <div
+        className={[
+          'fixed right-0 top-1/2 z-50 -translate-y-1/2',
+          'flex items-center gap-2 rounded-l-xl border border-r-0 bg-background',
+          'px-3 py-2 shadow-xl',
+        ].join(' ')}
+        style={{ marginRight: 'env(safe-area-inset-right)' }}
+      >
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0"
+          title="Expand call"
+          onClick={() => setMinimized(false)}
+        >
+          <Maximize2 className="h-4 w-4" />
+        </Button>
+
+        <div className="min-w-0 pr-1">
+          <div className="max-w-[9rem] truncate text-sm font-medium">
+            {fromLabel}
+          </div>
+          <div className="text-xs text-muted-foreground">Incoming call…</div>
+        </div>
+
+        <Button
+          className="h-8 w-8 shrink-0"
+          size="icon"
+          title="Accept"
+          onClick={acceptIncoming}
+        >
+          <Phone className="h-4 w-4" />
+        </Button>
+
+        <Button
+          variant="destructive"
+          size="icon"
+          className="h-8 w-8 shrink-0"
+          title="Reject"
+          onClick={rejectIncoming}
+        >
+          <PhoneOff className="h-4 w-4" />
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <Dialog open={open}>
       <DialogContent
@@ -156,9 +214,20 @@ export function IncomingCallDialog() {
           ].join(' ')}
           style={{ paddingTop: 'max(env(safe-area-inset-top), 1rem)' }}
         >
-          <DialogTitle className="text-base sm:text-lg">
-            📞 Incoming Call
-          </DialogTitle>
+          <div className="flex items-start justify-between gap-2">
+            <DialogTitle className="text-base sm:text-lg">
+              📞 Incoming Call
+            </DialogTitle>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0"
+              title="Minimize call"
+              onClick={() => setMinimized(true)}
+            >
+              <Minimize2 className="h-4 w-4" />
+            </Button>
+          </div>
           <p className="text-muted-foreground text-sm mt-1">
             From: <span className="font-medium">{fromLabel}</span>
           </p>
