@@ -189,6 +189,41 @@ export class TwilioClient {
     return await this.client.incomingPhoneNumbers(sid).remove();
   }
 
+  /**
+   * Point an already-owned Twilio number at this app's webhooks.
+   * Use for numbers purchased outside `purchaseNumber` (e.g. bought directly
+   * in the Twilio console, or ported in).
+   * @param phoneNumber E.164 number already present on the Twilio account
+   * @throws if the number isn't found on the account
+   */
+  async configureExistingNumber(
+    phoneNumber: string,
+    options?: {
+      voiceUrl?: string;
+      smsUrl?: string;
+      friendlyName?: string;
+    }
+  ): Promise<IncomingPhoneNumberInstance> {
+    const matches = await this.client.incomingPhoneNumbers.list({
+      phoneNumber,
+      limit: 1,
+    });
+
+    const existing = matches[0];
+    if (!existing) {
+      throw new Error(
+        `No Twilio incoming phone number found matching ${phoneNumber}. ` +
+          `Make sure it's purchased on this Twilio account (check TWILIO_ACCOUNT_SID).`
+      );
+    }
+
+    return await this.client.incomingPhoneNumbers(existing.sid).update({
+      voiceUrl: options?.voiceUrl,
+      smsUrl: options?.smsUrl,
+      friendlyName: options?.friendlyName,
+    });
+  }
+
   generateVoiceToken({
     apiKeySid,
     apiKeySecret,

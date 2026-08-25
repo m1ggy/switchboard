@@ -11,7 +11,9 @@
     "lint": "eslint src --ext .ts",
     "migrate": "ts-node src/scripts/runMigrations.ts",
     "migrate:down": "ts-node src/scripts/runMigrations.ts down",
-    "migrate:up": "ts-node src/scripts/runMigrations.ts up"
+    "migrate:up": "ts-node src/scripts/runMigrations.ts up",
+    "test:e2e": "tsx -r tsconfig-paths/register src/scripts/test-reassurance-e2e.ts",
+    "create-account": "tsx -r tsconfig-paths/register src/scripts/createAccount.ts"
   },
   "keywords": [],
   "author": "",
@@ -57,12 +59,14 @@
     "@types/node": "^22.15.14",
     "@types/pg": "^8.15.0",
     "@types/web-push": "^3.6.4",
+    "@types/ws": "^8.18.1",
     "node-pg-migrate": "^7.9.1",
     "pino-pretty": "^13.0.0",
     "ts-node-dev": "^2.0.0",
     "tsconfig-paths": "^4.2.0",
     "tsup": "^8.4.0",
     "tsx": "^4.19.4",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "ws": "^8.18.3"
   }
 }
