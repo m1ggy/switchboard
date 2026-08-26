@@ -29,6 +29,18 @@ jobs:
           API_DOMAIN=api.$DOMAIN
           REPO_URL=https://github.com/${{ github.repository }}.git
 
+          # === ENSURE SWAP (box has 1GB RAM; vite/tsup builds OOM without it) ===
+          if ! sudo swapon --show | grep -q '/swapfile'; then
+            echo "No active /swapfile — creating 2G swap..."
+            sudo fallocate -l 2G /swapfile
+            sudo chmod 600 /swapfile
+            sudo mkswap /swapfile
+            sudo swapon /swapfile
+            grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+          else
+            echo "Swap already active, skipping."
+          fi
+
           # === INSTALL NODE, PNPM, PM2 ===
           curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
           sudo apt-get install -y nodejs
