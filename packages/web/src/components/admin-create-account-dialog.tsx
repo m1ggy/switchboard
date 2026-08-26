@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Loader2, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, Loader2, Search, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -36,11 +36,13 @@ import { useTRPC } from '@/lib/trpc';
  * required. Server-side gated to a single allowed email (superAdminProcedure)
  * — this dialog should only ever be rendered for that same email; the
  * client-side check is UX only, not the security boundary.
+ *
+ * Owner is looked up by email (Firebase Auth) rather than typed as a raw uid.
  */
 
 const Schema = z.object({
   companyName: z.string().min(2, 'Company name must be at least 2 characters'),
-  userId: z.string().min(1, "Owner's Firebase user ID is required"),
+  ownerEmail: z.string().email("Owner's email is required"),
   number: z
     .string()
     .min(1, 'Phone number is required')
@@ -51,6 +53,8 @@ const Schema = z.object({
 
 type FormValues = z.infer<typeof Schema>;
 
+type ResolvedOwner = { uid: string; email: string; displayName: string | null };
+
 export default function AdminCreateAccountDialog() {
   const trpc = useTRPC();
   const qc = useQueryClient();
@@ -58,17 +62,42 @@ export default function AdminCreateAccountDialog() {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [resolvedOwner, setResolvedOwner] = useState<ResolvedOwner | null>(null);
+  const [lookupError, setLookupError] = useState<string | null>(null);
+  const [lookupPending, setLookupPending] = useState(false);
+
   const form = useForm<FormValues>({
     resolver: zodResolver(Schema),
     defaultValues: {
       companyName: '',
-      userId: '',
+      ownerEmail: '',
       number: '',
       label: '',
       wireWebhooks: true,
     },
     mode: 'onChange',
   });
+
+  async function handleLookup() {
+    const email = form.getValues('ownerEmail');
+    const valid = await form.trigger('ownerEmail');
+    if (!valid) return;
+
+    setLookupError(null);
+    setResolvedOwner(null);
+    setLookupPending(true);
+
+    try {
+      const result = await qc.fetchQuery(
+        trpc.companies.lookupUserByEmail.queryOptions({ email })
+      );
+      setResolvedOwner(result);
+    } catch (e: any) {
+      setLookupError(e?.message || 'Could not find that user.');
+    } finally {
+      setLookupPending(false);
+    }
+  }
 
   const { mutateAsync, isPending } = useMutation(
     trpc.companies.createAccountForUser.mutationOptions()
@@ -77,10 +106,15 @@ export default function AdminCreateAccountDialog() {
   async function onSubmit(values: FormValues) {
     setError(null);
 
+    if (!resolvedOwner) {
+      setError("Look up the owner's email first.");
+      return;
+    }
+
     try {
       await mutateAsync({
         companyName: values.companyName.trim(),
-        userId: values.userId.trim(),
+        userId: resolvedOwner.uid,
         number: values.number.trim(),
         label: values.label?.trim() || undefined,
         wireWebhooks: values.wireWebhooks,
@@ -91,6 +125,7 @@ export default function AdminCreateAccountDialog() {
       });
 
       form.reset();
+      setResolvedOwner(null);
       setOpen(false);
     } catch (e: any) {
       setError(e?.message || 'Failed to create account. Please try again.');
@@ -138,14 +173,52 @@ export default function AdminCreateAccountDialog() {
 
                 <FormField
                   control={form.control}
-                  name="userId"
+                  name="ownerEmail"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Owner's Firebase user ID</FormLabel>
-                      <FormControl>
-                        <Input placeholder="e.g. fEK3n...uid" {...field} />
-                      </FormControl>
+                      <FormLabel>Owner's email</FormLabel>
+                      <div className="flex gap-2">
+                        <FormControl>
+                          <Input
+                            type="email"
+                            placeholder="owner@example.com"
+                            {...field}
+                            onChange={(e) => {
+                              field.onChange(e);
+                              setResolvedOwner(null);
+                              setLookupError(null);
+                            }}
+                          />
+                        </FormControl>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={handleLookup}
+                          disabled={lookupPending || !field.value}
+                        >
+                          {lookupPending ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Search className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
                       <FormMessage />
+
+                      {resolvedOwner ? (
+                        <div className="flex items-center gap-1.5 text-xs text-emerald-600">
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          Found{resolvedOwner.displayName ? ` ${resolvedOwner.displayName}` : ''}{' '}
+                          ({resolvedOwner.uid})
+                        </div>
+                      ) : lookupError ? (
+                        <div className="text-xs text-red-600">{lookupError}</div>
+                      ) : (
+                        <div className="text-xs text-muted-foreground">
+                          Look up the account before creating — the search
+                          button resolves it to a Firebase user ID.
+                        </div>
+                      )}
                     </FormItem>
                   )}
                 />
@@ -211,7 +284,7 @@ export default function AdminCreateAccountDialog() {
                   </Button>
                   <Button
                     type="submit"
-                    disabled={!form.formState.isValid || isPending}
+                    disabled={!form.formState.isValid || !resolvedOwner || isPending}
                   >
                     {isPending && (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />

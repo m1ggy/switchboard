@@ -1,5 +1,6 @@
 import { UserCompaniesRepository } from '@/db/repositories/companies';
 import { NumbersRepository } from '@/db/repositories/numbers';
+import { auth } from '@/lib/firebase';
 import { TwilioClient } from '@/lib/twilio';
 import type { Company, NumberEntry } from '@/types/db';
 import { randomUUID } from 'crypto';
@@ -49,6 +50,26 @@ export const companiesRouter = t.router({
         number: input.number,
       });
       return { ok: true };
+    }),
+
+  // Admin-only: resolve a target user's email to their Firebase uid, so the
+  // admin UI can take an email instead of a raw uid.
+  lookupUserByEmail: superAdminProcedure
+    .input(z.object({ email: z.string().email() }))
+    .query(async ({ input }) => {
+      try {
+        const record = await auth.getUserByEmail(input.email);
+        return {
+          uid: record.uid,
+          email: record.email ?? input.email,
+          displayName: record.displayName ?? null,
+        };
+      } catch (err: any) {
+        if (err?.code === 'auth/user-not-found') {
+          throw new Error(`No account found for ${input.email}.`);
+        }
+        throw err;
+      }
     }),
 
   // Admin-only: provision an account for ANY user, on an already-purchased
