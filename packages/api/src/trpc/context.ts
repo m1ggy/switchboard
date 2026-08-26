@@ -63,3 +63,17 @@ export const paidProcedure = protectedProcedure.use(async ({ ctx, next }) => {
 
   throw new Error(`SUBSCRIPTION_EXPIRED:${reason}`);
 });
+
+// Internal tool gate: only this exact account may use admin-only endpoints
+// (e.g. provisioning accounts for other users, no payment required).
+const SUPER_ADMIN_EMAILS = ['ctkadvisorsinc@gmail.com'];
+
+export const superAdminProcedure = protectedProcedure.use(
+  async ({ ctx, next }) => {
+    const email = ctx.user?.email?.toLowerCase();
+    if (!email || !SUPER_ADMIN_EMAILS.includes(email)) {
+      throw new Error('UNAUTHORIZED');
+    }
+    return next();
+  }
+);

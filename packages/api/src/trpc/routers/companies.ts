@@ -4,7 +4,7 @@ import { TwilioClient } from '@/lib/twilio';
 import type { Company, NumberEntry } from '@/types/db';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
-import { paidProcedure } from '../context';
+import { paidProcedure, superAdminProcedure } from '../context';
 import { protectedProcedure, t } from '../trpc';
 
 const twilio = new TwilioClient(
@@ -49,5 +49,52 @@ export const companiesRouter = t.router({
         number: input.number,
       });
       return { ok: true };
+    }),
+
+  // Admin-only: provision an account for ANY user, on an already-purchased
+  // number, with no payment required. Gated to a single allowed email
+  // server-side (superAdminProcedure) — do not widen without deliberate ask.
+  createAccountForUser: superAdminProcedure
+    .input(
+      z.object({
+        companyName: z.string().min(1),
+        userId: z.string().min(1), // target owner's Firebase uid
+        number: z.string().min(1), // already purchased on this Twilio account
+        label: z.string().optional(),
+        wireWebhooks: z.boolean().default(true),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const existing = await NumbersRepository.findByNumber(input.number);
+      if (existing) {
+        throw new Error(`Number ${input.number} is already assigned to a company.`);
+      }
+
+      if (input.wireWebhooks) {
+        await twilio.configureExistingNumber(input.number, {
+          voiceUrl: `${process.env.SERVER_DOMAIN}/twilio/voice`,
+          smsUrl: `${process.env.SERVER_DOMAIN}/twilio/sms`,
+          friendlyName: input.companyName,
+        });
+      }
+
+      const dbCompany = await UserCompaniesRepository.createCompany({
+        companyName: input.companyName,
+      });
+
+      await UserCompaniesRepository.create({
+        userId: input.userId,
+        companyId: dbCompany.id,
+      });
+
+      const dbNumber = await NumbersRepository.create({
+        id: randomUUID(),
+        companyId: dbCompany.id,
+        number: input.number,
+        createdAt: new Date(),
+        label: input.label || 'Main line',
+      });
+
+      return { ok: true, company: dbCompany, number: dbNumber };
     }),
 });

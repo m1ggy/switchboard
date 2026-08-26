@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
+import AdminCreateAccountDialog from '@/components/admin-create-account-dialog';
 import CompanySettingsDialog from '@/components/company-settings-dialog';
 import CreateCompanyDialog from '@/components/create-company-dialog';
 import { Button } from '@/components/ui/button';
@@ -259,6 +260,12 @@ function Settings() {
   const isAdmin = useMemo(
     () => userInfo?.stripe_subscription_id === 'ADMIN',
     [userInfo?.stripe_subscription_id]
+  );
+
+  // Client-side visibility only — server enforces this via superAdminProcedure.
+  const isSuperAdmin = useMemo(
+    () => userInfo?.email?.toLowerCase() === 'ctkadvisorsinc@gmail.com',
+    [userInfo?.email]
   );
 
   // Fetch billing summary ONLY for non-admins
@@ -866,8 +873,9 @@ function Settings() {
                 </div>
               )}
 
-              <div className="pt-2">
+              <div className="pt-2 flex flex-wrap gap-2">
                 {canAddCompany ? <CreateCompanyDialog /> : null}
+                {isSuperAdmin ? <AdminCreateAccountDialog /> : null}
               </div>
             </>
           )}
