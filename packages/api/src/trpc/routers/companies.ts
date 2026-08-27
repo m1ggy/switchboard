@@ -182,6 +182,10 @@ export const companiesRouter = t.router({
           first_name: input.firstName,
           last_name: input.lastName,
           user_id: firebaseUser.uid,
+          // Admin flow already provisions company + number below — nothing
+          // left for the onboarding wizard to collect. Without this the new
+          // user gets redirected to /onboarding on first login.
+          onboarding_completed: true,
         });
 
         const { company, number } = await provisionCompanyAndNumber({
@@ -210,5 +214,27 @@ export const companiesRouter = t.router({
         await auth.deleteUser(firebaseUser.uid).catch(() => {});
         throw err;
       }
+    }),
+
+  // Admin-only: regenerate a password-setup link for an account whose
+  // original link was never captured (e.g. admin closed the dialog before
+  // copying it). Old link is invalidated once a new one is issued.
+  resendPasswordSetupLink: superAdminProcedure
+    .input(z.object({ email: z.string().email() }))
+    .mutation(async ({ input }) => {
+      try {
+        await auth.getUserByEmail(input.email);
+      } catch (err: any) {
+        if (err?.code === 'auth/user-not-found') {
+          throw new Error(`No account found for ${input.email}.`);
+        }
+        throw err;
+      }
+
+      const passwordSetupLink = await auth.generatePasswordResetLink(
+        input.email
+      );
+
+      return { ok: true, email: input.email, passwordSetupLink };
     }),
 });
