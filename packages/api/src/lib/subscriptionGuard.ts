@@ -11,6 +11,11 @@ export type FrozenReason =
   | 'INCOMPLETE_EXPIRED'
   | 'UNPAID_ENDED';
 
+/** Admin-managed kill switch, independent of billing/expiry (users.is_active). */
+export function isAccountDisabled(user?: { is_active?: boolean | null } | null): boolean {
+  return user?.is_active === false;
+}
+
 export function isExpiredFromDb(user: {
   stripe_customer_id?: string | null;
   stripe_subscription_id?: string | null;

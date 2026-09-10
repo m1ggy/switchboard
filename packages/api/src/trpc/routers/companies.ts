@@ -186,6 +186,11 @@ export const companiesRouter = t.router({
           // left for the onboarding wizard to collect. Without this the new
           // user gets redirected to /onboarding on first login.
           onboarding_completed: true,
+          // Permanent account: bypasses the billing/expiry gate for good
+          // (see paidProcedure / subscriptionGuard). It stays permanent
+          // until an admin disables it via setAccountActive below —
+          // disabling does not touch this flag, it flips is_active instead.
+          stripe_customer_id: 'ADMIN',
         });
 
         const { company, number } = await provisionCompanyAndNumber({
@@ -236,5 +241,45 @@ export const companiesRouter = t.router({
       );
 
       return { ok: true, email: input.email, passwordSetupLink };
+    }),
+
+  // Admin-only: list accounts this tool has provisioned (permanent,
+  // no billing), so the admin can find and disable/re-enable one later.
+  listAdminAccounts: superAdminProcedure.query(async () => {
+    const users = await UsersRepository.findAdminCreated();
+
+    return Promise.all(
+      users.map(async (u) => ({
+        uid: u.user_id,
+        email: u.email,
+        firstName: u.first_name,
+        lastName: u.last_name,
+        isActive: u.is_active,
+        createdAt: u.added_at,
+        companies: await UserCompaniesRepository.findCompaniesByUserId(
+          u.user_id
+        ),
+      }))
+    );
+  }),
+
+  // Admin-only: enable/disable an admin-provisioned account. Disabling
+  // blocks API access immediately (users.is_active, checked on every
+  // request) and blocks future sign-ins (Firebase `disabled`); it never
+  // touches the account's company/number/message data, so re-enabling
+  // restores it exactly as it was.
+  setAccountActive: superAdminProcedure
+    .input(z.object({ userId: z.string().min(1), isActive: z.boolean() }))
+    .mutation(async ({ input }) => {
+      const updated = await UsersRepository.update(input.userId, {
+        is_active: input.isActive,
+      });
+      if (!updated) {
+        throw new Error('No admin-created account found for that user.');
+      }
+
+      await auth.updateUser(input.userId, { disabled: !input.isActive });
+
+      return { ok: true, userId: input.userId, isActive: input.isActive };
     }),
 });

@@ -3,6 +3,7 @@ import { UsersRepository } from '@/db/repositories/users';
 import { auth } from '@/lib/firebase';
 import {
   FrozenReason,
+  isAccountDisabled,
   isExpiredFromDb,
   isExpiredFromStripe,
 } from '@/lib/subscriptionGuard';
@@ -24,6 +25,13 @@ export async function authMiddleware(
     request.user = decoded;
   } catch {
     return reply.status(401).send({ error: 'Unauthorized - Invalid Token' });
+  }
+
+  // Admin-managed kill switch: blocks a disabled account even on a still-valid
+  // token, independent of billing/expiry.
+  const userInfo = await UsersRepository.findByFirebaseUid(request.user!.uid);
+  if (isAccountDisabled(userInfo)) {
+    return reply.status(403).send({ error: 'Account disabled' });
   }
 }
 

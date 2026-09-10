@@ -1,7 +1,11 @@
 // src/server/trpc/context.ts
 import { UsersRepository } from '@/db/repositories/users';
 import { auth } from '@/lib/firebase';
-import { isExpiredFromDb, isExpiredFromStripe } from '@/lib/subscriptionGuard';
+import {
+  isAccountDisabled,
+  isExpiredFromDb,
+  isExpiredFromStripe,
+} from '@/lib/subscriptionGuard';
 import { initTRPC } from '@trpc/server';
 import * as trpcFastify from '@trpc/server/adapters/fastify';
 import type { DecodedIdToken } from 'firebase-admin/auth';
@@ -37,6 +41,9 @@ export const publicProcedure = t.procedure;
 export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
   if (!ctx.user) {
     throw new Error('UNAUTHORIZED');
+  }
+  if (isAccountDisabled(ctx.userInfo)) {
+    throw new Error('ACCOUNT_DISABLED');
   }
   return next();
 });

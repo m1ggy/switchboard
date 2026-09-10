@@ -60,6 +60,17 @@ export const UsersRepository = {
     return res.rows[0] || null;
   },
 
+  /**
+   * Accounts provisioned by the admin create-account tool (permanent,
+   * bypasses billing). Used to power the admin's account management list.
+   */
+  async findAdminCreated(): Promise<User[]> {
+    const res = await pool.query<User>(
+      `SELECT * FROM users WHERE stripe_customer_id = 'ADMIN' ORDER BY added_at DESC`
+    );
+    return res.rows;
+  },
+
   async findByStripeCustomerId(stripeCustomerId: string): Promise<User | null> {
     const res = await pool.query<User>(
       `SELECT * FROM users WHERE stripe_customer_id = $1`,

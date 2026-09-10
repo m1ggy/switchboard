@@ -11,6 +11,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 
 import AdminCreateAccountDialog from '@/components/admin-create-account-dialog';
+import AdminManageAccountsDialog from '@/components/admin-manage-accounts-dialog';
 import CompanySettingsDialog from '@/components/company-settings-dialog';
 import CreateCompanyDialog from '@/components/create-company-dialog';
 import { Button } from '@/components/ui/button';
@@ -876,6 +877,7 @@ function Settings() {
               <div className="pt-2 flex flex-wrap gap-2">
                 {canAddCompany ? <CreateCompanyDialog /> : null}
                 {isSuperAdmin ? <AdminCreateAccountDialog /> : null}
+                {isSuperAdmin ? <AdminManageAccountsDialog /> : null}
               </div>
             </>
           )}

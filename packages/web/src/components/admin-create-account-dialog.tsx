@@ -234,7 +234,9 @@ export default function AdminCreateAccountDialog() {
           <DialogTitle>Create account</DialogTitle>
           <DialogDescription>
             Provisions a company and attaches an already-purchased number. No
-            payment required.
+            payment required. A brand-new account (the "New user" tab) is
+            permanent and never expires — manage or disable it later from
+            "Manage accounts (admin)".
           </DialogDescription>
         </DialogHeader>
 
