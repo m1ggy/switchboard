@@ -68,6 +68,25 @@ type ChatBubbleProps = {
   reactions?: UIReaction[];
 };
 
+// Image types every major browser can render in an <img>.
+const BROWSER_IMAGE_TYPES = [
+  'image/jpeg',
+  'image/jpg',
+  'image/pjpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'image/bmp',
+  'image/avif',
+];
+
+function isBrowserImage(contentType?: string) {
+  if (!contentType) return false;
+  return BROWSER_IMAGE_TYPES.includes(
+    contentType.split(';')[0].trim().toLowerCase()
+  );
+}
+
 function secondsToMMSS(s: number) {
   const safe = Number.isFinite(s) && s >= 0 ? s : 0;
   const mm = Math.floor(safe / 60)
@@ -338,11 +357,12 @@ function ChatBubble({
   const reactionDock = isOutbound ? 'right-3' : 'left-3';
 
   const imageAttachments =
-    item.attachments?.filter((a) => a.content_type?.startsWith('image/')) || [];
-  // Everything that isn't an image gets a download chip (temp/optimistic items have no URL yet).
+    item.attachments?.filter((a) => isBrowserImage(a.content_type)) || [];
+  // Everything browsers can't show inline (incl. HEIC/TIFF photos) gets a download chip.
+  // Temp/optimistic items have no URL yet, so skip those.
   const fileAttachments =
     item.attachments?.filter(
-      (a) => a.media_url && !a.content_type?.startsWith('image/')
+      (a) => a.media_url && !isBrowserImage(a.content_type)
     ) || [];
   const previewImages = imageAttachments.slice(0, 3);
   const remainingCount = imageAttachments.length - 3;
