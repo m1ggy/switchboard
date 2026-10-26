@@ -37,6 +37,12 @@ export const TWILIO_ALLOWED_MIME_TYPES = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 ];
 
+export function isTwilioSupportedMime(contentType: string): boolean {
+  return TWILIO_ALLOWED_MIME_TYPES.includes(
+    contentType.split(';')[0].trim().toLowerCase()
+  );
+}
+
 function buildCacheKey(
   prefix: string,
   params: Record<string, string | number | boolean | undefined>

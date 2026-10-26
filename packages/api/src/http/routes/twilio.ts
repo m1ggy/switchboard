@@ -22,6 +22,7 @@ import { callQueueManager } from '@/lib/queue';
 import { sendCallAlertToSlack } from '@/lib/slack';
 import { activeCallStore, presenceStore } from '@/lib/store';
 import { TwilioClient } from '@/lib/twilio';
+import { getExtensionForMime } from '@/lib/utils';
 import axios from 'axios';
 import crypto, { randomUUID } from 'crypto';
 import { FastifyReply, FastifyRequest, type FastifyInstance } from 'fastify';
@@ -929,29 +930,42 @@ async function routes(app: FastifyInstance) {
 
         if (!mediaUrl || !contentType) continue;
 
-        const mediaResp = await axios.get(mediaUrl, {
-          responseType: 'arraybuffer',
-          auth: {
-            username: process.env.TWILIO_ACCOUNT_SID as string,
-            password: process.env.TWILIO_AUTH_TOKEN as string,
-          },
-        });
+        // One bad attachment must not drop the others or the notification.
+        try {
+          const mediaResp = await axios.get(mediaUrl, {
+            responseType: 'arraybuffer',
+            auth: {
+              username: process.env.TWILIO_ACCOUNT_SID as string,
+              password: process.env.TWILIO_AUTH_TOKEN as string,
+            },
+            timeout: 30_000,
+            maxRedirects: 5,
+          });
 
-        const buffer = Buffer.from(mediaResp.data);
-        const extension = contentType.split('/')[1];
-        const gcsFilename = `${crypto.randomUUID()}.${extension}`;
+          const buffer = Buffer.from(mediaResp.data);
+          const gcsFilename = `${crypto.randomUUID()}.${getExtensionForMime(contentType)}`;
+          const previewable = /^(image|video|audio)\//i.test(contentType);
 
-        const gcsUrl = await uploadAttachmentBuffer(buffer, gcsFilename);
+          const gcsUrl = await uploadAttachmentBuffer(buffer, gcsFilename, {
+            contentType,
+            downloadAs: previewable ? undefined : gcsFilename,
+          });
 
-        uploads.push(
-          MediaAttachmentsRepository.create({
-            id: crypto.randomUUID(),
-            message_id: dbMessage.id,
-            media_url: gcsUrl,
-            content_type: contentType,
-            file_name: gcsFilename,
-          })
-        );
+          uploads.push(
+            MediaAttachmentsRepository.create({
+              id: crypto.randomUUID(),
+              message_id: dbMessage.id,
+              media_url: gcsUrl,
+              content_type: contentType,
+              file_name: gcsFilename,
+            })
+          );
+        } catch (err) {
+          console.error(
+            `❌ Failed to store inbound MMS media ${i} (${contentType}) for ${MessageSid}:`,
+            err
+          );
+        }
       }
 
       await Promise.all(uploads);

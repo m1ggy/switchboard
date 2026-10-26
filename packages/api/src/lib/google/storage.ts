@@ -48,7 +48,7 @@ export function getPublicUrl(fileName: string): string {
 export async function uploadAttachmentBuffer(
   buffer: Buffer,
   originalName: string,
-  opts?: { contentType?: string }
+  opts?: { contentType?: string; downloadAs?: string }
 ): Promise<string> {
   const bucket = getBucket();
   const ext = path.extname(originalName);
@@ -59,6 +59,12 @@ export async function uploadAttachmentBuffer(
     resumable: false,
     contentType: opts?.contentType ?? getMimeType(originalName),
     predefinedAcl: 'publicRead',
+    // Force browsers to download instead of trying to render the file.
+    ...(opts?.downloadAs && {
+      metadata: {
+        contentDisposition: `attachment; filename="${opts.downloadAs.replace(/["\\\r\n]/g, '_')}"`,
+      },
+    }),
   });
 
   return `https://storage.googleapis.com/${BUCKET_NAME}/${uniqueName}`;

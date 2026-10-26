@@ -352,7 +352,6 @@ function SendMessageDialog() {
                       ref={fileInputRef}
                       id="file-upload"
                       type="file"
-                      accept="image/*,video/3gpp"
                       multiple
                       className="hidden"
                       onChange={(e) => {

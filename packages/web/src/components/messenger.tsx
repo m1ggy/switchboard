@@ -718,7 +718,6 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
             ref={inputRef}
             id="file-upload"
             type="file"
-            accept="image/*,video/*"
             multiple
             className="hidden"
             onChange={(e) => {

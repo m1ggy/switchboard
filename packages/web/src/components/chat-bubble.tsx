@@ -339,6 +339,11 @@ function ChatBubble({
 
   const imageAttachments =
     item.attachments?.filter((a) => a.content_type?.startsWith('image/')) || [];
+  // Everything that isn't an image gets a download chip (temp/optimistic items have no URL yet).
+  const fileAttachments =
+    item.attachments?.filter(
+      (a) => a.media_url && !a.content_type?.startsWith('image/')
+    ) || [];
   const previewImages = imageAttachments.slice(0, 3);
   const remainingCount = imageAttachments.length - 3;
 
@@ -422,6 +427,45 @@ function ChatBubble({
                     +{remainingCount} more
                   </div>
                 )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {fileAttachments.length > 0 && (
+          <div className="flex flex-col gap-2 mt-1 mb-2">
+            {fileAttachments.map((file) => (
+              <div
+                key={file.id}
+                className={`flex items-center gap-2 p-2 rounded-md ${
+                  isOutbound ? 'bg-white/10' : 'bg-gray-100'
+                }`}
+              >
+                <FileText className="w-4 h-4 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate" title={file.file_name}>
+                    {file.file_name}
+                  </p>
+                  <p className="text-xs opacity-75 truncate">
+                    {file.content_type || 'File'}
+                  </p>
+                </div>
+                <a
+                  href={file.media_url}
+                  download={file.file_name}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`inline-flex items-center gap-1 px-2 py-1 text-xs rounded-md shrink-0 transition-colors ${
+                    isOutbound
+                      ? 'bg-white/20 hover:bg-white/30'
+                      : 'bg-white hover:bg-gray-50 ring-1 ring-black/10'
+                  }`}
+                  title={`Download ${file.file_name}`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download
+                </a>
               </div>
             ))}
           </div>

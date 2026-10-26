@@ -7,7 +7,7 @@ import { UsageRepository } from '@/db/repositories/usage';
 import { UsersRepository } from '@/db/repositories/users';
 import { uploadAttachmentBuffer } from '@/lib/google/storage';
 import { activeCallStore, presenceStore } from '@/lib/store';
-import { TWILIO_ALLOWED_MIME_TYPES, TwilioClient } from '@/lib/twilio';
+import { isTwilioSupportedMime, TwilioClient } from '@/lib/twilio';
 import { getMimeType } from '@/lib/utils';
 import crypto, { randomUUID } from 'crypto';
 import dotenv from 'dotenv';
@@ -116,26 +116,40 @@ export const twilioRouter = router({
           url: string;
           contentType: string;
           filename: string;
+          // false = Twilio can't send it as MMS media; it goes out as a link instead
+          mmsSupported: boolean;
         }[] = [];
 
         if (input.attachments?.length) {
           for (const file of input.attachments) {
             const contentType = getMimeType(file.filename);
-
-            if (!TWILIO_ALLOWED_MIME_TYPES.includes(contentType)) {
-              throw new Error(`Unsupported file type: ${contentType}`);
-            }
+            const mmsSupported = isTwilioSupportedMime(contentType);
 
             const buffer = Buffer.from(file.base64, 'base64');
-            const url = await uploadAttachmentBuffer(buffer, file.filename);
+            const url = await uploadAttachmentBuffer(buffer, file.filename, {
+              contentType,
+              downloadAs: mmsSupported ? undefined : file.filename,
+            });
 
             mediaResults.push({
               url,
               contentType,
               filename: file.filename,
+              mmsSupported,
             });
           }
         }
+
+        const mmsMedia = mediaResults.filter((m) => m.mmsSupported);
+        const linkMedia = mediaResults.filter((m) => !m.mmsSupported);
+
+        // Unsupported files can't ride along as MMS media, so send download links in the text.
+        const outboundBody = linkMedia.length
+          ? [
+              input.body,
+              ...linkMedia.map((m) => `📎 ${m.filename}: ${m.url}`),
+            ].join('\n\n')
+          : input.body;
 
         const twilz = new TwilioClient(
           process.env.TWILIO_ACCOUNT_SID as string,
@@ -145,8 +159,8 @@ export const twilioRouter = router({
 
         const message = await twilz.sendSms(
           contact.number,
-          input.body,
-          mediaResults.map((m) => m.url)
+          outboundBody,
+          mmsMedia.map((m) => m.url)
         );
 
         // Save message in DB
@@ -186,7 +200,7 @@ export const twilioRouter = router({
           subscription_id: user?.stripe_subscription_id as string,
           user_id: ctx.user.uid,
           amount: 1,
-          type: mediaResults.length > 0 ? 'mms' : 'sms',
+          type: mmsMedia.length > 0 ? 'mms' : 'sms',
         });
         return await MessagesRepository.findById(dbMessage.id);
       } catch (error) {

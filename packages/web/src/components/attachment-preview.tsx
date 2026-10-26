@@ -1,6 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Loader2, X } from 'lucide-react';
+import { FileText, Loader2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 type Props = {
@@ -9,8 +9,12 @@ type Props = {
 };
 
 function AttachmentPreview({ file, onClose }: Props) {
+  const isImage = file.type.startsWith('image/');
+  const isVideo = file.type.startsWith('video/');
+
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  // Only images/videos fire a load event; other files have nothing to wait for.
+  const [isLoading, setIsLoading] = useState(isImage || isVideo);
 
   useEffect(() => {
     const url = URL.createObjectURL(file);
@@ -20,9 +24,6 @@ function AttachmentPreview({ file, onClose }: Props) {
       URL.revokeObjectURL(url);
     };
   }, [file]);
-
-  const isImage = file.type.startsWith('image/');
-  const isVideo = file.type.startsWith('video/');
 
   const handleLoad = () => setIsLoading(false);
 
@@ -72,8 +73,11 @@ function AttachmentPreview({ file, onClose }: Props) {
         )}
 
         {!isImage && !isVideo && (
-          <div className="p-4 text-sm text-muted-foreground">
-            Unsupported file preview: {file.name}
+          <div className="flex h-full flex-col items-center justify-center gap-1 px-2 pb-5 text-center text-muted-foreground">
+            <FileText className="h-6 w-6 shrink-0" />
+            <span className="w-full truncate text-xs" title={file.name}>
+              {file.name}
+            </span>
           </div>
         )}
 
