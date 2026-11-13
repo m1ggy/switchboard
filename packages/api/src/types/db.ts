@@ -46,6 +46,10 @@ export interface Contact {
   created_at: Date | null;
   company_id: string;
   label: string;
+  email?: string | null;
+  alternate_number?: string | null;
+  organization?: string | null;
+  address?: string | null;
 }
 
 export interface Inbox {
@@ -156,6 +160,8 @@ export type CallNote = {
   contact_id: string;
   number_id: string;
   company_id: string;
+  created_at?: Date;
+  updated_at?: Date | null;
 };
 
 export type UserOnboardingProgress = {

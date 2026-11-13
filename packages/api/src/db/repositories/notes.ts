@@ -69,7 +69,7 @@ export const CallNotesRepository = {
    */
   async findByContact(contactId: string): Promise<CallNote[]> {
     const res = await pool.query<CallNote>(
-      `SELECT * FROM call_notes WHERE contact_id = $1 ORDER BY id DESC`,
+      `SELECT * FROM call_notes WHERE contact_id = $1 ORDER BY created_at DESC, id DESC`,
       [contactId]
     );
     return res.rows;
@@ -99,6 +99,8 @@ export const CallNotesRepository = {
     if (fields.length === 0) {
       throw new Error('No fields provided to update.');
     }
+
+    fields.push('updated_at = NOW()');
 
     values.push(id); // final param for WHERE clause
 

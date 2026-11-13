@@ -649,4 +649,45 @@ export const InboxesRepository = {
       ? Number(result.rows[0].unread_count)
       : 0;
   },
+
+  /**
+   * Full-history text search over a single conversation (messages only).
+   * Returns newest matches first, ordered the same way the activity feed is
+   * paginated so the client can page back until a match is loaded.
+   */
+  async searchActivityByContact(
+    contactId: string,
+    {
+      query,
+      numberId,
+      limit = 200,
+    }: { query: string; numberId?: string; limit?: number }
+  ): Promise<
+    {
+      id: string;
+      createdAt: string;
+      direction: 'inbound' | 'outbound' | null;
+      message: string;
+    }[]
+  > {
+    // Escape LIKE wildcards so user input is matched literally.
+    const escaped = query.replace(/[\\%_]/g, (c) => `\\${c}`);
+
+    const result = await pool.query(
+      `SELECT
+         m.id,
+         m.created_at AS "createdAt",
+         m.direction::text AS direction,
+         m.message
+       FROM messages m
+       WHERE m.contact_id = $1
+         AND ($2::uuid IS NULL OR m.number_id = $2)
+         AND m.message ILIKE '%' || $3 || '%'
+       ORDER BY m.created_at DESC, m.id DESC
+       LIMIT $4`,
+      [contactId, numberId || null, escaped, limit]
+    );
+
+    return result.rows;
+  },
 };

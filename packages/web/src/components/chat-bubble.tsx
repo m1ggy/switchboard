@@ -66,6 +66,8 @@ type ChatBubbleProps = {
   setOpen: (open: boolean) => void;
   onPreviewFax?: (url: string) => void;
   reactions?: UIReaction[];
+  /** Search term to highlight inside message text */
+  highlight?: string;
 };
 
 // Image types every major browser can render in an <img>.
@@ -98,7 +100,33 @@ function secondsToMMSS(s: number) {
   return `${mm}:${ss}`;
 }
 
-function renderTextWithLinks(text?: string) {
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function renderHighlighted(
+  text: string,
+  highlight: string | undefined,
+  keyPrefix: string
+) {
+  const term = highlight?.trim();
+  if (!term) return text;
+  const parts = text.split(new RegExp(`(${escapeRegExp(term)})`, 'gi'));
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <mark
+        key={`${keyPrefix}-hl-${i}`}
+        className="bg-yellow-300 text-gray-900 rounded-sm px-0.5"
+      >
+        {part}
+      </mark>
+    ) : (
+      <Fragment key={`${keyPrefix}-t-${i}`}>{part}</Fragment>
+    )
+  );
+}
+
+function renderTextWithLinks(text?: string, highlight?: string) {
   if (!text) return null;
 
   const urlRegex = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi;
@@ -109,7 +137,11 @@ function renderTextWithLinks(text?: string) {
     const isUrl = /^(https?:\/\/|www\.)/i.test(part);
 
     if (!isUrl) {
-      return <Fragment key={`text-${index}`}>{part}</Fragment>;
+      return (
+        <Fragment key={`text-${index}`}>
+          {renderHighlighted(part, highlight, `text-${index}`)}
+        </Fragment>
+      );
     }
 
     const cleaned = part.replace(/[.,!?)]*$/, '');
@@ -123,7 +155,7 @@ function renderTextWithLinks(text?: string) {
           className="underline underline-offset-2 break-all hover:opacity-80"
           onClick={(e) => e.stopPropagation()}
         >
-          {cleaned}
+          {renderHighlighted(cleaned, highlight, `link-${index}`)}
         </a>
         {part.slice(cleaned.length)}
       </Fragment>
@@ -345,6 +377,7 @@ function ChatBubble({
   setOpen,
   onPreviewFax,
   reactions,
+  highlight,
 }: ChatBubbleProps) {
   const isOutbound =
     item?.meta?.Direction === 'OUTGOING' || item.direction === 'outbound';
@@ -463,7 +496,10 @@ function ChatBubble({
               >
                 <FileText className="w-4 h-4 flex-shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate" title={file.file_name}>
+                  <p
+                    className="text-sm font-medium truncate"
+                    title={file.file_name}
+                  >
                     {file.file_name}
                   </p>
                   <p className="text-xs opacity-75 truncate">
@@ -493,7 +529,7 @@ function ChatBubble({
 
         {item.type === 'message' && (
           <span className="break-words whitespace-pre-wrap">
-            {renderTextWithLinks(item.message)}
+            {renderTextWithLinks(item.message, highlight)}
           </span>
         )}
 
@@ -614,7 +650,7 @@ function ChatBubble({
 
             {item.message && (
               <span className="text-sm mt-1 break-words whitespace-pre-wrap">
-                {renderTextWithLinks(item.message)}
+                {renderTextWithLinks(item.message, highlight)}
               </span>
             )}
           </div>

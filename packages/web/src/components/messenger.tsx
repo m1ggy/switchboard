@@ -11,21 +11,28 @@ import { useTRPC } from '@/lib/trpc';
 import { hasFeature, type PlanName } from '@/lib/utils';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
+import { useIsMobile } from '@/hooks/use-mobile';
 import {
   ArrowLeft,
+  ChevronDown,
+  ChevronUp,
   Loader2,
+  PanelRight,
   Paperclip,
   Pencil,
   Phone,
   Printer,
+  Search,
   Send,
   Video,
+  X,
 } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import AttachmentPreview from './attachment-preview';
 import ChatBubble from './chat-bubble';
+import ContactDetailsSidebar from './contact-details-sidebar';
 import { PdfPreviewModal } from './pdf-preview-modal';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -36,6 +43,7 @@ import { Label } from './ui/label';
 import Lightbox from './ui/lightbox';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Separator } from './ui/separator';
+import { Sheet, SheetContent, SheetTitle } from './ui/sheet';
 import { Textarea } from './ui/textarea';
 import TooltipStandalone from './ui/tooltip-standalone';
 
@@ -108,6 +116,26 @@ function mergeTapbacks(list: any[], contact: Contact): UIItem[] {
   return items.filter((x) => !x._hidden);
 }
 
+const CONTACT_PANEL_STORAGE_KEY = 'messenger.contactPanelOpen';
+const SEARCH_RESULT_LIMIT = 200;
+
+function readContactPanelPref(): boolean {
+  try {
+    return localStorage.getItem(CONTACT_PANEL_STORAGE_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+function useDebouncedValue<T>(value: T, delay = 250) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(id);
+  }, [value, delay]);
+  return debounced;
+}
+
 function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
   const trpc = useTRPC();
   const { activeNumber, setActiveVideoCallDialogShown } = useMainStore();
@@ -125,6 +153,36 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
   const firstLoadRef = useRef(true);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [showFaxDialog, setShowFaxDialog] = useState(false);
+
+  // ---- contact details panel ----
+  const isMobile = useIsMobile();
+  const [isDesktopPanelOpen, setIsDesktopPanelOpen] =
+    useState(readContactPanelPref);
+  const [isMobilePanelOpen, setIsMobilePanelOpen] = useState(false);
+  const isContactPanelOpen = isMobile ? isMobilePanelOpen : isDesktopPanelOpen;
+
+  function setContactPanelOpen(open: boolean) {
+    if (isMobile) {
+      setIsMobilePanelOpen(open);
+      return;
+    }
+    setIsDesktopPanelOpen(open);
+    try {
+      localStorage.setItem(CONTACT_PANEL_STORAGE_KEY, String(open));
+    } catch {
+      // storage unavailable; keep in-memory state only
+    }
+  }
+
+  // ---- in-conversation search ----
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchInput, setSearchInput] = useState('');
+  const debouncedSearch = useDebouncedValue(searchInput.trim(), 300);
+  const [activeMatchIndex, setActiveMatchIndex] = useState(0);
+  const [missingMatchIds, setMissingMatchIds] = useState<Set<string>>(
+    () => new Set()
+  );
 
   const { data: enabledFeatures } = useQuery(
     trpc.subscription.getPlanFeatures.queryOptions()
@@ -192,6 +250,101 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
       }
     )
   );
+
+  const searchEnabled =
+    isSearchOpen && !!contactId && !!activeNumber?.id && !!debouncedSearch;
+
+  const { data: searchMatches, isFetching: isSearching } = useQuery(
+    trpc.inboxes.searchActivityByContact.queryOptions(
+      {
+        contactId: contactId as string,
+        numberId: activeNumber?.id as string,
+        query: debouncedSearch,
+        limit: SEARCH_RESULT_LIMIT,
+      },
+      { enabled: searchEnabled }
+    )
+  );
+
+  const matches = useMemo(
+    () => (searchEnabled ? (searchMatches ?? []) : []),
+    [searchEnabled, searchMatches]
+  );
+  const activeMatchId = matches[activeMatchIndex]?.id ?? null;
+  const highlightTerm = searchEnabled ? debouncedSearch : undefined;
+
+  // New query => jump to the newest match
+  useEffect(() => {
+    setActiveMatchIndex(0);
+    setMissingMatchIds(new Set());
+  }, [debouncedSearch]);
+
+  // Reset search + mobile panel when switching conversations
+  useEffect(() => {
+    setIsSearchOpen(false);
+    setSearchInput('');
+    setActiveMatchIndex(0);
+    setMissingMatchIds(new Set());
+    setIsMobilePanelOpen(false);
+  }, [contactId]);
+
+  // Bring the active match into view, paging older history in if needed.
+  useEffect(() => {
+    if (!activeMatchId) return;
+
+    const isLoaded = items.some((it) => it.id === activeMatchId);
+    if (!isLoaded) {
+      if (hasNextPage) {
+        if (!isFetchingNextPage) fetchNextPage();
+      } else if (!isMessagesLoading && !missingMatchIds.has(activeMatchId)) {
+        // Reached the start of history without finding it (e.g. a tapback
+        // folded into another bubble). Remember it so we don't loop.
+        setMissingMatchIds((prev) => new Set(prev).add(activeMatchId));
+      }
+      return;
+    }
+
+    const el = scrollRef.current?.querySelector<HTMLElement>(
+      `[data-item-id="${CSS.escape(activeMatchId)}"]`
+    );
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [
+    activeMatchId,
+    items,
+    hasNextPage,
+    isFetchingNextPage,
+    isMessagesLoading,
+    fetchNextPage,
+    missingMatchIds,
+  ]);
+
+  function openSearch() {
+    setIsSearchOpen(true);
+    requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    });
+  }
+
+  function closeSearch() {
+    setIsSearchOpen(false);
+    setSearchInput('');
+  }
+
+  function goToOlderMatch() {
+    if (!matches.length) return;
+    setActiveMatchIndex((i) => (i + 1) % matches.length);
+  }
+
+  function goToNewerMatch() {
+    if (!matches.length) return;
+    setActiveMatchIndex((i) => (i - 1 + matches.length) % matches.length);
+  }
+
+  const isLocatingMatch =
+    !!activeMatchId &&
+    !missingMatchIds.has(activeMatchId) &&
+    !items.some((it) => it.id === activeMatchId);
 
   useEffect(() => {
     setReadyToPaginate(false);
@@ -463,288 +616,416 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
   }
 
   return (
-    <div
-      className="
-    grid grid-rows-[auto,1fr,auto] w-full md:h-full
+    <div className="flex w-full md:h-full min-h-[100dvh] md:min-h-0 bg-background md:border-l">
+      <div
+        className="
+    grid grid-rows-[auto,1fr,auto] flex-1 min-w-0 md:h-full
     min-h-[100dvh] md:min-h-0
-    bg-background md:border-l
+    bg-background
   "
-    >
-      {/* HEADER */}
-      <div className="border-b px-2 md:px-4 py-2 font-medium h-12 flex items-center w-full">
-        {isContactLoading ? (
-          <Skeleton className="w-full h-6" />
-        ) : (
-          <div className="flex justify-between w-full items-center">
-            <div className="flex items-center gap-2">
+      >
+        {/* HEADER (+ search bar) */}
+        <div className="border-b">
+          <div className="px-2 md:px-4 py-2 font-medium h-12 flex items-center w-full">
+            {isContactLoading ? (
+              <Skeleton className="w-full h-6" />
+            ) : (
+              <div className="flex justify-between w-full items-center">
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={handleBack}
+                    className="md:hidden"
+                    aria-label="Back to conversations"
+                  >
+                    <ArrowLeft className="h-5 w-5" />
+                  </Button>
+                  <span className="h-fit">
+                    {contact?.label}{' '}
+                    <span className="text-xs text-muted-foreground">
+                      ({contact?.number})
+                    </span>
+                  </span>
+                  <Popover
+                    open={isEditingLabel}
+                    onOpenChange={setIsEditingLabel}
+                  >
+                    <TooltipStandalone content="Edit contact name">
+                      <PopoverTrigger asChild>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          aria-label="Edit contact name"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </Button>
+                      </PopoverTrigger>
+                    </TooltipStandalone>
+
+                    <PopoverContent
+                      align="start"
+                      className="w-64 p-3 space-y-3"
+                      sideOffset={6}
+                    >
+                      <form
+                        onSubmit={handleSaveContactLabel}
+                        className="space-y-3"
+                      >
+                        <div className="space-y-1">
+                          <Label htmlFor="contact-label" className="text-xs">
+                            Contact name
+                          </Label>
+                          <Input
+                            id="contact-label"
+                            value={contactLabel}
+                            onChange={(e) => setContactLabel(e.target.value)}
+                            autoFocus
+                          />
+                        </div>
+
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setIsEditingLabel(false);
+                              setContactLabel(contact?.label ?? '');
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            type="submit"
+                            size="sm"
+                            disabled={isUpdatingLabel || !contactLabel.trim()}
+                          >
+                            {isUpdatingLabel && (
+                              <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                            )}
+                            Save
+                          </Button>
+                        </div>
+                      </form>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+
+                <div className="flex gap-2">
+                  <TooltipStandalone content="Search conversation">
+                    <Button
+                      size="icon"
+                      variant={isSearchOpen ? 'secondary' : 'outline'}
+                      type="button"
+                      className="h-9 w-9"
+                      onClick={() =>
+                        isSearchOpen ? closeSearch() : openSearch()
+                      }
+                      aria-label="Search conversation"
+                      aria-pressed={isSearchOpen}
+                    >
+                      <Search className="h-4 w-4" />
+                    </Button>
+                  </TooltipStandalone>
+                  {hasFeature(userInfo?.selected_plan as PlanName, 'fax') && (
+                    <TooltipStandalone content="Send Fax">
+                      <Button
+                        size="icon"
+                        variant="outline"
+                        type="button"
+                        onClick={() => setShowFaxDialog(true)}
+                        className="h-9 w-9"
+                      >
+                        <Printer className="h-4 w-4" />
+                      </Button>
+                    </TooltipStandalone>
+                  )}
+                  {hasFeature(
+                    userInfo?.selected_plan as PlanName,
+                    'video_calls'
+                  ) && (
+                    <TooltipStandalone content="Initiate Video Call">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-9 w-9"
+                        onClick={async () => {
+                          setCurrentCallContactId(contact?.id as string);
+                          await createRoom(contactId);
+                          setActiveVideoCallDialogShown(true);
+                        }}
+                      >
+                        <Video className="h-4 w-4" />
+                      </Button>
+                    </TooltipStandalone>
+                  )}
+                  <TooltipStandalone content="Initiate Voice Call">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-9 w-9"
+                      onClick={() =>
+                        makeCall({
+                          To: contact?.number as string,
+                          CallerId: activeNumber?.number as string,
+                        })
+                      }
+                    >
+                      <Phone className="h-4 w-4" />
+                    </Button>
+                  </TooltipStandalone>
+                  <TooltipStandalone
+                    content={
+                      isContactPanelOpen
+                        ? 'Hide contact details'
+                        : 'Show contact details'
+                    }
+                  >
+                    <Button
+                      size="icon"
+                      variant={isContactPanelOpen ? 'secondary' : 'outline'}
+                      type="button"
+                      className="h-9 w-9"
+                      onClick={() => setContactPanelOpen(!isContactPanelOpen)}
+                      aria-label="Toggle contact details"
+                      aria-pressed={isContactPanelOpen}
+                    >
+                      <PanelRight className="h-4 w-4" />
+                    </Button>
+                  </TooltipStandalone>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {isSearchOpen && (
+            <div className="flex items-center gap-1 md:gap-2 px-2 md:px-4 py-2 border-t bg-muted/30">
+              <div className="relative flex-1 min-w-0">
+                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  ref={searchInputRef}
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      if (e.shiftKey) goToNewerMatch();
+                      else goToOlderMatch();
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      closeSearch();
+                    }
+                  }}
+                  placeholder="Search in conversation…"
+                  className="pl-8 h-8 text-sm"
+                  aria-label="Search in conversation"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+              <span className="text-xs text-muted-foreground tabular-nums whitespace-nowrap min-w-[64px] text-right">
+                {isSearching || isLocatingMatch ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin inline" />
+                ) : debouncedSearch ? (
+                  matches.length ? (
+                    `${activeMatchIndex + 1} of ${matches.length}${
+                      matches.length >= SEARCH_RESULT_LIMIT ? '+' : ''
+                    }`
+                  ) : (
+                    'No results'
+                  )
+                ) : null}
+              </span>
+              <TooltipStandalone content="Older match (Enter)">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8"
+                  onClick={goToOlderMatch}
+                  disabled={matches.length < 2}
+                  aria-label="Older match"
+                >
+                  <ChevronUp className="h-4 w-4" />
+                </Button>
+              </TooltipStandalone>
+              <TooltipStandalone content="Newer match (Shift+Enter)">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8"
+                  onClick={goToNewerMatch}
+                  disabled={matches.length < 2}
+                  aria-label="Newer match"
+                >
+                  <ChevronDown className="h-4 w-4" />
+                </Button>
+              </TooltipStandalone>
               <Button
                 size="icon"
                 variant="ghost"
-                onClick={handleBack}
-                className="md:hidden"
-                aria-label="Back to conversations"
+                className="h-8 w-8"
+                onClick={closeSearch}
+                aria-label="Close search"
               >
-                <ArrowLeft className="h-5 w-5" />
+                <X className="h-4 w-4" />
               </Button>
-              <span className="h-fit">
-                {contact?.label}{' '}
-                <span className="text-xs text-muted-foreground">
-                  ({contact?.number})
-                </span>
-              </span>
-              <Popover open={isEditingLabel} onOpenChange={setIsEditingLabel}>
-                <TooltipStandalone content="Edit contact name">
-                  <PopoverTrigger asChild>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      aria-label="Edit contact name"
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </Button>
-                  </PopoverTrigger>
-                </TooltipStandalone>
+            </div>
+          )}
+        </div>
 
-                <PopoverContent
-                  align="start"
-                  className="w-64 p-3 space-y-3"
-                  sideOffset={6}
-                >
-                  <form onSubmit={handleSaveContactLabel} className="space-y-3">
-                    <div className="space-y-1">
-                      <Label htmlFor="contact-label" className="text-xs">
-                        Contact name
-                      </Label>
-                      <Input
-                        id="contact-label"
-                        value={contactLabel}
-                        onChange={(e) => setContactLabel(e.target.value)}
-                        autoFocus
+        {/* MESSAGES */}
+        <div
+          className="min-h-0 overflow-y-auto scroll-smooth"
+          ref={scrollRef}
+          style={{ transform: 'translateZ(0)' }}
+        >
+          {isMessagesLoading ? (
+            <div className="h-full w-full flex items-center justify-center py-10">
+              <Loader2 className="animate-spin" />
+            </div>
+          ) : (
+            <div className="px-4 py-2 space-y-2 justify-end flex flex-col">
+              {isFetchingNextPage && (
+                <div className="flex justify-center w-full items-center">
+                  <Loader2 className="animate-spin" />
+                </div>
+              )}
+              {(() => {
+                let lastDate: string | null = null;
+                return items.map((item) => {
+                  const dateObj = new Date(item.createdAt);
+                  const currentDate = dateObj.toDateString();
+                  const shouldShowSeparator = currentDate !== lastDate;
+                  lastDate = currentDate;
+
+                  const isActiveMatch = item.id === activeMatchId;
+
+                  return (
+                    <div
+                      key={item.id}
+                      data-item-id={item.id}
+                      className={
+                        isActiveMatch
+                          ? 'rounded-lg ring-2 ring-yellow-400 ring-offset-2 ring-offset-background'
+                          : undefined
+                      }
+                    >
+                      {shouldShowSeparator && (
+                        <div className="flex justify-center py-2">
+                          <span className="text-xs text-muted-foreground bg-muted px-3 py-1 rounded-full">
+                            {dateObj.toLocaleDateString(undefined, {
+                              year: 'numeric',
+                              month: 'long',
+                              day: 'numeric',
+                            })}
+                          </span>
+                        </div>
+                      )}
+                      <ChatBubble
+                        item={item}
+                        reactions={item.reactions}
+                        setFiles={setFiles}
+                        setIndex={setIndex}
+                        setOpen={setOpen}
+                        onPreviewFax={(url) => setPdfUrl(url)}
+                        highlight={highlightTerm}
                       />
                     </div>
-
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setIsEditingLabel(false);
-                          setContactLabel(contact?.label ?? '');
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        type="submit"
-                        size="sm"
-                        disabled={isUpdatingLabel || !contactLabel.trim()}
-                      >
-                        {isUpdatingLabel && (
-                          <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-                        )}
-                        Save
-                      </Button>
-                    </div>
-                  </form>
-                </PopoverContent>
-              </Popover>
-            </div>
-
-            <div className="flex gap-2">
-              {hasFeature(userInfo?.selected_plan as PlanName, 'fax') && (
-                <TooltipStandalone content="Send Fax">
-                  <Button
-                    size="icon"
-                    variant="outline"
-                    type="button"
-                    onClick={() => setShowFaxDialog(true)}
-                    className="h-9 w-9"
-                  >
-                    <Printer className="h-4 w-4" />
-                  </Button>
-                </TooltipStandalone>
+                  );
+                });
+              })()}
+              {isPending && (
+                <div className="flex justify-center">
+                  <span className="font-semibold text-xs">sending...</span>
+                </div>
               )}
-              {hasFeature(
-                userInfo?.selected_plan as PlanName,
-                'video_calls'
-              ) && (
-                <TooltipStandalone content="Initiate Video Call">
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    className="h-9 w-9"
-                    onClick={async () => {
-                      setCurrentCallContactId(contact?.id as string);
-                      await createRoom(contactId);
-                      setActiveVideoCallDialogShown(true);
-                    }}
-                  >
-                    <Video className="h-4 w-4" />
-                  </Button>
-                </TooltipStandalone>
-              )}
-              <TooltipStandalone content="Initiate Voice Call">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-9 w-9"
-                  onClick={() =>
-                    makeCall({
-                      To: contact?.number as string,
-                      CallerId: activeNumber?.number as string,
-                    })
-                  }
-                >
-                  <Phone className="h-4 w-4" />
-                </Button>
-              </TooltipStandalone>
+              <div ref={bottomRef} />
             </div>
-          </div>
-        )}
-      </div>
-
-      {/* MESSAGES */}
-      <div
-        className="min-h-0 overflow-y-auto scroll-smooth"
-        ref={scrollRef}
-        style={{ transform: 'translateZ(0)' }}
-      >
-        {isMessagesLoading ? (
-          <div className="h-full w-full flex items-center justify-center py-10">
-            <Loader2 className="animate-spin" />
-          </div>
-        ) : (
-          <div className="px-4 py-2 space-y-2 justify-end flex flex-col">
-            {isFetchingNextPage && (
-              <div className="flex justify-center w-full items-center">
-                <Loader2 className="animate-spin" />
-              </div>
-            )}
-            {(() => {
-              let lastDate: string | null = null;
-              return items.map((item) => {
-                const dateObj = new Date(item.createdAt);
-                const currentDate = dateObj.toDateString();
-                const shouldShowSeparator = currentDate !== lastDate;
-                lastDate = currentDate;
-
-                return (
-                  <div key={item.id}>
-                    {shouldShowSeparator && (
-                      <div className="flex justify-center py-2">
-                        <span className="text-xs text-muted-foreground bg-muted px-3 py-1 rounded-full">
-                          {dateObj.toLocaleDateString(undefined, {
-                            year: 'numeric',
-                            month: 'long',
-                            day: 'numeric',
-                          })}
-                        </span>
-                      </div>
-                    )}
-                    <ChatBubble
-                      item={item}
-                      reactions={item.reactions}
-                      setFiles={setFiles}
-                      setIndex={setIndex}
-                      setOpen={setOpen}
-                      onPreviewFax={(url) => setPdfUrl(url)}
-                    />
-                  </div>
-                );
-              });
-            })()}
-            {isPending && (
-              <div className="flex justify-center">
-                <span className="font-semibold text-xs">sending...</span>
-              </div>
-            )}
-            <div ref={bottomRef} />
-          </div>
-        )}
-      </div>
-
-      {/* ATTACHMENTS */}
-      {attachments.length > 0 && (
-        <div className="px-4 pt-4 pb-3 flex flex-col gap-3 border-t max-h-44 overflow-y-auto">
-          <Separator />
-          <Label>
-            Attachments{' '}
-            {totalSize && (
-              <TooltipStandalone content="Total size of all attachments">
-                {' '}
-                <Badge>{`${totalSize}/5 MB`}</Badge>
-              </TooltipStandalone>
-            )}
-          </Label>
-          <div className="grid grid-cols-6 gap-3 overflow-auto pb-1">
-            {attachments.map((file) => (
-              <div key={file.id} className="h-20">
-                <AttachmentPreview
-                  file={file}
-                  onClose={() => removeAttachment(file.id)}
-                />
-              </div>
-            ))}
-          </div>
+          )}
         </div>
-      )}
 
-      {/* COMPOSER (sticky + compact) */}
-      <div
-        className="
+        {/* ATTACHMENTS */}
+        {attachments.length > 0 && (
+          <div className="px-4 pt-4 pb-3 flex flex-col gap-3 border-t max-h-44 overflow-y-auto">
+            <Separator />
+            <Label>
+              Attachments{' '}
+              {totalSize && (
+                <TooltipStandalone content="Total size of all attachments">
+                  {' '}
+                  <Badge>{`${totalSize}/5 MB`}</Badge>
+                </TooltipStandalone>
+              )}
+            </Label>
+            <div className="grid grid-cols-6 gap-3 overflow-auto pb-1">
+              {attachments.map((file) => (
+                <div key={file.id} className="h-20">
+                  <AttachmentPreview
+                    file={file}
+                    onClose={() => removeAttachment(file.id)}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* COMPOSER (sticky + compact) */}
+        <div
+          className="
     flex flex-col gap-1 px-3 py-2 items-stretch border-t bg-background
     md:pb-2 pb-[env(safe-area-inset-bottom)]
     w-full overflow-x-hidden
   "
-      >
-        <div className="flex gap-2 items-end w-full min-w-0 overflow-x-hidden">
-          {hasFeature(userInfo?.selected_plan as PlanName, 'mms') && (
-            <TooltipStandalone content="Add Attachment">
-              <Button
-                size="icon"
-                variant="outline"
-                type="button"
-                className="h-9 w-9 flex-shrink-0"
-                onClick={() => inputRef.current?.click()}
+        >
+          <div className="flex gap-2 items-end w-full min-w-0 overflow-x-hidden">
+            {hasFeature(userInfo?.selected_plan as PlanName, 'mms') && (
+              <TooltipStandalone content="Add Attachment">
+                <Button
+                  size="icon"
+                  variant="outline"
+                  type="button"
+                  className="h-9 w-9 flex-shrink-0"
+                  onClick={() => inputRef.current?.click()}
+                >
+                  <Paperclip className="h-4 w-4" />
+                </Button>
+              </TooltipStandalone>
+            )}
+
+            <input
+              ref={inputRef}
+              id="file-upload"
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? []);
+                if (files.length) files.forEach(addAttachment);
+                e.target.value = '';
+              }}
+            />
+
+            <Form {...form}>
+              <form
+                className="flex gap-2 items-end w-full min-w-0 overflow-x-hidden"
+                onSubmit={form.handleSubmit(onSubmitMessage)}
               >
-                <Paperclip className="h-4 w-4" />
-              </Button>
-            </TooltipStandalone>
-          )}
-
-          <input
-            ref={inputRef}
-            id="file-upload"
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              const files = Array.from(e.target.files ?? []);
-              if (files.length) files.forEach(addAttachment);
-              e.target.value = '';
-            }}
-          />
-
-          <Form {...form}>
-            <form
-              className="flex gap-2 items-end w-full min-w-0 overflow-x-hidden"
-              onSubmit={form.handleSubmit(onSubmitMessage)}
-            >
-              {/* IMPORTANT: wrapper must be flex-1 min-w-0 so textarea can shrink */}
-              <div className="flex-1 min-w-0">
-                <FormField
-                  control={form.control}
-                  name="message"
-                  render={({ field }) => (
-                    <FormControl>
-                      <Textarea
-                        {...field}
-                        ref={textareaRef}
-                        rows={1}
-                        wrap="soft"
-                        className={`
+                {/* IMPORTANT: wrapper must be flex-1 min-w-0 so textarea can shrink */}
+                <div className="flex-1 min-w-0">
+                  <FormField
+                    control={form.control}
+                    name="message"
+                    render={({ field }) => (
+                      <FormControl>
+                        <Textarea
+                          {...field}
+                          ref={textareaRef}
+                          rows={1}
+                          wrap="soft"
+                          className={`
                     w-full min-w-0 max-w-full
                     resize-none max-h-40
                     overflow-y-auto overflow-x-hidden
@@ -753,63 +1034,88 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
                     [overflow-wrap:anywhere] [word-break:break-word]
                     ${isTooLong ? 'border-red-500 focus-visible:ring-red-500' : ''}
                   `}
-                        style={{ height: 'auto' }}
-                        onInput={(e) => autosizeTextarea(e.currentTarget)}
-                        onFocus={(e) => autosizeTextarea(e.currentTarget)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            form.handleSubmit(onSubmitMessage)();
-                          }
-                        }}
-                      />
-                    </FormControl>
-                  )}
-                />
-              </div>
+                          style={{ height: 'auto' }}
+                          onInput={(e) => autosizeTextarea(e.currentTarget)}
+                          onFocus={(e) => autosizeTextarea(e.currentTarget)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault();
+                              form.handleSubmit(onSubmitMessage)();
+                            }
+                          }}
+                        />
+                      </FormControl>
+                    )}
+                  />
+                </div>
 
-              <Button
-                size="icon"
-                variant="outline"
-                type="submit"
-                aria-label="Send message"
-                className="h-9 w-9 flex-shrink-0"
-                disabled={isTooLong || charCount === 0 || isPending}
-                title={isTooLong ? 'Message exceeds 2000 characters' : 'Send'}
-              >
-                <Send className="h-4 w-4" />
-              </Button>
-            </form>
-          </Form>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  type="submit"
+                  aria-label="Send message"
+                  className="h-9 w-9 flex-shrink-0"
+                  disabled={isTooLong || charCount === 0 || isPending}
+                  title={isTooLong ? 'Message exceeds 2000 characters' : 'Send'}
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              </form>
+            </Form>
+          </div>
+
+          {/* counter */}
+          <div className="flex justify-end w-full overflow-x-hidden">
+            <span
+              className={`text-[11px] tabular-nums ${
+                isTooLong ? 'text-red-500' : 'text-muted-foreground'
+              }`}
+            >
+              {charCount}/{MAX_CHARS}
+            </span>
+          </div>
         </div>
 
-        {/* counter */}
-        <div className="flex justify-end w-full overflow-x-hidden">
-          <span
-            className={`text-[11px] tabular-nums ${
-              isTooLong ? 'text-red-500' : 'text-muted-foreground'
-            }`}
-          >
-            {charCount}/{MAX_CHARS}
-          </span>
-        </div>
+        {/* PORTALS / MODALS */}
+        <Lightbox
+          images={files}
+          initialIndex={index}
+          open={open}
+          onOpenChange={setOpen}
+        />
+        <FaxSendDialog
+          open={showFaxDialog}
+          onOpenChange={setShowFaxDialog}
+          defaultTo={contact?.number}
+          contactId={contactId}
+          defaultFromName={contact?.label}
+        />
+        <PdfPreviewModal url={pdfUrl} onClose={() => setPdfUrl(null)} />
       </div>
 
-      {/* PORTALS / MODALS */}
-      <Lightbox
-        images={files}
-        initialIndex={index}
-        open={open}
-        onOpenChange={setOpen}
-      />
-      <FaxSendDialog
-        open={showFaxDialog}
-        onOpenChange={setShowFaxDialog}
-        defaultTo={contact?.number}
-        contactId={contactId}
-        defaultFromName={contact?.label}
-      />
-      <PdfPreviewModal url={pdfUrl} onClose={() => setPdfUrl(null)} />
+      {/* CONTACT DETAILS PANEL */}
+      {!isMobile && isDesktopPanelOpen && (
+        <aside className="hidden md:flex flex-col w-80 flex-shrink-0 border-l h-full min-h-0">
+          <ContactDetailsSidebar
+            contactId={contactId}
+            onClose={() => setContactPanelOpen(false)}
+          />
+        </aside>
+      )}
+      {isMobile && (
+        <Sheet open={isMobilePanelOpen} onOpenChange={setIsMobilePanelOpen}>
+          <SheetContent
+            side="right"
+            className="p-0 w-full sm:max-w-sm [&>button]:hidden"
+          >
+            <SheetTitle className="sr-only">Contact details</SheetTitle>
+            <ContactDetailsSidebar
+              contactId={contactId}
+              onClose={() => setIsMobilePanelOpen(false)}
+            />
+          </SheetContent>
+        </Sheet>
+      )}
     </div>
   );
 }

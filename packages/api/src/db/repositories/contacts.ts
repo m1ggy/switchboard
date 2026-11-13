@@ -165,6 +165,48 @@ export const ContactsRepository = {
     return res.rows[0];
   },
 
+  async updateDetails(
+    id: string,
+    details: {
+      email?: string | null;
+      alternate_number?: string | null;
+      organization?: string | null;
+      address?: string | null;
+    },
+    db: PoolClient | typeof pool = pool
+  ): Promise<Contact | null> {
+    const allowed = [
+      'email',
+      'alternate_number',
+      'organization',
+      'address',
+    ] as const;
+
+    const fields: string[] = [];
+    const values: (string | null)[] = [];
+
+    for (const key of allowed) {
+      if (details[key] === undefined) continue;
+      const raw = details[key];
+      const value = typeof raw === 'string' ? raw.trim() || null : null;
+      values.push(value);
+      fields.push(`${key} = $${values.length}`);
+    }
+
+    if (fields.length === 0) return this.findById(id, db);
+
+    values.push(id);
+    const res = await db.query<Contact>(
+      `UPDATE contacts
+       SET ${fields.join(', ')}
+       WHERE id = $${values.length}
+       RETURNING *`,
+      values
+    );
+
+    return res.rows[0] || null;
+  },
+
   async findByNumberAndCompany(
     number: string,
     company_id: string,
