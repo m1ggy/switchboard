@@ -619,13 +619,13 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
     <div className="flex w-full md:h-full min-h-[100dvh] md:min-h-0 bg-background md:border-l">
       <div
         className="
-    grid grid-rows-[auto,1fr,auto] flex-1 min-w-0 md:h-full
+    flex flex-col flex-1 min-w-0 md:h-full
     min-h-[100dvh] md:min-h-0
     bg-background
   "
       >
         {/* HEADER (+ search bar) */}
-        <div className="border-b">
+        <div className="border-b flex-shrink-0">
           <div className="px-2 md:px-4 py-2 font-medium h-12 flex items-center w-full">
             {isContactLoading ? (
               <Skeleton className="w-full h-6" />
@@ -877,7 +877,7 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
 
         {/* MESSAGES */}
         <div
-          className="min-h-0 overflow-y-auto scroll-smooth"
+          className="flex-1 min-h-0 overflow-y-auto scroll-smooth"
           ref={scrollRef}
           style={{ transform: 'translateZ(0)' }}
         >
@@ -948,7 +948,7 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
 
         {/* ATTACHMENTS */}
         {attachments.length > 0 && (
-          <div className="px-4 pt-4 pb-3 flex flex-col gap-3 border-t max-h-44 overflow-y-auto">
+          <div className="flex-shrink-0 px-4 pt-4 pb-3 flex flex-col gap-3 border-t max-h-44 overflow-y-auto">
             <Separator />
             <Label>
               Attachments{' '}
@@ -975,7 +975,7 @@ function Messenger({ contactId, inboxId, onBack }: MessengerProps) {
         {/* COMPOSER (sticky + compact) */}
         <div
           className="
-    flex flex-col gap-1 px-3 py-2 items-stretch border-t bg-background
+    flex-shrink-0 flex flex-col gap-1 px-3 py-2 items-stretch border-t bg-background
     md:pb-2 pb-[env(safe-area-inset-bottom)]
     w-full overflow-x-hidden
   "
