@@ -140,6 +140,13 @@ jobs:
           cd "$APP_DIR"
           pnpm install --frozen-lockfile
 
+          # === RUN DB MIGRATIONS ===
+          # Runs before anything is rebuilt/restarted: if a migration fails,
+          # set -e aborts the deploy and the currently running API stays up.
+          echo "🗄️ Running database migrations…"
+          cd "$APP_DIR/packages/api"
+          pnpm run migrate up
+
           # === BUILD WEB ===
           echo "🛠️ Building Web…"
           cd "$APP_DIR/packages/web"

@@ -9,9 +9,9 @@
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
     "lint": "eslint src --ext .ts",
-    "migrate": "ts-node src/scripts/runMigrations.ts",
-    "migrate:down": "ts-node src/scripts/runMigrations.ts down",
-    "migrate:up": "ts-node src/scripts/runMigrations.ts up",
+    "migrate": "tsx src/scripts/runMigrations.ts",
+    "migrate:down": "tsx src/scripts/runMigrations.ts down",
+    "migrate:up": "tsx src/scripts/runMigrations.ts up",
     "test:e2e": "tsx -r tsconfig-paths/register src/scripts/test-reassurance-e2e.ts",
     "create-account": "tsx -r tsconfig-paths/register src/scripts/createAccount.ts"
   },
